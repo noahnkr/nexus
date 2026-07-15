@@ -1,0 +1,110 @@
+"""Shared fixtures for the Module 0 schema/RLS test harness.
+
+Two connection paths are exercised:
+  * PostgREST via supabase-py, using locally-minted tenant JWTs — the real RLS
+    surface (connects as the `authenticated` role, not a bypass role).
+  * A direct psycopg connection to Postgres for structural/trigger tests, using
+    the `request.app.tenant_id` GUC as the FastAPI backend will in later modules.
+
+Tests are skipped (not failed) when required env vars are absent, so the suite
+is safe to collect before a Supabase project is provisioned.
+"""
+import os
+import time
+
+import pytest
+from dotenv import load_dotenv
+
+# Load repo-root .env (backend/tests/ -> repo root is two levels up).
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+load_dotenv(os.path.join(_REPO_ROOT, ".env"))
+
+DEMO_TENANT = os.getenv("NEXUS_TENANT_ID", "00000000-0000-0000-0000-000000000001")
+PROBE_TENANT = os.getenv("NEXUS_PROBE_TENANT_ID", "00000000-0000-0000-0000-000000000002")
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
+SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL")
+SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
+
+
+def _require(*names):
+    missing = [n for n in names if not os.getenv(n)]
+    if missing:
+        pytest.skip(f"missing env: {', '.join(missing)}", allow_module_level=True)
+
+
+def mint_tenant_jwt(tenant_id: str) -> str:
+    """HS256 token PostgREST will verify: role=authenticated, tenant in app_metadata."""
+    import jwt
+
+    now = int(time.time())
+    payload = {
+        "role": "authenticated",
+        "aud": "authenticated",
+        "sub": "00000000-0000-0000-0000-0000000000ff",
+        "app_metadata": {"tenant_id": tenant_id},
+        "iat": now,
+        "exp": now + 3600,
+    }
+    return jwt.encode(payload, SUPABASE_JWT_SECRET, algorithm="HS256")
+
+
+def _rest_client(jwt_token: str | None):
+    from supabase import create_client
+
+    client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+    if jwt_token is not None:
+        client.postgrest.auth(jwt_token)
+    return client
+
+
+@pytest.fixture(scope="session")
+def demo_tenant_id():
+    return DEMO_TENANT
+
+
+@pytest.fixture(scope="session")
+def probe_tenant_id():
+    return PROBE_TENANT
+
+
+@pytest.fixture()
+def client_tenant_a():
+    """PostgREST client scoped to the demo tenant."""
+    _require("SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_JWT_SECRET")
+    return _rest_client(mint_tenant_jwt(DEMO_TENANT))
+
+
+@pytest.fixture()
+def client_tenant_b():
+    """PostgREST client scoped to the probe tenant."""
+    _require("SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_JWT_SECRET")
+    return _rest_client(mint_tenant_jwt(PROBE_TENANT))
+
+
+@pytest.fixture()
+def client_anon():
+    """PostgREST client with no tenant claim (anon key only)."""
+    _require("SUPABASE_URL", "SUPABASE_ANON_KEY")
+    return _rest_client(None)
+
+
+@pytest.fixture()
+def db():
+    """Direct psycopg connection. Autocommit off so failing statements roll back."""
+    _require("SUPABASE_DB_URL")
+    import psycopg
+
+    conn = psycopg.connect(SUPABASE_DB_URL)
+    try:
+        yield conn
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+def set_tenant(conn, tenant_id: str):
+    """Set the request.app.tenant_id GUC on a psycopg connection (session scope)."""
+    with conn.cursor() as cur:
+        cur.execute("select set_config('request.app.tenant_id', %s, false)", (tenant_id,))

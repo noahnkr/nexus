@@ -76,8 +76,6 @@ Track live status in [`PROGRESS.md`](./PROGRESS.md).
 
 ## Getting Started
 
-> Fill in once Module 0 is built — env setup, Supabase project provisioning, running the backend/frontend locally, and seeding sample data will go here.
-
 ### Prerequisites
 
 - Python 3.11+ with `venv`
@@ -90,7 +88,47 @@ Track live status in [`PROGRESS.md`](./PROGRESS.md).
 
 ### Environment Variables
 
-All configuration is via environment variables — there is no admin UI in this phase. See `.env.example` (added in Module 0) for the full list once available.
+All configuration is via environment variables — there is no admin UI in this phase.
+Copy `.env.example` to `.env` and fill in the values from your hosted Supabase
+project (Project Settings → API and → Database).
+
+### Database Setup (Module 0)
+
+The canonical schema is applied to a **hosted** Supabase project via the CLI
+(local `supabase start` is not required — no Docker needed).
+
+```bash
+# 1. Install the Supabase CLI (Windows / scoop)
+scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
+scoop install supabase
+
+# 2. Link the repo to your hosted project (uses SUPABASE_DB_URL / DB password)
+supabase link --project-ref <your-project-ref>
+
+# 3. Apply the four core + entity migrations
+supabase db push
+
+# 4. Seed sample data (two tenants; idempotent — safe to re-run)
+#    Either via the CLI's seed include, or with psql directly:
+psql "$SUPABASE_DB_URL" -f supabase/seed.sql
+
+# 5. Set NEXUS_TENANT_ID in .env to the demo tenant UUID (already the default
+#    in .env.example): 00000000-0000-0000-0000-000000000001
+```
+
+### Running the Tests (Module 0)
+
+```bash
+cd backend
+python -m venv venv
+source venv/Scripts/activate      # Windows bash;  venv\Scripts\activate on cmd/PowerShell
+pip install -r requirements.txt
+cd ..
+pytest backend/tests              # schema, RLS, events-immutability, vector
+```
+
+Tests skip cleanly if the Supabase env vars are absent, so collection is safe
+before provisioning. They require the DB to be migrated and seeded first.
 
 ## Notes on Templating
 
