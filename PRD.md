@@ -129,9 +129,37 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 ---
 
+## Module 1: Foundation Chat + Ingestion
+
+**Goal**: stand up the first two user-facing interfaces — Chat and Ingestion — on top of Module 0's schema, proving the full loop end to end: upload a document, watch it chunk and embed, then ask the agent about it and get a streamed, cited answer. This module also introduces the running application itself (the first FastAPI app and the first frontend), so its infrastructure decisions — tenant-scoped DB access, the SSE contract, the parser seam — are load-bearing for every later module.
+
+**Chat**:
+
+- Threaded conversations persisted in new core tables: `chat_threads` and `chat_messages`, with messages stored as Anthropic content-block JSON verbatim so Module 2's `tool_use`/`tool_result` blocks need no schema change
+- Responses streamed via SSE (`start` → `citations` → `text` deltas → `done`/`error`)
+- Basic RAG: query embedding → plain pgvector cosine top-k over `document_chunks` → retrieved context injected into the system prompt with numbered citations; hybrid search and reranking stay in Module 10
+- Prompt caching (`cache_control`) on the static system block; full conversation history sent per call (stateless Messages API)
+
+**Ingestion**:
+
+- Drag-and-drop upload → Supabase Storage → background chunking/embedding pipeline (FastAPI BackgroundTasks — no worker queue at this scale)
+- All four formats (PDF, DOCX, HTML, Markdown/TXT) via lightweight parsers behind a swappable parser interface; the Docling upgrade in Module 10 replaces parser registry entries only
+- Voyage AI embeddings (1024-dim, matching the `document_chunks` column), batched
+- Document status transitions (`uploaded → processing → ready/failed`) surfaced live to the frontend via Supabase Realtime; every transition also writes an immutable `events` row
+
+**Infrastructure introduced here**:
+
+- Dedicated RLS-subject Postgres role (`nexus_app`) for the backend, with per-request tenant scoping via the `request.app.tenant_id` GUC — closing the RLS-bypass hole of connecting as `postgres`/service-role
+- Tenant-identity seam (`get_tenant_id()`): env-configured single tenant this phase, replaced by the verified JWT claim in Module 6
+- Vite + React + Tailwind + shadcn/ui frontend shell with Chat (default) and Ingestion pages
+- LangSmith tracing wired end to end (retrieve → generate spans)
+
+**Deliverable for this module**: a runnable app where a user can upload documents in the four supported formats, watch processing status update live, and hold a threaded, streamed chat that answers from those documents with citations — with all tests green and every ingestion/chat action visible in the Event Log's `events` table and LangSmith. Plan: `.agent/plans/1.foundation-chat-ingestion.md`
+
+---
+
 ## Subsequent Modules (summary)
 
-1. **Foundation Chat + Ingestion** — chat interface, drag-and-drop upload, chunking/embedding pipeline writing into Module 0's schema
 2. **Structured Data Access** — parameterized tools (`get_client`, `list_leads_by_status`, `get_caregiver_availability`, etc.) plus scoped read-only text-to-SQL for reporting
 3. **MCP Server & External Connectors** — tool server exposing Modules 1–2, plus CRM/phone/EHR/email webhook adapters normalizing into canonical entities
 4. **Event Log** — every tool call, webhook, and agent action writes an immutable event row

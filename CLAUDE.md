@@ -28,7 +28,9 @@ See `PRD.md` for full scope, module breakdown, and success criteria. This file g
 
 **Data & tenancy**
 - Every table needs Row-Level Security scoped by `tenant_id` — this is stricter than "users only see their own data"; it's tenant isolation at the Postgres level, not just per-user filtering, since this system is built to host multiple client businesses over time
-- The entity schema (leads/clients/resources/schedules/etc.) is the one thing that changes per deployment — keep it isolated to its own migration files so a new vertical only touches those, never the core tables (`events`, `tasks`, `pending_actions`, `external_ids`, `document_chunks`)
+- The entity schema (leads/clients/resources/schedules/etc.) is the one thing that changes per deployment — keep it isolated to its own migration files so a new vertical only touches those, never the core tables (`events`, `tasks`, `pending_actions`, `external_ids`, `documents`, `document_chunks`, `chat_threads`, `chat_messages`)
+- The FastAPI backend connects to Postgres as the dedicated `nexus_app` role (`nobypassrls`, member of `authenticated`) and sets the `request.app.tenant_id` GUC per request/transaction — never as `postgres` (has BYPASSRLS) and never with the service-role key for data access. The service-role key is reserved for migrations/ops and Storage uploads only
+- Tenant identity comes from `deps.get_tenant_id()` — env-configured (`NEXUS_TENANT_ID`) this phase, swapped for the verified JWT claim in Module 6; all tenant-dependent code goes through this seam
 - Every inbound webhook/connector event must resolve to a canonical entity via `external_ids` before writing anywhere else — never let a connector write directly into a business table without entity resolution
 
 **Structured data access**
