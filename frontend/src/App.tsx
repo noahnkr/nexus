@@ -3,6 +3,7 @@ import { Toaster } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
 import { ChatPage } from "@/pages/ChatPage";
 import { IngestionPage } from "@/pages/IngestionPage";
+import { useTheme } from "@/lib/theme";
 
 const router = createBrowserRouter([
   {
@@ -16,10 +17,11 @@ const router = createBrowserRouter([
 ]);
 
 export default function App() {
+  const { theme } = useTheme();
   return (
     <>
       <RouterProvider router={router} />
-      <Toaster richColors position="top-right" />
+      <Toaster richColors position="top-right" theme={theme} />
     </>
   );
 }
