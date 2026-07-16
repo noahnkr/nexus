@@ -19,10 +19,16 @@ async def log_event(
     entity_type: str | None = None,
     entity_id: str | None = None,
     payload: dict | None = None,
-) -> None:
-    await conn.execute(
+) -> str:
+    """Insert one audit row and return its id (used to link e.g. a review task's
+    originating_event_id back to the webhook receipt). Existing callers that
+    ignore the return value are unaffected."""
+    cur = await conn.execute(
         """insert into public.events
              (tenant_id, source_system, event_type, entity_type, entity_id, payload)
-           values (%s, %s, %s, %s, %s, %s)""",
+           values (%s, %s, %s, %s, %s, %s)
+           returning id""",
         (tenant_id, source_system, event_type, entity_type, entity_id, Json(payload or {})),
     )
+    row = await cur.fetchone()
+    return str(row[0])
