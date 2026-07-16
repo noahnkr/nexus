@@ -28,15 +28,17 @@ See `PRD.md` for full scope, module breakdown, and success criteria. This file g
 
 **Data & tenancy**
 - Every table needs Row-Level Security scoped by `tenant_id` — this is stricter than "users only see their own data"; it's tenant isolation at the Postgres level, not just per-user filtering, since this system is built to host multiple client businesses over time
-- The entity schema (leads/clients/resources/schedules/etc.) is the one thing that changes per deployment — keep it isolated to its own migration files so a new vertical only touches those, never the core tables (`events`, `tasks`, `pending_actions`, `external_ids`, `documents`, `document_chunks`, `chat_threads`, `chat_messages`)
+- The entity schema (leads/clients/resources/schedules/etc.) is the one thing that changes per deployment — keep it isolated to its own migration files so a new vertical only touches those, never the core tables (`events`, `tasks`, `pending_actions`, `external_ids`, `documents`, `document_chunks`, `chat_threads`, `chat_messages`, `connector_state`)
 - The FastAPI backend connects to Postgres as the dedicated `nexus_app` role (`nobypassrls`, member of `authenticated`) and sets the `request.app.tenant_id` GUC per request/transaction — never as `postgres` (has BYPASSRLS) and never with the service-role key for data access. The service-role key is reserved for migrations/ops and Storage uploads only
 - Tenant identity comes from `deps.get_tenant_id()` — env-configured (`NEXUS_TENANT_ID`) this phase, swapped for the verified JWT claim in Module 6; all tenant-dependent code goes through this seam
 - Every inbound webhook/connector event must resolve to a canonical entity via `external_ids` before writing anywhere else — never let a connector write directly into a business table without entity resolution
+- All inbound connector traffic enters through the single `POST /api/webhooks/{source}` ingress (signature-verified per adapter, raw receipt written to `events` before normalization) — poll/export-based sources are handled by external pollers (n8n/manual) that re-post into this same ingress, never by a second inbound path. Connector adapters live in `backend/app/services/connectors/adapters/` (one file per source: `verify` + `normalize` only); `services/connectors/entity_writers.py` is part of the vertical re-templating seam alongside the entity migration and `services/tools/entities.py`
 
 **Structured data access**
 - No open-ended text-to-SQL against tables that can be written to. Client/schedule/lead writes always go through named, parameterized tools with defined inputs/outputs
 - Text-to-SQL, where implemented, is read-only and scoped to analytical/reporting queries only
 - All agent-callable tools live in `backend/app/services/tools/` and run through the registry's single `execute_tool()` seam — it writes the audit `events` row and enforces the `safe` flag; never call tool handlers directly from chat/MCP/workflow code
+- The MCP server is mounted at `/mcp` inside the FastAPI app (Streamable HTTP, bearer-token auth until Module 6) and lists tools dynamically from the registry — never define an MCP-only tool or add MCP-specific behavior branches inside tool handlers; calls carry `source_system='mcp'` in the audit trail
 - Entity-specific tools (`services/tools/entities.py`) are part of the re-templating seam alongside the entity migration; core tools never reference vertical concepts. Tool handlers take the already-tenant-scoped connection and never accept `tenant_id` as an input — RLS does the filtering
 
 **Agent actions & safety**
