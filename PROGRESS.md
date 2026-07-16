@@ -70,7 +70,7 @@ Module-by-module build status for the Nexus Control Center. Claude Code reads th
 - `[x]` Task 2 — `services/event_summaries.py`: read-path plain-language summary derivation (`payload.summary` → core templates → humanized fallback). 15 offline cases green.
 - `[x]` Task 3 — Events API: `GET /api/events` (keyset pagination; source/type/date/entity filters, limit capped at 100) + `GET /api/events/facets`. Gated tests green (pagination, each filter, RLS isolation, cap, server-derived summary).
 - `[x]` Task 4 — Frontend: `/events` page (filters ↔ URL params, entity drill-down chips, expandable payload JSON, Realtime live tail, Load more). `npm run build` clean.
-- `[-]` Task 5 — Wrap-up: Module 4 suite green (16 new tests); build clean. Live browser check (feed/drill-down/live-tail in a running stack) pending. NOTE: one pre-existing, unrelated failure in `test_tools_entities.py` from seed schedule timestamps drifting into the past (seed is `on conflict do nothing`, applied 2026-07-14) — not a Module 4 regression.
+- `[-]` Task 5 — Wrap-up: full `pytest backend/tests` green (130 passed, incl. 15 new event tests); `npm run build` clean. Also refreshed the time-relative schedule seed (now `on conflict (id) do update`) so it no longer drifts into the past. Live browser check (feed/drill-down/live-tail in a running stack) pending.
 
 ### Module 5: Approval Gate & Task System
 `[ ]` Not started. Default 🔴 Complex — break into sub-plans.

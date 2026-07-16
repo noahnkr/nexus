@@ -82,7 +82,13 @@ insert into public.schedules (id, tenant_id, resource_id, client_id, start_time,
   ('66666666-0000-0000-0000-000000000006', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000001', '44444444-0000-0000-0000-000000000001', now() + interval '1 days'  + interval '8 hours', now() + interval '1 days'  + interval '12 hours', 'scheduled'),
   ('66666666-0000-0000-0000-000000000007', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000002', '44444444-0000-0000-0000-000000000002', now() + interval '2 days'  + interval '9 hours', now() + interval '2 days'  + interval '14 hours', 'scheduled'),
   ('66666666-0000-0000-0000-000000000008', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000005', '44444444-0000-0000-0000-000000000003', now() + interval '4 days'  + interval '8 hours', now() + interval '4 days'  + interval '18 hours', 'scheduled')
-on conflict do nothing;
+-- Schedule times are relative to now(): refresh them on re-seed so the demo
+-- always has past (completed/cancelled) and upcoming (scheduled) visits, rather
+-- than freezing at first-seed time and drifting into the past.
+on conflict (id) do update set
+  start_time = excluded.start_time,
+  end_time   = excluded.end_time,
+  status     = excluded.status;
 
 -- external_ids (two leads + one client mapped to fake CRM ids)
 insert into public.external_ids (id, tenant_id, entity_type, entity_id, source_system, external_id, last_synced_at) values
