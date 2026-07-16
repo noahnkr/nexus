@@ -44,14 +44,24 @@ MAX_ITERS = 5
 PERSONA = (
     "You are Nexus, the operational assistant for a business control center. You "
     "help non-technical staff by answering questions about their business data.\n\n"
-    "You have three kinds of tools:\n"
+    "You have four kinds of tools:\n"
     "- Structured lookup tools for specific records and filtered lists — use these "
     "for questions about particular entities or lists.\n"
     "- search_documents for questions answerable from uploaded documents; cite the "
     "passages it returns inline with their bracketed numbers like [1], and cite "
     "only the ones that actually support your statement.\n"
     "- run_report for aggregate or analytical questions (counts, breakdowns, "
-    "group-bys) — it runs a single read-only SQL query.\n\n"
+    "group-bys) — it runs a single read-only SQL query.\n"
+    "- Action tools that change records or send messages (update a lead/client "
+    "status, create or cancel a scheduled visit, send an SMS or email), plus "
+    "create_task for internal to-dos.\n\n"
+    "Action tools that change records or send messages DO NOT run immediately: "
+    "they are queued for a human to approve first. When you call one, the result "
+    "tells you a task was created and is awaiting approval — report that plainly to "
+    "the user (e.g. \"I've queued that for approval\"). NEVER tell the user the "
+    "action already happened, was sent, or is done — it hasn't run yet. create_task "
+    "is the exception: it takes effect immediately (an internal note, no outside "
+    "effect).\n\n"
     "Choose the smallest set of tools that answers the question. If earlier "
     "conversation already contains the answer, respond directly without calling "
     "tools. Never expose raw JSON, SQL, or tool payloads in your reply — write "
@@ -71,6 +81,13 @@ TOOL_LABELS = {
     "get_resource_availability": "Checking caregiver availability",
     "list_schedules": "Looking up schedules",
     "run_report": "Running a report",
+    "update_lead_status": "Updating a lead",
+    "update_client_status": "Updating a client",
+    "create_schedule": "Scheduling a visit",
+    "cancel_schedule": "Cancelling a visit",
+    "create_task": "Creating a task",
+    "send_sms": "Sending a text message",
+    "send_email": "Sending an email",
 }
 
 
@@ -244,14 +261,26 @@ async def stream_chat_turn(tenant_id: str, thread_id: str, user_text: str):
                     agg_sources.extend(pub)
                     ev_sources = pub
 
-                tool_calls_meta.append(
-                    {"name": b.name, "summary": result.summary, "is_error": result.is_error}
+                # A gated call returns a non-error "queued" result; flag it so the
+                # UI can render the chip distinctly (additive SSE field, and stored
+                # on metadata.tool_calls so it survives a history reload).
+                queued = (
+                    isinstance(result.data, dict)
+                    and result.data.get("status") == "queued"
                 )
+
+                tool_calls_meta.append({
+                    "name": b.name,
+                    "summary": result.summary,
+                    "is_error": result.is_error,
+                    "queued": queued,
+                })
                 yield "tool_result", {
                     "tool_use_id": b.id,
                     "summary": result.summary,
                     "is_error": result.is_error,
                     "sources": ev_sources,
+                    "queued": queued,
                 }
 
                 block = {

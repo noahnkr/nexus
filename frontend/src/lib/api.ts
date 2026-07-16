@@ -51,6 +51,7 @@ export interface ToolCall {
   name: string;
   summary: string;
   is_error: boolean;
+  queued?: boolean;
 }
 
 export interface MessageOut {
@@ -93,6 +94,81 @@ export interface EventQuery {
   until?: string;
   cursor?: string;
   limit?: number;
+}
+
+// --- Tasks & approvals -------------------------------------------------------
+export type TaskStatus = "pending" | "in_progress" | "done" | "cancelled";
+export type TaskPriority = "low" | "normal" | "high" | "urgent";
+export type ActionStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "executed"
+  | "failed";
+
+export interface ActionResult {
+  summary?: string;
+  error?: string;
+}
+
+export interface PendingAction {
+  id: string;
+  tool_name: string;
+  tool_input: Record<string, unknown>;
+  status: ActionStatus;
+  source_system: string;
+  result: ActionResult | null;
+  created_at: string;
+  resolved_at: string | null;
+  resolved_by: string | null;
+}
+
+export interface Task {
+  id: string;
+  title: string;
+  description: string | null;
+  status: TaskStatus;
+  priority: TaskPriority;
+  originating_event_id: string | null;
+  assigned_to: string | null;
+  due_at: string | null;
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+  pending_actions: PendingAction[];
+}
+
+export interface TaskPage {
+  tasks: Task[];
+  next_cursor: string | null;
+}
+
+export interface TaskQuery {
+  status?: string; // comma-separated set, e.g. "pending,in_progress"
+  priority?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface TaskCreate {
+  title: string;
+  description?: string;
+  priority?: TaskPriority;
+  due_at?: string | null;
+}
+
+export interface ActionResolution {
+  action: PendingAction;
+  task: Task;
+}
+
+function queryString(params: Record<string, unknown>): string {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
+  }
+  const s = q.toString();
+  return s ? `?${s}` : "";
 }
 
 function eventQueryString(params: EventQuery): string {
@@ -146,6 +222,34 @@ export const api = {
   listEvents: (params: EventQuery = {}) =>
     fetch(`/api/events${eventQueryString(params)}`).then(json<EventPage>),
   getEventFacets: () => fetch("/api/events/facets").then(json<EventFacets>),
+
+  // Tasks & approvals
+  listTasks: (params: TaskQuery = {}) =>
+    fetch(`/api/tasks${queryString(params as Record<string, unknown>)}`).then(
+      json<TaskPage>,
+    ),
+  createTask: (body: TaskCreate) =>
+    fetch("/api/tasks", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<Task>),
+  patchTask: (id: string, status: TaskStatus) =>
+    fetch(`/api/tasks/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status }),
+    }).then(json<Task>),
+  approveAction: (id: string) =>
+    fetch(`/api/pending-actions/${id}/approve`, { method: "POST" }).then(
+      json<ActionResolution>,
+    ),
+  rejectAction: (id: string, note?: string) =>
+    fetch(`/api/pending-actions/${id}/reject`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ note: note ?? null }),
+    }).then(json<ActionResolution>),
 
   // Realtime token (dev seam; replaced by Supabase Auth in Module 6)
   getRealtimeToken: () =>

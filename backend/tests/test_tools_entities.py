@@ -149,8 +149,10 @@ def test_execute_tool_seam():
     assert ok.summary == "seam-ok-summary"
     assert ok_ev is not None and ok_ev[0] == "seam-ok-summary"
 
-    # unsafe tool: refused (no approval gate until Module 5).
-    assert gated.is_error is True
+    # unsafe tool: queued for approval — a success (not an error), with a task.
+    assert gated.is_error is False
+    assert gated.data["status"] == "queued"
+    assert gated.data.get("task_id") and gated.data.get("pending_action_id")
     assert "approval" in gated.summary.lower()
 
     # raising handler: is_error result, and the event is still written.

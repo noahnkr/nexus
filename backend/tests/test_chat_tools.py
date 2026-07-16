@@ -181,6 +181,12 @@ def _install(monkeypatch, store, script, captured, calls):
             return ToolResult("Found 1 document passage(s).", {"query": args.get("query"), "sources": srcs})
         if name == "list_leads":
             return ToolResult("Found 1 lead(s).", {"leads": [{"name": "Margaret Ellison"}], "count": 1})
+        if name == "update_lead_status":
+            # Gate path shape: a non-error result whose data.status == "queued".
+            return ToolResult(
+                "Queued for approval: Update lead 'Margaret Ellison' to contacted (task created).",
+                {"status": "queued", "task_id": "task-1", "pending_action_id": "pa-1"},
+            )
         return ToolResult("ok", {})
 
     monkeypatch.setattr(cs, "execute_tool", fake_execute_tool)
@@ -271,6 +277,34 @@ def test_second_turn_replays_prior_history(monkeypatch):
         b.get("type") == "tool_use" for m in replayed for b in m["content"]
     )
     assert replayed[-1]["content"][0]["text"] == "second question"
+
+
+TU_GATE = FakeBlock(
+    "tool_use", id="tug", name="update_lead_status",
+    input={"lead_id": "33333333-0000-0000-0000-000000000001", "status": "contacted"},
+)
+
+
+def test_gated_tool_result_carries_queued_flag(monkeypatch):
+    store = {"messages": [], "events": []}
+    captured, calls = [], []
+    script = [
+        ([], FakeMessage([TU_GATE], "tool_use")),
+        (["Queued it."], FakeMessage([FakeBlock("text", text="Queued it.")], "end_turn")),
+    ]
+    _install(monkeypatch, store, script, captured, calls)
+
+    events = asyncio.run(_collect("t", "thread-1", "mark Margaret as contacted"))
+    tr = next(d for e, d in events if e == "tool_result")
+
+    # Additive queued flag is set; the summary is plain language (no raw JSON).
+    assert tr["queued"] is True
+    assert tr["is_error"] is False
+    assert "{" not in tr["summary"] and "}" not in tr["summary"]
+
+    # The turn still completes normally with the final answer persisted.
+    final = store["messages"][-1]
+    assert final["content"][0]["text"] == "Queued it."
 
 
 def test_no_tool_turn_matches_m1_sequence(monkeypatch):
