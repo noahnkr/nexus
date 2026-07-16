@@ -225,6 +225,40 @@ Then in Chat ask "any new leads today?" — the agent's `list_leads` answer incl
 the webhook-created lead. Every call is auditable: `events` rows for
 `webhook.received` and `lead.created`, and a `webhook_ingress` span in LangSmith.
 
+### Approvals & Tasks (Module 5)
+
+State-changing tools (`update_lead_status`, `update_client_status`,
+`create_schedule`, `cancel_schedule`, `send_sms`, `send_email`) are **gated**: a
+call queues a `pending_action` behind a high-priority review `task` instead of
+running, and the model reports that a task was created (a queued call is a success,
+not an error). Approving runs the tool through the same audited `execute_tool`
+seam; rejecting cancels the task. `create_task` is safe and runs immediately (an
+internal to-do with no outside effect). `send_sms`/`send_email` are placeholder
+executions this phase (no external delivery until Module 7 credentials).
+
+The gate lifecycle is fully auditable in `events`: `action.queued` → (`action.approved`
++ `tool.called` carrying `pending_action_id`) or `action.rejected`.
+
+Endpoints (all tenant-scoped via RLS):
+
+```
+GET   /api/tasks?status=&priority=&cursor=&limit=50   list tasks (status is a
+        comma-separated set, e.g. pending,in_progress); keyset pagination; each
+        task embeds its pending_actions[]
+POST  /api/tasks                                       create a task {title, description?, priority?, due_at?} → 201
+PATCH /api/tasks/{id}  {status}                        transition a task (pending↔in_progress,
+        either → done|cancelled); 409 on terminal states or while an action is pending
+POST  /api/pending-actions/{id}/approve               approve → execute the queued tool
+POST  /api/pending-actions/{id}/reject  {note?}       reject → cancel the task
+```
+
+No new env vars. `tasks` and `pending_actions` are in the Realtime publication, so
+the **Tasks** page (nav → Tasks) live-updates: it lists tasks with status tabs
+(Open / Done / Cancelled / All) and a priority filter, inline Approve/Reject cards
+for queued actions, status transitions, manual task creation, and a "View history"
+drill-down into the Event Log. In Chat, a gated call shows an amber "queued" chip
+linking to the Tasks page.
+
 ## Notes on Templating
 
 This repo is designed so that a second deployment, in a different vertical, requires:

@@ -12,6 +12,7 @@ before touching SQL, so a bad id is a clean tool error, not a psycopg exception.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from psycopg.rows import dict_row
 
@@ -306,6 +307,147 @@ def _describe(filters: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# WRITE tools (gated) — state-changing entity operations. All safe=False, so
+# execute_tool queues them for human approval instead of running. Each supplies a
+# read-only `gate_describe` that names entities in plain language for the task
+# title. Handlers validate inputs with the same helpers as the read tools, so a
+# bad argument still fails cleanly *after* approval (a `failed` action, not a crash).
+# ---------------------------------------------------------------------------
+def _require_iso(args: dict, key: str) -> datetime:
+    raw = args.get(key)
+    if raw is None or str(raw).strip() == "":
+        raise ToolInputError(f"'{key}' is required.")
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        raise ToolInputError(f"'{key}' must be an ISO-8601 date-time.")
+
+
+async def _lookup_name(conn, table: str, entity_id: str) -> str | None:
+    row = await _fetch_one(conn, f"select name from public.{table} where id=%s", (entity_id,))
+    return row["name"] if row else None
+
+
+# --- update_lead_status ---
+async def _describe_update_lead_status(conn, args: dict) -> str:
+    lead_id = _require_uuid(args, "lead_id")
+    name = await _lookup_name(conn, "leads", lead_id) or f"id {lead_id[:8]}"
+    return f"Update lead '{name}' to {args.get('status')}"
+
+
+async def _update_lead_status(conn, args: dict) -> ToolResult:
+    lead_id = _require_uuid(args, "lead_id")
+    status = args.get("status")
+    if status not in LEAD_STATUSES:
+        raise ToolInputError(f"'status' must be one of: {', '.join(LEAD_STATUSES)}.")
+    name = await _lookup_name(conn, "leads", lead_id)
+    if name is None:
+        raise ToolInputError("No lead found with that id.")
+    await conn.execute("update public.leads set status=%s where id=%s", (status, lead_id))
+    return ToolResult(
+        f"Updated lead '{name}' to {status}.", {"lead_id": lead_id, "status": status}
+    )
+
+
+# --- update_client_status ---
+async def _describe_update_client_status(conn, args: dict) -> str:
+    client_id = _require_uuid(args, "client_id")
+    name = await _lookup_name(conn, "clients", client_id) or f"id {client_id[:8]}"
+    return f"Update client '{name}' to {args.get('status')}"
+
+
+async def _update_client_status(conn, args: dict) -> ToolResult:
+    client_id = _require_uuid(args, "client_id")
+    status = args.get("status")
+    if status not in CLIENT_STATUSES:
+        raise ToolInputError(f"'status' must be one of: {', '.join(CLIENT_STATUSES)}.")
+    name = await _lookup_name(conn, "clients", client_id)
+    if name is None:
+        raise ToolInputError("No client found with that id.")
+    await conn.execute("update public.clients set status=%s where id=%s", (status, client_id))
+    return ToolResult(
+        f"Updated client '{name}' to {status}.", {"client_id": client_id, "status": status}
+    )
+
+
+# --- create_schedule ---
+async def _describe_create_schedule(conn, args: dict) -> str:
+    client_id = _require_uuid(args, "client_id")
+    resource_id = _require_uuid(args, "resource_id")
+    client = await _lookup_name(conn, "clients", client_id) or "a client"
+    resource = await _lookup_name(conn, "resources", resource_id) or "a caregiver"
+    when = str(args.get("start_time", "")).strip()
+    tail = f" starting {when}" if when else ""
+    return f"Schedule a visit for {client} with {resource}{tail}"
+
+
+async def _create_schedule(conn, args: dict) -> ToolResult:
+    resource_id = _require_uuid(args, "resource_id")
+    client_id = _require_uuid(args, "client_id")
+    start_time = _require_iso(args, "start_time")
+    end_time = _require_iso(args, "end_time")
+    if end_time <= start_time:
+        raise ToolInputError("'end_time' must be after 'start_time'.")
+    resource = await _lookup_name(conn, "resources", resource_id)
+    if resource is None:
+        raise ToolInputError("No caregiver found with that id.")
+    client = await _lookup_name(conn, "clients", client_id)
+    if client is None:
+        raise ToolInputError("No client found with that id.")
+    row = await _fetch_one(
+        conn,
+        """insert into public.schedules
+             (tenant_id, resource_id, client_id, start_time, end_time)
+           values (app.current_tenant_id(), %s, %s, %s, %s)
+           returning id""",
+        (resource_id, client_id, start_time, end_time),
+    )
+    return ToolResult(
+        f"Scheduled a visit for {client} with {resource}.",
+        {"schedule_id": row["id"], "client": client, "resource": resource},
+    )
+
+
+# --- cancel_schedule ---
+async def _describe_cancel_schedule(conn, args: dict) -> str:
+    schedule_id = _require_uuid(args, "schedule_id")
+    row = await _fetch_one(
+        conn,
+        """select s.start_time, c.name as client
+             from public.schedules s
+             join public.clients c on c.id = s.client_id
+            where s.id = %s""",
+        (schedule_id,),
+    )
+    if row is None:
+        return f"Cancel visit id {schedule_id[:8]}"
+    return f"Cancel the visit for {row['client']} on {row['start_time']}"
+
+
+async def _cancel_schedule(conn, args: dict) -> ToolResult:
+    schedule_id = _require_uuid(args, "schedule_id")
+    row = await _fetch_one(
+        conn,
+        """select s.status, c.name as client
+             from public.schedules s
+             join public.clients c on c.id = s.client_id
+            where s.id = %s""",
+        (schedule_id,),
+    )
+    if row is None:
+        raise ToolInputError("No visit found with that id.")
+    if row["status"] in ("completed", "cancelled"):
+        raise ToolInputError(f"That visit is already {row['status']} and can't be cancelled.")
+    await conn.execute(
+        "update public.schedules set status='cancelled' where id=%s", (schedule_id,)
+    )
+    return ToolResult(
+        f"Cancelled the visit for {row['client']}.",
+        {"schedule_id": schedule_id, "status": "cancelled"},
+    )
+
+
+# ---------------------------------------------------------------------------
 # registration
 # ---------------------------------------------------------------------------
 def _obj(properties: dict, required: list[str] | None = None) -> dict:
@@ -406,6 +548,72 @@ register(ToolDef(
 ))
 
 
+# --- gated write tools (safe=False -> queued for human approval) --------------
+register(ToolDef(
+    name="update_lead_status",
+    description=(
+        "Change a lead's pipeline status (e.g. mark a lead as contacted or "
+        "qualified). This changes a record and requires human approval before it "
+        "takes effect."
+    ),
+    input_schema=_obj({
+        "lead_id": {"type": "string", "description": "The lead's id."},
+        "status": {"type": "string", "enum": LEAD_STATUSES, "description": "New pipeline status."},
+    }, ["lead_id", "status"]),
+    handler=_update_lead_status,
+    safe=False,
+    gate_describe=_describe_update_lead_status,
+))
+
+register(ToolDef(
+    name="update_client_status",
+    description=(
+        "Change a client's status (active, paused, or ended). This changes a "
+        "record and requires human approval before it takes effect."
+    ),
+    input_schema=_obj({
+        "client_id": {"type": "string", "description": "The client's id."},
+        "status": {"type": "string", "enum": CLIENT_STATUSES, "description": "New client status."},
+    }, ["client_id", "status"]),
+    handler=_update_client_status,
+    safe=False,
+    gate_describe=_describe_update_client_status,
+))
+
+register(ToolDef(
+    name="create_schedule",
+    description=(
+        "Schedule a visit assigning a caregiver to a client over a time window "
+        "(ISO-8601 start/end; end must be after start). This creates a record and "
+        "requires human approval before it takes effect."
+    ),
+    input_schema=_obj({
+        "resource_id": {"type": "string", "description": "The caregiver's id."},
+        "client_id": {"type": "string", "description": "The client's id."},
+        "start_time": {"type": "string", "description": "Visit start (ISO-8601)."},
+        "end_time": {"type": "string", "description": "Visit end (ISO-8601), after start."},
+    }, ["resource_id", "client_id", "start_time", "end_time"]),
+    handler=_create_schedule,
+    safe=False,
+    gate_describe=_describe_create_schedule,
+))
+
+register(ToolDef(
+    name="cancel_schedule",
+    description=(
+        "Cancel a scheduled visit by its id (only visits that aren't already "
+        "completed or cancelled). This changes a record and requires human "
+        "approval before it takes effect."
+    ),
+    input_schema=_obj({
+        "schedule_id": {"type": "string", "description": "The visit's id."},
+    }, ["schedule_id"]),
+    handler=_cancel_schedule,
+    safe=False,
+    gate_describe=_describe_cancel_schedule,
+))
+
+
 # ---------------------------------------------------------------------------
 # SQL_SCHEMA_DOC — injected into run_report's description (reporting.py). Concise
 # table/column/enum reference for the allowlisted read surface.
@@ -432,8 +640,9 @@ tasks(id uuid, title text, description text, status text, priority text,
       originating_event_id uuid -> events.id, assigned_to text, due_at timestamptz,
       created_at timestamptz, resolved_at timestamptz)
 pending_actions(id uuid, task_id uuid -> tasks.id, tool_name text, tool_input jsonb,
-                status text {pending|approved|rejected}, created_at timestamptz,
-                resolved_at timestamptz)
+                status text {pending|approved|rejected|executed|failed},
+                source_system text, result jsonb, resolved_by text,
+                created_at timestamptz, resolved_at timestamptz)
 external_ids(id uuid, entity_type text, entity_id uuid, source_system text,
              external_id text, last_synced_at timestamptz)
 documents(id uuid, filename text, mime_type text,

@@ -220,10 +220,30 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 ---
 
+## Module 5: Approval Gate & Task System
+
+**Goal**: close the loop the tool layer has been pointing at since Module 2 — state-changing tools stop being refused and start being *governed*. A gated tool call queues as a human-reviewable task instead of executing; approval triggers the real execution through the same audited seam; and office staff get the Tasks interface (PRD interface #4) to clear that queue alongside review tasks from connectors and their own manual to-dos. Built as two sub-plans per the complexity rule.
+
+**Approval gate (backend)**:
+
+- `execute_tool()`'s unsafe-tool refusal becomes the queue path: an `action.queued` event, a high-priority task titled in plain language (each gated tool provides a `gate_describe` that names the affected entities), and a `pending_actions` row holding the exact tool input — the model is told the action is queued (not an error) so it reports honestly
+- Approval executes synchronously through `execute_tool` with an approved-action bypass — one seam for every execution, so the post-approval run writes the standard `tool.called` audit row plus an `action.approved` outcome event; rejection cancels the task with an `action.rejected` event; failed executions stay visible (`failed` action, task remains open)
+- First write tools: vertical-seam entity writes (`update_lead_status`, `update_client_status`, `create_schedule`, `cancel_schedule`, all gated), core gated `send_sms`/`send_email` with placeholder log-only execution documenting the real GoTo/Gmail flows (credentials arrive with Module 7's connector work), and a safe `create_task` so the agent can create internal coordination tasks immediately
+- Tasks & approvals API: keyset-paginated task list with embedded pending actions, manual task creation, validated status transitions, approve/reject endpoints — `tasks` and `pending_actions` join the Realtime publication
+
+**Tasks interface**:
+
+- `/tasks` page: status tabs and priority filter (URL-addressable), task cards with plain-language descriptions, status transitions, manual creation, and drill-down links into the Event Log via each task's originating event
+- Inline approval cards: what will happen in plain language, Approve/Reject (with optional note), outcome shown immediately; raw tool input only behind an expandable technical-detail toggle; live updates via Supabase Realtime
+- Chat marks queued actions distinctly (additive `queued` flag on the SSE `tool_result` event, amber chip linking to `/tasks`)
+
+**Deliverable for this module**: the PRD success criterion made demonstrable — asking chat to change a lead's status visibly *stalls* (record unchanged, task created) until a human approves it in the Tasks page, at which point the change lands and the Event Log shows the whole `action.queued → action.approved → tool.called` trail in plain language; rejection and failure paths equally visible. Plans: `.agent/plans/5.approval-gate-and-tasks.md` (+ `5a.approval-gate-backend.md`, `5b.tasks-interface.md`)
+
+---
+
 ## Subsequent Modules (summary)
 
-5. **Approval Gate & Task System** — gated tools write to `pending_actions`/`tasks` instead of executing; approval triggers real execution
-6. **Control Center Shell** — auth, nav, unified needs-attention queue; Chat and Event Log become views inside it
+6. **Control Center Shell & Visual Overhaul** — auth, nav, unified needs-attention queue; Chat and Event Log become views inside it. Establish a visually stunning, sleek, professional control center shell with a frontend design overhaul. Improve the UI and UX for existing views with quality of life features and design improvementsthat make it feel more polished and user-friendly (chat, ingestion, event log). Use the frontend-design plugin.
 7. **Workflow Automation via n8n** — custom nodes calling MCP tools, embedded/linked editor
 8. **Deterministic Matching/Decision Harness** — generic phase-pipeline engine (check → check → human review on ambiguous cases), instantiated against this client's actual matching problem (e.g., can we serve this lead) using the Module 5 approval gate for ambiguous cases; the engine is core, the specific checks are per-client configuration
 9. **Custom Views / Plugin Apps** *(explicitly out of scope for this PRD — see Out of Scope)* — future domain-specific views (e.g., a scheduler) would land here, reading/writing exclusively through Module 2–3 tools

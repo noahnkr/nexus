@@ -3,6 +3,7 @@ import { Toaster } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
 import { ChatPage } from "@/pages/ChatPage";
 import { IngestionPage } from "@/pages/IngestionPage";
+import { TasksPage } from "@/pages/TasksPage";
 import { EventLogPage } from "@/pages/EventLogPage";
 import { useTheme } from "@/lib/theme";
 
@@ -13,6 +14,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <ChatPage /> },
       { path: "ingestion", element: <IngestionPage /> },
+      { path: "tasks", element: <TasksPage /> },
       { path: "events", element: <EventLogPage /> },
     ],
   },

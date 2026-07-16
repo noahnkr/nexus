@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .db import close_pool, open_pool
-from .routers import auth, chat, documents, events, webhooks
+from .routers import auth, chat, documents, events, tasks, webhooks
 from .services.mcp_server import build_mcp_asgi_app, session_manager
 
 
@@ -43,6 +43,7 @@ app.include_router(documents.router)
 app.include_router(chat.router)
 app.include_router(webhooks.router)
 app.include_router(events.router)
+app.include_router(tasks.router)
 
 # MCP server (Streamable HTTP) exposing the tool registry to external clients.
 # Bearer-token gated; unset token fails closed. n8n consumes this same mount in M7.

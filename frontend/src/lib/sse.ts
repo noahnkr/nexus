@@ -10,6 +10,7 @@ export interface ChatHandlers {
     summary: string;
     is_error: boolean;
     sources?: Source[] | null;
+    queued?: boolean;
   }) => void;
   onCitations?: (d: { sources: Source[] }) => void;
   onText?: (d: { delta: string }) => void;

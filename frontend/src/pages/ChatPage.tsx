@@ -27,7 +27,7 @@ function toolsFromMeta(msgId: string, metadata: Record<string, unknown>): UITool
   return calls.map((c, i) => ({
     id: `${msgId}-${i}`,
     label: c.summary,
-    status: c.is_error ? "error" : "done",
+    status: c.is_error ? "error" : c.queued ? "queued" : "done",
   }));
 }
 
@@ -130,12 +130,16 @@ export function ChatPage() {
             ...m,
             tools: [...(m.tools ?? []), { id: tool_use_id, label, status: "running" }],
           })),
-        onToolResult: ({ tool_use_id, summary, is_error }) =>
+        onToolResult: ({ tool_use_id, summary, is_error, queued }) =>
           patchLastAssistant((m) => ({
             ...m,
             tools: (m.tools ?? []).map((t) =>
               t.id === tool_use_id
-                ? { ...t, label: summary, status: is_error ? "error" : "done" }
+                ? {
+                    ...t,
+                    label: summary,
+                    status: is_error ? "error" : queued ? "queued" : "done",
+                  }
                 : t,
             ),
           })),
