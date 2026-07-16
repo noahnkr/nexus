@@ -1,0 +1,6 @@
+{
+  "resourceType": "Patient",
+  "id": "WS-PATIENT-TEST-1",
+  "name": [{ "text": "Walter Grimes" }],
+  "active": true
+}

@@ -1,0 +1,10 @@
+{
+  "event": "lead.created",
+  "prospect": {
+    "id": "WH-TEST-PROSPECT-9001",
+    "name": "Beatrice Coleman",
+    "phone": "+16195559001",
+    "email": "beatrice.c@example.com",
+    "source": "welcomehome-web"
+  }
+}
