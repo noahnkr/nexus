@@ -20,8 +20,7 @@ Module-by-module build status for the Nexus Control Center. Claude Code reads th
 - `[x]` pytest harness green, 28/28 — schema/constraints/triggers, tenant RLS isolation over PostgREST, events immutability both ways, pgvector HNSW nearest-neighbour
 
 ### Module 1: Foundation Chat + Ingestion
-`[-]` Built (2026-07-14) — see `.agent/plans/1.foundation-chat-ingestion.md`. Code complete; live validation pending the one-time `nexus_app` ops step + API keys.
-
+`[x]` Built (2026-07-14) — see `.agent/plans/1.foundation-chat-ingestion.md`. Code complete; live validation with chat interface and file ingestion with basic RAG.
 - `[x]` Plan written and scope locked (basic RAG in chat, persisted threads, 4-format lightweight parsers, single ordered plan)
 - `[x]` Task 1 — Migrations pushed: `nexus_app` RLS-subject role, `chat_threads`/`chat_messages` + 4-policy RLS, Storage bucket + Realtime publication. Schema/RLS tests green over PostgREST; `test_app_role.py` written (skips until `NEXUS_APP_DB_URL` set — **blocking ops step: role password, documented in README/.env.example**)
 - `[x]` Task 2 — Backend app skeleton: FastAPI, psycopg async pool on `nexus_app`, tenant-scoped connection dependency + `tenant_tx` context manager, `deps.get_tenant_id()` seam, `/healthz`. Health test green.
@@ -49,7 +48,20 @@ Module-by-module build status for the Nexus Control Center. Claude Code reads th
 - `[x]` Task 7 — Wrap-up + live validation. Automated: full `pytest backend/tests` green (97 passed, incl. nexus_app-gated tool/report/chat-loop tests), `npm run build` clean. Live (2026-07-16): tool calls validated in LangSmith and basic tool tests exercised — chat agentic loop, structured tools, and trace spans confirmed working.
 
 ### Module 3: MCP Server & External Connectors
-`[ ]` Not started. Default 🔴 Complex — break into sub-plans.
+`[-]` Planned (2026-07-16) — 🔴 Complex, split per the planning rule into two independently executable sub-plans. Parent: `.agent/plans/3.mcp-and-connectors.md` (includes the real-system integration research for WelcomeHome / GoTo Connect / WellSky / Gmail / Google Calendar). Build order 3a → 3b.
+
+**3a — MCP server** (`.agent/plans/3a.mcp-server.md`) — `[x]` Complete (2026-07-16), code + tests + live validation:
+- `[x]` Task 1 — `mcp==1.28.1` dep (sse-starlette pinned <3.x to keep fastapi's starlette<0.42); `services/mcp_server.py` (low-level Server over the registry, Streamable HTTP stateless JSON, bearer-token ASGI wrapper); mounted at `/mcp` + `session_manager.run()` in lifespan
+- `[x]` Task 2 — Gated end-to-end green: `tools/call list_leads {status:new}` over JSON-RPC → Margaret Ellison from seed + `events` row with `source_system='mcp'`; unknown tool → clean `isError`
+- `[x]` Task 3 — README + `.env.example` (`NEXUS_MCP_TOKEN`); `pytest backend/tests` green (104, incl. 7 MCP tests). Live-verified against a running backend with the real `streamablehttp_client`: initialize → list_tools (9) → `list_leads` (Margaret Ellison) + `run_report` (5 rows), both `isError=false`; two `source_system='mcp'` audit rows; LangSmith trace shows `mcp_call` chain span with the `execute_tool` tool span nested under it
+
+**3b — Connector ingress & entity resolution** (`.agent/plans/3b.connector-ingress.md`):
+- `[ ]` Task 1 — Migration: `connector_state` core table + RLS; `external_ids` category CHECK gains `'calendar'`
+- `[ ]` Task 2 — Adapter framework: `NormalizedEvent`, `ConnectorAdapter`, HMAC verify, adapter registry
+- `[ ]` Task 3 — Resolution router + vertical-seam entity writers (matched / auto-create / task fallback)
+- `[ ]` Task 4 — `POST /api/webhooks/{source}` ingress (verify → raw receipt event → normalize → route)
+- `[ ]` Task 5 — Five placeholder adapters + webhook fixtures, real-flow docs in each adapter docstring
+- `[ ]` Task 6 — README/.env.example (`NEXUS_WEBHOOK_SECRET`); live validation: signed curl → lead appears via chat; events + trace confirmed
 
 ### Module 4: Event Log
 `[ ]` Not started.
