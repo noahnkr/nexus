@@ -9,11 +9,19 @@ Two connection paths are exercised:
 Tests are skipped (not failed) when required env vars are absent, so the suite
 is safe to collect before a Supabase project is provisioned.
 """
+import asyncio
 import os
+import sys
 import time
 
 import pytest
 from dotenv import load_dotenv
+
+# psycopg's async pool/connection cannot run on Windows' default ProactorEventLoop
+# (it needs a selector loop). The gated tests drive async DB code via asyncio.run,
+# so pin the selector policy for the whole harness on Windows.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 # Load repo-root .env (backend/tests/ -> repo root is two levels up).
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))

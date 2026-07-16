@@ -36,6 +36,8 @@ See `PRD.md` for full scope, module breakdown, and success criteria. This file g
 **Structured data access**
 - No open-ended text-to-SQL against tables that can be written to. Client/schedule/lead writes always go through named, parameterized tools with defined inputs/outputs
 - Text-to-SQL, where implemented, is read-only and scoped to analytical/reporting queries only
+- All agent-callable tools live in `backend/app/services/tools/` and run through the registry's single `execute_tool()` seam — it writes the audit `events` row and enforces the `safe` flag; never call tool handlers directly from chat/MCP/workflow code
+- Entity-specific tools (`services/tools/entities.py`) are part of the re-templating seam alongside the entity migration; core tools never reference vertical concepts. Tool handlers take the already-tenant-scoped connection and never accept `tenant_id` as an input — RLS does the filtering
 
 **Agent actions & safety**
 - Any MCP tool that changes state in a way visible outside the system (send SMS/email, update a client record, trigger a workflow with external effects) must default to gated: write to `pending_actions`/`tasks` instead of executing, unless explicitly marked safe in its tool definition

@@ -1,65 +1,150 @@
-"""Chat turn orchestrator: persist user message -> retrieve -> generate (streamed)
--> persist assistant message. Yields structured events the router renders as SSE.
+"""Chat turn orchestrator — an agentic tool loop (Module 2).
 
-System prompt is two blocks: a static persona (cache_control ephemeral, so it is
-cached as history grows) and a per-turn retrieved-context block (never cached, it
-changes every turn). Message history is sent verbatim as stored (content-block
-arrays), forward-compatible with Module 2 tool blocks.
+The turn is now a bounded loop over the Anthropic Messages API with `tools`:
+
+    persist user message -> load history
+    loop (<= MAX_ITERS):
+        stream a model response
+        if it ends in tool_use:
+            persist the assistant message (content blocks verbatim)
+            run each tool through execute_tool (audited), emit SSE tool events
+            persist one user message carrying the tool_result blocks
+            continue
+        else (end_turn): stream the final answer text, persist, finish
+
+Retrieval is no longer injected per turn — it's the `search_documents` tool the
+model routes to. The system prompt is a single static block (persona + routing
+guidance) cached with `cache_control`; the tools array is cached too (breakpoint
+on its last entry). Messages are stored as Anthropic content-block JSON verbatim,
+so `tool_use`/`tool_result` blocks replay on later turns with no schema change.
+
+SSE contract (additive over Module 1):
+    start -> (tool, tool_result)* -> citations -> text* -> done   (or error)
+`citations` is emitted once, right before the final text stream, aggregating all
+search_documents passages this turn (turn-global [n] numbering). No raw JSON,
+SQL, or tool payloads ever reach a user-facing field — only plain-language
+`summary`/`label` strings do.
 """
 from __future__ import annotations
+
+import json
 
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 from ..config import settings
+from ..db import tenant_tx
 from ..llm import get_anthropic, traceable
 from .events import log_event
-from .retrieval import retrieve_chunks
+from .tools import anthropic_tool_defs, execute_tool
 
 MAX_TOKENS = 2048
-SNIPPET_CHARS = 200
+MAX_ITERS = 5
 
 PERSONA = (
-    "You are Nexus, the operational assistant for a business control center. "
-    "You answer questions using the retrieved context provided with each turn. "
-    "The context is a numbered list of sources like [1], [2]. When a statement is "
-    "supported by a source, cite it inline with its bracketed number, e.g. "
-    "\"morning visits are scheduled [2]\". Cite only sources that actually support "
-    "the claim. If the retrieved context does not contain the answer, say so plainly "
-    "rather than guessing. Be concise and factual."
+    "You are Nexus, the operational assistant for a business control center. You "
+    "help non-technical staff by answering questions about their business data.\n\n"
+    "You have three kinds of tools:\n"
+    "- Structured lookup tools for specific records and filtered lists — use these "
+    "for questions about particular entities or lists.\n"
+    "- search_documents for questions answerable from uploaded documents; cite the "
+    "passages it returns inline with their bracketed numbers like [1], and cite "
+    "only the ones that actually support your statement.\n"
+    "- run_report for aggregate or analytical questions (counts, breakdowns, "
+    "group-bys) — it runs a single read-only SQL query.\n\n"
+    "Choose the smallest set of tools that answers the question. If earlier "
+    "conversation already contains the answer, respond directly without calling "
+    "tools. Never expose raw JSON, SQL, or tool payloads in your reply — write "
+    "plain language. If the tools return nothing relevant, say so plainly rather "
+    "than guessing."
 )
+
+# Plain-language progress labels (D8). Args are only used to append a short,
+# already-plain string (a search query or a report purpose) — never raw JSON.
+TOOL_LABELS = {
+    "search_documents": "Searching documents",
+    "list_leads": "Looking up leads",
+    "get_lead": "Looking up a lead",
+    "list_clients": "Looking up clients",
+    "get_client": "Looking up a client",
+    "list_resources": "Looking up caregivers",
+    "get_resource_availability": "Checking caregiver availability",
+    "list_schedules": "Looking up schedules",
+    "run_report": "Running a report",
+}
 
 
 class ThreadNotFound(Exception):
     pass
 
 
-def _context_block(chunks: list[dict]) -> str:
-    if not chunks:
-        return "Retrieved context: (none found for this query)."
-    parts = [f"[{i}] {c['filename']}\n{c['chunk_text']}" for i, c in enumerate(chunks, 1)]
-    return "Retrieved context for this turn:\n\n" + "\n\n".join(parts)
+def _label(name: str, args: dict) -> str:
+    base = TOOL_LABELS.get(name, f"Running {name}")
+    if name == "search_documents" and isinstance(args.get("query"), str):
+        return f"{base} for “{args['query'][:60]}”…"
+    if name == "run_report" and isinstance(args.get("purpose"), str):
+        return f"{base}: {args['purpose'][:80]}"
+    return base + "…"
 
 
-def _sources(chunks: list[dict]) -> list[dict]:
-    return [
-        {
-            "n": i,
-            "document_id": c["document_id"],
-            "filename": c["filename"],
-            "chunk_id": c["chunk_id"],
-            "chunk_index": c["chunk_index"],
-            "snippet": c["chunk_text"][:SNIPPET_CHARS],
-        }
-        for i, c in enumerate(chunks, 1)
-    ]
+def _public_source(s: dict) -> dict:
+    """M1 Source shape for the citations event / persistence — drops chunk_text
+    (which is only for the model's tool_result), keeps the snippet for the UI."""
+    return {
+        "n": s["n"],
+        "document_id": s["document_id"],
+        "filename": s["filename"],
+        "chunk_id": s["chunk_id"],
+        "chunk_index": s["chunk_index"],
+        "snippet": s["snippet"],
+    }
+
+
+def _dump_content(blocks) -> list[dict]:
+    """SDK content blocks -> input-valid dicts for verbatim persistence + replay.
+
+    Thinking / redacted_thinking blocks (emitted before tool_use by reasoning
+    models) MUST be preserved with their signature and kept ahead of the tool_use
+    block, or the next request in the tool loop is rejected. Each known block type
+    is mapped to its exact input schema; unknown types are dropped rather than
+    replayed malformed."""
+    out: list[dict] = []
+    for b in blocks:
+        btype = getattr(b, "type", None)
+        if btype == "text":
+            out.append({"type": "text", "text": b.text})
+        elif btype == "tool_use":
+            out.append({"type": "tool_use", "id": b.id, "name": b.name, "input": b.input})
+        elif btype == "thinking":
+            out.append({"type": "thinking", "thinking": b.thinking, "signature": b.signature})
+        elif btype == "redacted_thinking":
+            out.append({"type": "redacted_thinking", "data": b.data})
+    return out
+
+
+async def _persist_message(
+    conn, tenant_id, thread_id, role, content, *, citations=None, metadata=None
+) -> str:
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """insert into public.chat_messages
+                 (tenant_id, thread_id, role, content, citations, metadata)
+               values (%s,%s,%s,%s,%s,%s) returning id""",
+            (
+                tenant_id,
+                thread_id,
+                role,
+                Json(content),
+                Json(citations if citations is not None else []),
+                Json(metadata or {}),
+            ),
+        )
+        return str((await cur.fetchone())["id"])
 
 
 @traceable(run_type="chain", name="chat_turn")
 async def stream_chat_turn(tenant_id: str, thread_id: str, user_text: str):
-    """Async generator yielding (event_name, data_dict) tuples."""
-    from ..db import tenant_tx
-
+    """Async generator yielding (event_name, data_dict) tuples for the router."""
     # 1. Verify thread, persist the user message, load full history.
     async with tenant_tx(tenant_id) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
@@ -69,11 +154,10 @@ async def stream_chat_turn(tenant_id: str, thread_id: str, user_text: str):
             if await cur.fetchone() is None:
                 raise ThreadNotFound(thread_id)
 
-            user_content = [{"type": "text", "text": user_text}]
             await cur.execute(
                 """insert into public.chat_messages (tenant_id, thread_id, role, content)
                    values (%s,%s,'user',%s) returning id""",
-                (tenant_id, thread_id, Json(user_content)),
+                (tenant_id, thread_id, Json([{"type": "text", "text": user_text}])),
             )
             user_message_id = str((await cur.fetchone())["id"])
 
@@ -82,63 +166,121 @@ async def stream_chat_turn(tenant_id: str, thread_id: str, user_text: str):
                    where thread_id=%s order by seq""",
                 (thread_id,),
             )
-            history = [
+            messages = [
                 {"role": r["role"], "content": r["content"]} for r in await cur.fetchall()
             ]
-        # Touch the thread so it sorts to the top of the list.
         await conn.execute(
             "update public.chat_threads set updated_at=now() where id=%s", (thread_id,)
         )
 
     yield "start", {"thread_id": thread_id, "user_message_id": user_message_id}
 
-    # 2. Retrieve context (RLS-scoped).
-    async with tenant_tx(tenant_id) as conn:
-        chunks = await retrieve_chunks(conn, user_text)
-    sources = _sources(chunks)
-    yield "citations", {"sources": sources}
-
-    # 3. Generate, streaming tokens.
-    system = [
-        {"type": "text", "text": PERSONA, "cache_control": {"type": "ephemeral"}},
-        {"type": "text", "text": _context_block(chunks)},
-    ]
+    # 2. Agentic loop.
     client = get_anthropic()
-    assistant_text = ""
-    usage: dict = {}
-    async with client.messages.stream(
-        model=settings.chat_model,
-        max_tokens=MAX_TOKENS,
-        system=system,
-        messages=history,
-    ) as stream:
-        async for delta in stream.text_stream:
-            assistant_text += delta
-            yield "text", {"delta": delta}
-        final = await stream.get_final_message()
-        usage = {
-            "input_tokens": final.usage.input_tokens,
-            "output_tokens": final.usage.output_tokens,
-        }
+    system = [{"type": "text", "text": PERSONA, "cache_control": {"type": "ephemeral"}}]
+    tool_defs = anthropic_tool_defs()
 
-    # 4. Persist the assistant message + audit event.
-    assistant_content = [{"type": "text", "text": assistant_text}]
-    metadata = {"usage": usage, "model": settings.chat_model}
+    agg_sources: list[dict] = []  # turn-global, public shape (UI + persistence)
+    tool_calls_meta: list[dict] = []  # for metadata.tool_calls (history reload)
+    usage_in = usage_out = 0
+    citations_sent = False
+    final = None
+
+    for i in range(MAX_ITERS):
+        is_last = i == MAX_ITERS - 1
+        # Force an answer (no more tool calls) on the last allowed step. Extended
+        # thinking is disabled: this module only needs tool routing, and streamed
+        # thinking blocks are fragile to persist and replay verbatim across the
+        # tool loop (empty-block / signature edge cases).
+        tool_choice = {"type": "none"} if is_last else {"type": "auto"}
+        async with client.messages.stream(
+            model=settings.chat_model,
+            max_tokens=MAX_TOKENS,
+            system=system,
+            tools=tool_defs,
+            tool_choice=tool_choice,
+            messages=messages,
+            # Disabled via extra_body: the pinned SDK (0.44) predates the native
+            # `thinking` param, but these models think by default and the old SDK
+            # drops streamed thinking content, breaking verbatim replay.
+            extra_body={"thinking": {"type": "disabled"}},
+        ) as stream:
+            async for delta in stream.text_stream:
+                if not citations_sent:
+                    yield "citations", {"sources": agg_sources}
+                    citations_sent = True
+                yield "text", {"delta": delta}
+            final = await stream.get_final_message()
+
+        usage_in += final.usage.input_tokens
+        usage_out += final.usage.output_tokens
+
+        if final.stop_reason != "tool_use":
+            break
+
+        # --- tool-use turn: run tools, persist assistant + tool_result messages ---
+        tool_uses = [b for b in final.content if getattr(b, "type", None) == "tool_use"]
+        tool_result_blocks: list[dict] = []
+        async with tenant_tx(tenant_id) as tconn:
+            for b in tool_uses:
+                model_input = b.input if isinstance(b.input, dict) else {}
+                exec_args = dict(model_input)
+                if b.name == "search_documents":
+                    exec_args["start_index"] = len(agg_sources)
+
+                yield "tool", {
+                    "name": b.name,
+                    "label": _label(b.name, model_input),
+                    "tool_use_id": b.id,
+                }
+
+                result = await execute_tool(
+                    tconn, tenant_id, b.name, exec_args, source_system="chat"
+                )
+
+                ev_sources = None
+                if b.name == "search_documents" and not result.is_error:
+                    pub = [_public_source(s) for s in result.data.get("sources", [])]
+                    agg_sources.extend(pub)
+                    ev_sources = pub
+
+                tool_calls_meta.append(
+                    {"name": b.name, "summary": result.summary, "is_error": result.is_error}
+                )
+                yield "tool_result", {
+                    "tool_use_id": b.id,
+                    "summary": result.summary,
+                    "is_error": result.is_error,
+                    "sources": ev_sources,
+                }
+
+                block = {
+                    "type": "tool_result",
+                    "tool_use_id": b.id,
+                    "content": json.dumps(result.data),
+                }
+                if result.is_error:
+                    block["is_error"] = True
+                tool_result_blocks.append(block)
+
+            assistant_content = _dump_content(final.content)
+            await _persist_message(tconn, tenant_id, thread_id, "assistant", assistant_content)
+            await _persist_message(tconn, tenant_id, thread_id, "user", tool_result_blocks)
+
+        messages.append({"role": "assistant", "content": assistant_content})
+        messages.append({"role": "user", "content": tool_result_blocks})
+
+    # 3. Persist the final assistant answer + audit event.
+    final_content = _dump_content(final.content) if final and final.content else [
+        {"type": "text", "text": ""}
+    ]
+    usage = {"input_tokens": usage_in, "output_tokens": usage_out}
+    metadata = {"usage": usage, "model": settings.chat_model, "tool_calls": tool_calls_meta}
     async with tenant_tx(tenant_id) as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(
-                """insert into public.chat_messages
-                     (tenant_id, thread_id, role, content, citations, metadata)
-                   values (%s,%s,'assistant',%s,%s,%s) returning id""",
-                (
-                    tenant_id,
-                    thread_id,
-                    Json(assistant_content),
-                    Json(sources),
-                    Json(metadata),
-                ),
-            )
-            assistant_message_id = str((await cur.fetchone())["id"])
+        assistant_message_id = await _persist_message(
+            conn, tenant_id, thread_id, "assistant", final_content,
+            citations=agg_sources, metadata=metadata,
+        )
         await log_event(
             conn,
             tenant_id=tenant_id,
@@ -146,7 +288,16 @@ async def stream_chat_turn(tenant_id: str, thread_id: str, user_text: str):
             event_type="chat.message.completed",
             entity_type="chat_thread",
             entity_id=thread_id,
-            payload={"assistant_message_id": assistant_message_id, "usage": usage},
+            payload={
+                "assistant_message_id": assistant_message_id,
+                "usage": usage,
+                "tool_calls": [
+                    {"name": t["name"], "summary": t["summary"]} for t in tool_calls_meta
+                ],
+            },
         )
 
+    if not citations_sent:
+        yield "citations", {"sources": agg_sources}
+        citations_sent = True
     yield "done", {"assistant_message_id": assistant_message_id, "usage": usage}

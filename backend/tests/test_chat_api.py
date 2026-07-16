@@ -1,10 +1,11 @@
-"""Chat SSE + persistence test. The Anthropic stream and the query embedding are
-stubbed (no keys). Runs against the real nexus_app DB for persistence, so it is
-skipped until NEXUS_APP_DB_URL is set.
+"""Chat SSE + persistence test over the real router/DB path (Module 2 agentic
+loop). The Anthropic stream is stubbed (no keys) to script a plain no-tool turn,
+which still yields the Module 1 SSE shape. Runs against the real nexus_app DB for
+persistence, so it is skipped until NEXUS_APP_DB_URL is set.
 
 Asserts: SSE frame order start -> citations -> text* -> done; user+assistant rows
 persisted as content-block jsonb; the second turn sends the full prior history to
-the model.
+the model; the (single) system block and the tools array are cached.
 """
 import asyncio
 import json
@@ -20,6 +21,24 @@ pytestmark = pytest.mark.skipif(
 
 DIM = 1024
 _capture: dict = {}
+
+
+class _Block:
+    def __init__(self, text):
+        self.type = "text"
+        self.text = text
+
+
+class _Usage:
+    input_tokens = 11
+    output_tokens = 7
+
+
+class _FinalMessage:
+    def __init__(self, text):
+        self.content = [_Block(text)]
+        self.stop_reason = "end_turn"
+        self.usage = _Usage()
 
 
 class _FakeStream:
@@ -41,21 +60,15 @@ class _FakeStream:
         return _gen()
 
     async def get_final_message(self):
-        class _U:
-            input_tokens = 11
-            output_tokens = 7
-
-        class _M:
-            usage = _U()
-
-        return _M()
+        return _FinalMessage("".join(self._deltas))
 
 
 class _FakeMessages:
-    def stream(self, *, model, max_tokens, system, messages):
-        _capture["model"] = model
-        _capture["system"] = system
-        _capture["messages"] = messages
+    def stream(self, **kwargs):
+        _capture["model"] = kwargs.get("model")
+        _capture["system"] = kwargs.get("system")
+        _capture["messages"] = list(kwargs.get("messages", []))
+        _capture["tools"] = kwargs.get("tools")
         return _FakeStream(["Hello", " there", " [1]"])
 
 
@@ -135,9 +148,11 @@ def test_chat_stream_and_persistence(monkeypatch):
         assert [m["role"] for m in sent] == ["user", "assistant", "user"]
         assert sent[-1]["content"][0]["text"] == "second question"
 
-        # system is two blocks; first is cached persona
+        # system is now a single cached persona block (M2: no per-turn context block)
         assert _capture["system"][0]["cache_control"] == {"type": "ephemeral"}
-        assert len(_capture["system"]) == 2
+        assert len(_capture["system"]) == 1
+        # the tools array is sent and cached (breakpoint on its last entry)
+        assert _capture["tools"] and _capture["tools"][-1]["cache_control"] == {"type": "ephemeral"}
 
         return tid
 
