@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { api, type ContentBlock, type Source, type ThreadOut } from "@/lib/api";
+import {
+  api,
+  type ContentBlock,
+  type Source,
+  type ThreadOut,
+  type ToolCall,
+} from "@/lib/api";
 import { streamChat } from "@/lib/sse";
 import { ThreadList } from "@/components/chat/ThreadList";
 import { MessageList, type UIMessage } from "@/components/chat/MessageList";
+import type { UITool } from "@/components/chat/ToolActivity";
 import { MessageInput } from "@/components/chat/MessageInput";
 
 function blocksToText(content: ContentBlock[]): string {
@@ -11,6 +18,17 @@ function blocksToText(content: ContentBlock[]): string {
     .filter((b) => b.type === "text" && typeof b.text === "string")
     .map((b) => b.text as string)
     .join("");
+}
+
+// Rebuild tool chips from the final assistant message's stored metadata, so a
+// reloaded thread shows the same tool activity as the live stream did.
+function toolsFromMeta(msgId: string, metadata: Record<string, unknown>): UITool[] {
+  const calls = (metadata?.tool_calls as ToolCall[] | undefined) ?? [];
+  return calls.map((c, i) => ({
+    id: `${msgId}-${i}`,
+    label: c.summary,
+    status: c.is_error ? "error" : "done",
+  }));
 }
 
 export function ChatPage() {
@@ -36,12 +54,17 @@ export function ChatPage() {
     try {
       const msgs = await api.listMessages(id);
       setMessages(
-        msgs.map((m) => ({
-          id: m.id,
-          role: m.role,
-          text: blocksToText(m.content),
-          citations: m.citations ?? [],
-        })),
+        // Hide intermediate tool-use / tool_result messages (no visible text);
+        // only human questions and assistant answers are shown.
+        msgs
+          .filter((m) => blocksToText(m.content).trim().length > 0)
+          .map((m) => ({
+            id: m.id,
+            role: m.role,
+            text: blocksToText(m.content),
+            citations: m.citations ?? [],
+            tools: toolsFromMeta(m.id, m.metadata),
+          })),
       );
     } catch (e) {
       toast.error(String(e));
@@ -97,11 +120,25 @@ export function ChatPage() {
     setMessages((prev) => [
       ...prev,
       { id: nextId(), role: "user", text, citations: [] },
-      { id: nextId(), role: "assistant", text: "", citations: [], streaming: true },
+      { id: nextId(), role: "assistant", text: "", citations: [], tools: [], streaming: true },
     ]);
 
     try {
       await streamChat(threadId, text, {
+        onTool: ({ tool_use_id, label }) =>
+          patchLastAssistant((m) => ({
+            ...m,
+            tools: [...(m.tools ?? []), { id: tool_use_id, label, status: "running" }],
+          })),
+        onToolResult: ({ tool_use_id, summary, is_error }) =>
+          patchLastAssistant((m) => ({
+            ...m,
+            tools: (m.tools ?? []).map((t) =>
+              t.id === tool_use_id
+                ? { ...t, label: summary, status: is_error ? "error" : "done" }
+                : t,
+            ),
+          })),
         onCitations: ({ sources }: { sources: Source[] }) =>
           patchLastAssistant((m) => ({ ...m, citations: sources })),
         onText: ({ delta }) =>

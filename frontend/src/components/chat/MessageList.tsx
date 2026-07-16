@@ -2,12 +2,14 @@ import { useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import type { Source } from "@/lib/api";
 import { SourceList } from "./SourceList";
+import { ToolActivity, type UITool } from "./ToolActivity";
 
 export interface UIMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
   citations: Source[];
+  tools?: UITool[];
   streaming?: boolean;
 }
 
@@ -40,6 +42,7 @@ export function MessageList({ messages }: { messages: UIMessage[] }) {
                 : "border bg-card",
             )}
           >
+            {m.role === "assistant" && <ToolActivity tools={m.tools} />}
             <div className="whitespace-pre-wrap break-words">
               {m.text}
               {m.streaming && <span className="ml-0.5 animate-pulse">▍</span>}

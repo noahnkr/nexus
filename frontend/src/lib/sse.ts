@@ -4,6 +4,13 @@ import type { Source } from "./api";
 
 export interface ChatHandlers {
   onStart?: (d: { thread_id: string; user_message_id: string }) => void;
+  onTool?: (d: { name: string; label: string; tool_use_id: string }) => void;
+  onToolResult?: (d: {
+    tool_use_id: string;
+    summary: string;
+    is_error: boolean;
+    sources?: Source[] | null;
+  }) => void;
   onCitations?: (d: { sources: Source[] }) => void;
   onText?: (d: { delta: string }) => void;
   onDone?: (d: { assistant_message_id: string; usage: Record<string, number> }) => void;
@@ -42,6 +49,12 @@ export async function streamChat(
     switch (event) {
       case "start":
         handlers.onStart?.(parsed);
+        break;
+      case "tool":
+        handlers.onTool?.(parsed);
+        break;
+      case "tool_result":
+        handlers.onToolResult?.(parsed);
         break;
       case "citations":
         handlers.onCitations?.(parsed);

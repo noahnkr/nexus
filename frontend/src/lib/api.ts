@@ -45,6 +45,14 @@ export interface ContentBlock {
   [k: string]: unknown;
 }
 
+// One tool call the agent made this turn, stored on the final assistant message's
+// metadata so tool activity can be rendered on history reload.
+export interface ToolCall {
+  name: string;
+  summary: string;
+  is_error: boolean;
+}
+
 export interface MessageOut {
   id: string;
   role: "user" | "assistant";
