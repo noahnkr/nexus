@@ -179,9 +179,29 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 ---
 
+## Module 3: MCP Server & External Connectors
+
+**Goal**: open the system in both directions — outward, an MCP server exposing the Module 2 tool registry to external clients (Claude clients now, n8n custom nodes in Module 7); inward, a webhook ingress and connector-adapter seam that normalizes events from external systems into canonical entities via `external_ids` before anything else is written. Built as two sub-plans per the complexity rule.
+
+**MCP server**:
+
+- Official MCP Python SDK, Streamable HTTP transport, mounted at `/mcp` inside the existing FastAPI app — one process, one connection pool, one tenant seam
+- Tools listed dynamically from the Module 2 registry; every call dispatches through the same audited `execute_tool()` seam with `source_system='mcp'`, so MCP calls appear in the Event Log and LangSmith exactly like chat calls
+- Static bearer-token auth (`NEXUS_MCP_TOKEN`) until Module 6 introduces real auth
+
+**Connector ingress & entity resolution**:
+
+- Single ingress `POST /api/webhooks/{source}` with per-adapter signature verification (raw receipt written to `events` for every accepted call); poll-based sources (via n8n in Module 7, or manual triggers) re-post into this same ingress so the core stays webhook-shaped
+- Adapter seam per source: `verify()` + async `normalize()` → canonical `NormalizedEvent`s; five adapters shipped as placeholders documenting the researched real integration flows — WelcomeHome (CRM, webhook subscriptions), GoTo Connect (VoIP/SMS, notification channels), WellSky Personal Care (EHR, FHIR webhooks/poll fallback), Gmail (Pub/Sub push + history fetch-back), Google Calendar (watch channels + syncToken fetch-back); real adapters later replace only adapter-file internals, never the seam
+- Resolution routing per normalized event: matched via `external_ids` → link + record; unmatched but explicitly new (e.g. `lead.created`) → auto-create canonical row + mapping via the vertical-seam entity writers; unmatched reference → plain-language review task linked to the originating event (fuzzy matching stays in Module 8)
+- New core table `connector_state` (tenant-scoped, RLS) for durable connector cursors — Gmail `historyId`, Calendar `syncToken`, channel renewals
+
+**Deliverable for this module**: an MCP client (e.g. Claude Code) can connect to `/mcp` with a bearer token and call the same governed tools as chat, fully audited; a simulated signed webhook for each of the five sources flows through ingress → normalization → entity resolution, auto-creating a lead, matching known external ids, and stalling unknowns as review tasks — every step visible in `events` and LangSmith. Plans: `.agent/plans/3.mcp-and-connectors.md` (+ `3a.mcp-server.md`, `3b.connector-ingress.md`)
+
+---
+
 ## Subsequent Modules (summary)
 
-3. **MCP Server & External Connectors** — tool server exposing Modules 1–2, plus CRM/phone/EHR/email webhook adapters normalizing into canonical entities
 4. **Event Log** — every tool call, webhook, and agent action writes an immutable event row
 5. **Approval Gate & Task System** — gated tools write to `pending_actions`/`tasks` instead of executing; approval triggers real execution
 6. **Control Center Shell** — auth, nav, unified needs-attention queue; Chat and Event Log become views inside it

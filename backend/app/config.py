@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     voyage_api_key: str = ""
 
+    # MCP server bearer token (static until Module 6 auth). Unset ⇒ /mcp 401s
+    # every request (fail closed); the rest of the API is unaffected.
+    nexus_mcp_token: str = ""
+
     # Model ids (overridable). Sonnet is primary for chat; Haiku for cheap routing.
     chat_model: str = "claude-sonnet-5"
     embedding_model: str = "voyage-3.5"

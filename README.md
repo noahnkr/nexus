@@ -170,6 +170,24 @@ npm run dev                   # -> http://localhost:5173  (proxies /api -> :8000
 Chat (default route `/`) streams responses over SSE with RAG citations; Ingestion
 (`/ingestion`) is drag-and-drop upload with live status via Supabase Realtime.
 
+### Connecting an MCP Client (Module 3a)
+
+The backend exposes its tool registry (the same tools chat uses) over MCP at
+`/mcp` (Streamable HTTP, stateless JSON). It's guarded by a static bearer token —
+set `NEXUS_MCP_TOKEN` in `.env` (see `.env.example`); an unset token 401s every
+request (fail closed). Every MCP-originated tool call writes an `events` audit row
+with `source_system='mcp'`, distinguishing it from chat.
+
+With the backend running, register it in Claude Code:
+
+```bash
+claude mcp add --transport http nexus http://localhost:8000/mcp \
+  --header "Authorization: Bearer $NEXUS_MCP_TOKEN"
+```
+
+Then ask it to, e.g., list new leads — the answer comes from seed data via the
+`list_leads` tool. (Module 7's n8n custom nodes consume this same endpoint.)
+
 ## Notes on Templating
 
 This repo is designed so that a second deployment, in a different vertical, requires:
