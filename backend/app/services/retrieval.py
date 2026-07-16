@@ -16,6 +16,9 @@ TOP_K = 8
 
 @traceable(run_type="retriever", name="retrieve_chunks")
 async def retrieve_chunks(conn, query: str, *, limit: int = TOP_K) -> list[dict]:
+    # `search_documents` (Module 2) drives this as a tool; clamp to [1, TOP_K] so
+    # a model-supplied top_k can never widen the scan beyond the module's cap.
+    limit = max(1, min(int(limit), TOP_K))
     query_vec = to_pgvector(await embed_query(query))
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
