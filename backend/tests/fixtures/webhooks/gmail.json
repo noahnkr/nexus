@@ -1,0 +1,7 @@
+{
+  "message": {
+    "data": "eyJlbWFpbEFkZHJlc3MiOiAib3BzQGRlbW8tY2FyZS5leGFtcGxlLmNvbSIsICJoaXN0b3J5SWQiOiAiOTk4ODc3IiwgIm1lc3NhZ2VzIjogW3siZnJvbSI6ICJwcm9zcGVjdC51bmtub3duQGdtYWlsLmNvbSIsICJzdWJqZWN0IjogIkNhcmUgaW5xdWlyeSBmb3IgbXkgbW90aGVyIiwgInNuaXBwZXQiOiAiSGksIEkgd2FzIHJlZmVycmVkIHRvIHlvdS4uLiJ9XX0=",
+    "messageId": "pubsub-msg-3001"
+  },
+  "subscription": "projects/nexus-demo/subscriptions/gmail-push"
+}

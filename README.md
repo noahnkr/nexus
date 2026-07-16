@@ -188,6 +188,43 @@ claude mcp add --transport http nexus http://localhost:8000/mcp \
 Then ask it to, e.g., list new leads — the answer comes from seed data via the
 `list_leads` tool. (Module 7's n8n custom nodes consume this same endpoint.)
 
+### Connector Webhook Ingress (Module 3b)
+
+External systems deliver events to a single ingress, `POST /api/webhooks/{source}`
+(`source` ∈ `welcomehome`, `goto`, `wellsky`, `gmail`, `gcal`). Each inbound
+event is verified, written to `events` as a raw receipt, then resolved to a
+canonical entity via `external_ids` before anything else is written — matched to
+an existing entity, auto-created (e.g. a new `lead.created`), or, when it can't be
+resolved, turned into a plain-language review task. Poll/export sources (and n8n
+in Module 7) re-POST into this same ingress, so the core stays webhook-shaped.
+
+The placeholder adapters verify a shared-secret HMAC: set `NEXUS_WEBHOOK_SECRET`
+in `.env`; an unset secret 401s every request (fail closed). Each real connector
+later swaps in its platform's own verification without changing the seam — the
+real integration flow is documented in each adapter's docstring under
+`backend/app/services/connectors/adapters/`.
+
+Simulate a signed event (creates a lead from the WelcomeHome fixture):
+
+```bash
+python - <<'PY'
+import hashlib, hmac, json, os, urllib.request
+secret = os.environ["NEXUS_WEBHOOK_SECRET"].encode()
+body = json.dumps({"event": "lead.created", "prospect": {
+    "id": "WH-DEMO-1", "name": "Simulated Prospect",
+    "email": "sim@example.com", "source": "welcomehome"}}).encode()
+sig = hmac.new(secret, body, hashlib.sha256).hexdigest()
+req = urllib.request.Request(
+    "http://localhost:8000/api/webhooks/welcomehome", data=body,
+    headers={"Content-Type": "application/json", "X-Nexus-Signature": sig})
+print(urllib.request.urlopen(req).read().decode())
+PY
+```
+
+Then in Chat ask "any new leads today?" — the agent's `list_leads` answer includes
+the webhook-created lead. Every call is auditable: `events` rows for
+`webhook.received` and `lead.created`, and a `webhook_ingress` span in LangSmith.
+
 ## Notes on Templating
 
 This repo is designed so that a second deployment, in a different vertical, requires:

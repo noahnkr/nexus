@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     # every request (fail closed); the rest of the API is unaffected.
     nexus_mcp_token: str = ""
 
+    # Shared HMAC secret for the webhook ingress (placeholder-adapter verification
+    # until each real connector brings its platform's scheme). Unset ⇒ every
+    # /api/webhooks/{source} request 401s (fail closed).
+    nexus_webhook_secret: str = ""
+
     # Model ids (overridable). Sonnet is primary for chat; Haiku for cheap routing.
     chat_model: str = "claude-sonnet-5"
     embedding_model: str = "voyage-3.5"

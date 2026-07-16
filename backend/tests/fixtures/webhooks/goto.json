@@ -1,0 +1,18 @@
+{
+  "call_completed": {
+    "type": "call.completed",
+    "call": {
+      "id": "goto-call-7001",
+      "from": "+1 (619) 555-9100",
+      "durationSeconds": 214
+    }
+  },
+  "sms_unknown": {
+    "type": "sms.received",
+    "message": {
+      "id": "goto-sms-7002",
+      "from": "+16195557777",
+      "text": "Is anyone available to talk about care hours?"
+    }
+  }
+}

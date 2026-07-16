@@ -66,6 +66,17 @@ class FakeCursor:
         return list(self._rows)
 
 
+class _ResultCursor:
+    """Minimal stand-in for the cursor psycopg's conn.execute() returns — enough
+    for log_event's `returning id` fetchone()."""
+
+    def __init__(self, row):
+        self._row = row
+
+    async def fetchone(self):
+        return self._row
+
+
 class FakeConn:
     def __init__(self, store):
         self.store = store
@@ -76,6 +87,8 @@ class FakeConn:
     async def execute(self, sql, params=None):
         if "insert into public.events" in sql.lower():
             self.store["events"].append(params)
+            return _ResultCursor(["evt-fake-id"])
+        return None
 
 
 # --- fake Anthropic ---------------------------------------------------------
