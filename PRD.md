@@ -158,9 +158,29 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 ---
 
+## Module 2: Structured Data Access
+
+**Goal**: give the agent governed access to the structured side of the canonical data model — named, parameterized read tools over the entity schema plus a scoped read-only text-to-SQL reporting tool — and wire them into Chat as a real agentic tool loop, so a question routes to structured tools, vector search (now a tool itself), or both. This module establishes the tool registry that Module 3's MCP server, Module 5's approval gate, and Module 7's n8n nodes all build on.
+
+**Tool layer**:
+
+- A registry of tool definitions (`name`, `description`, JSON Schema input, handler, `safe` flag) with a single `execute_tool()` execution seam: every call writes an immutable `events` row (plain-language summary + technical payload) and unsafe tools are refused until Module 5's gate exists
+- Entity read tools — this instantiation: `list_leads`, `get_lead`, `list_clients`, `get_client`, `list_resources`, `get_resource_availability`, `list_schedules` — kept in one vertical-seam file mirroring the entity migration; generic naming so the pattern re-templates
+- `search_documents` — document retrieval becomes a tool the model chooses to call; per-turn context injection is retired
+- `run_report` — read-only text-to-SQL for analytical/reporting questions only: statement validation (single SELECT, allowlisted tables), executed inside a `READ ONLY` transaction with a statement timeout, RLS-scoped like everything else. Reads only this module; all write tools deferred to Module 5's approval gate
+
+**Chat integration**:
+
+- Multi-step agentic turns: `tool_use`/`tool_result` content blocks persisted verbatim in `chat_messages` (the Module 1 schema anticipated this), bounded loop, prompt caching over the static system block and tool definitions
+- SSE contract extended additively with plain-language `tool`/`tool_result` progress events; citations aggregate across all `search_documents` calls in a turn
+- Frontend shows tool activity as human-readable chips — no raw JSON in user-facing views
+
+**Deliverable for this module**: chat that answers structured questions from live entity data ("which caregivers can handle dementia care?"), document questions via retrieval-as-a-tool with citations, and aggregate questions via read-only reporting SQL — every tool call visible as an `events` row and as a tool span in the LangSmith trace. Plan: `.agent/plans/2.structured-data-access.md`
+
+---
+
 ## Subsequent Modules (summary)
 
-2. **Structured Data Access** — parameterized tools (`get_client`, `list_leads_by_status`, `get_caregiver_availability`, etc.) plus scoped read-only text-to-SQL for reporting
 3. **MCP Server & External Connectors** — tool server exposing Modules 1–2, plus CRM/phone/EHR/email webhook adapters normalizing into canonical entities
 4. **Event Log** — every tool call, webhook, and agent action writes an immutable event row
 5. **Approval Gate & Task System** — gated tools write to `pending_actions`/`tasks` instead of executing; approval triggers real execution
