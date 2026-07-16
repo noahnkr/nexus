@@ -7,9 +7,17 @@ __pycache__/
 # Env / secrets
 .env
 .env.local
+frontend/.env
 
 # Node
 node_modules/
+frontend/dist/
+frontend/node_modules/.tmp/
+
+# TS build artifacts (compiled from *.ts sources)
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
 
 # Supabase
 supabase/.branches/

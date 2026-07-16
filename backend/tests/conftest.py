@@ -26,6 +26,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL")
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
+NEXUS_APP_DB_URL = os.getenv("NEXUS_APP_DB_URL")
 
 
 def _require(*names):
@@ -97,6 +98,25 @@ def db():
     import psycopg
 
     conn = psycopg.connect(SUPABASE_DB_URL)
+    try:
+        yield conn
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+@pytest.fixture()
+def app_db():
+    """Direct psycopg connection as the RLS-subject `nexus_app` role (nobypassrls).
+
+    This is the exact path the FastAPI backend uses: an RLS-subject role that only
+    sees rows once request.app.tenant_id is set. Skipped until the one-time ops
+    step (set nexus_app password + NEXUS_APP_DB_URL in .env) is done.
+    """
+    _require("NEXUS_APP_DB_URL")
+    import psycopg
+
+    conn = psycopg.connect(NEXUS_APP_DB_URL)
     try:
         yield conn
     finally:

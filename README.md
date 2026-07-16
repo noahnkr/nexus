@@ -130,6 +130,46 @@ pytest backend/tests              # schema, RLS, events-immutability, vector
 Tests skip cleanly if the Supabase env vars are absent, so collection is safe
 before provisioning. They require the DB to be migrated and seeded first.
 
+### Backend Role Setup (Module 1)
+
+The FastAPI backend connects to Postgres as a dedicated **RLS-subject** login role
+`nexus_app` (`nobypassrls`), never as `postgres` (which has `BYPASSRLS`) and never
+with the service-role key. The `20260715014927_app_role.sql` migration creates the
+role but deliberately sets **no password** (passwords are never committed). After
+`supabase db push`, do this one-time ops step:
+
+```bash
+# 1. Set a strong password for nexus_app (connect as postgres via SUPABASE_DB_URL)
+psql "$SUPABASE_DB_URL" -c "alter role nexus_app with password '<strong-password>';"
+
+# 2. Put the Session Pooler URI (username nexus_app.<project-ref>) in .env:
+#    NEXUS_APP_DB_URL=postgresql://nexus_app.<project-ref>:<pw>@<pooler-host>:5432/postgres
+#    plus ANTHROPIC_API_KEY, VOYAGE_API_KEY, and (optional) LANGSMITH_API_KEY.
+```
+
+The `nexus_app`-gated tests (`test_app_role.py`, ingestion, retrieval, chat) skip
+until `NEXUS_APP_DB_URL` is set; `test_app_role.py` proves the role sees zero rows
+without the tenant GUC and is rejected on cross-tenant writes — i.e. the
+postgres-BYPASSRLS hole is closed.
+
+### Running the App (Module 1)
+
+```bash
+# Backend (from backend/, with venv active and .env filled in)
+cd backend
+python -m uvicorn app.main:app --reload --port 8000
+# -> http://localhost:8000/healthz  ->  {"status":"ok"}
+
+# Frontend (separate terminal)
+cd frontend
+cp .env.example .env          # fill VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY
+npm install
+npm run dev                   # -> http://localhost:5173  (proxies /api -> :8000)
+```
+
+Chat (default route `/`) streams responses over SSE with RAG citations; Ingestion
+(`/ingestion`) is drag-and-drop upload with live status via Supabase Realtime.
+
 ## Notes on Templating
 
 This repo is designed so that a second deployment, in a different vertical, requires:
