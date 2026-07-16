@@ -1,11 +1,12 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { MessageSquare, Upload } from "lucide-react";
+import { MessageSquare, ScrollText, Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./ThemeToggle";
 
 const nav = [
   { to: "/", label: "Chat", icon: MessageSquare, end: true },
   { to: "/ingestion", label: "Ingestion", icon: Upload, end: false },
+  { to: "/events", label: "Event Log", icon: ScrollText, end: false },
 ];
 
 export function AppShell() {

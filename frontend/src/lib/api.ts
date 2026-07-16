@@ -62,6 +62,48 @@ export interface MessageOut {
   created_at: string;
 }
 
+// --- Event Log ---------------------------------------------------------------
+export interface EventOut {
+  id: string;
+  created_at: string;
+  source_system: string;
+  event_type: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  summary: string;
+  payload: Record<string, unknown>;
+}
+
+export interface EventPage {
+  events: EventOut[];
+  next_cursor: string | null;
+}
+
+export interface EventFacets {
+  source_systems: string[];
+  event_types: string[];
+}
+
+export interface EventQuery {
+  source_system?: string;
+  event_type?: string;
+  entity_type?: string;
+  entity_id?: string;
+  since?: string;
+  until?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+function eventQueryString(params: EventQuery): string {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
+  }
+  const s = q.toString();
+  return s ? `?${s}` : "";
+}
+
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const detail = await res.text();
@@ -99,6 +141,11 @@ export const api = {
     }),
   listMessages: (threadId: string) =>
     fetch(`/api/chat/threads/${threadId}/messages`).then(json<MessageOut[]>),
+
+  // Event Log
+  listEvents: (params: EventQuery = {}) =>
+    fetch(`/api/events${eventQueryString(params)}`).then(json<EventPage>),
+  getEventFacets: () => fetch("/api/events/facets").then(json<EventFacets>),
 
   // Realtime token (dev seam; replaced by Supabase Auth in Module 6)
   getRealtimeToken: () =>

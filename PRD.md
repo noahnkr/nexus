@@ -200,9 +200,28 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 ---
 
+## Module 4: Event Log
+
+**Goal**: surface the audit trail. Every module already writes immutable `events` rows (document lifecycle, chat turns, tool calls from chat and MCP, webhook receipts, connector resolutions); this module adds the business-facing read surface — PRD interface #5 — so office staff can see everything that happened across every connected system without reading logs or LangSmith.
+
+**Events API**:
+
+- `GET /api/events` — keyset-paginated feed (newest first) with filters: source system, event type, date range, and canonical entity (`entity_type` + `entity_id`) for entity drill-down ("everything that happened to this lead"), all RLS-scoped like every other read
+- `GET /api/events/facets` — distinct source systems/event types feeding the filter UI, kept dynamic so the surface stays business-agnostic
+- Plain-language summaries derived at read time: events that self-describe (`payload.summary` — tool calls, connector events) pass through; core lifecycle events get templates; unknown types humanize gracefully. No backfill — events are immutable
+
+**Event Log interface**:
+
+- Chronological feed with source badges, plain-language summary lines, and entity chips that apply the drill-down filter (URL-addressable for future deep links)
+- Expandable per-row technical detail (pretty-printed payload JSON) — the sanctioned home for raw detail per the non-technical-user constraint; summaries stay plain everywhere else
+- Live tail via Supabase Realtime (`events` added to the publication), same token pattern as ingestion status
+
+**Deliverable for this module**: an Event Log page where a chat turn, an MCP tool call, and a simulated webhook each appear as readable feed entries within moments of happening, filterable down to a single lead's history — with raw payloads one click away but never in the summary line. Plan: `.agent/plans/4.event-log.md`
+
+---
+
 ## Subsequent Modules (summary)
 
-4. **Event Log** — every tool call, webhook, and agent action writes an immutable event row
 5. **Approval Gate & Task System** — gated tools write to `pending_actions`/`tasks` instead of executing; approval triggers real execution
 6. **Control Center Shell** — auth, nav, unified needs-attention queue; Chat and Event Log become views inside it
 7. **Workflow Automation via n8n** — custom nodes calling MCP tools, embedded/linked editor

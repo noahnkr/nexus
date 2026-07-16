@@ -44,6 +44,7 @@ See `PRD.md` for full scope, module breakdown, and success criteria. This file g
 **Agent actions & safety**
 - Any MCP tool that changes state in a way visible outside the system (send SMS/email, update a client record, trigger a workflow with external effects) must default to gated: write to `pending_actions`/`tasks` instead of executing, unless explicitly marked safe in its tool definition
 - Every tool call, webhook event, and gated-action resolution writes a row to the immutable `events` table — this is the audit trail, not optional logging
+- New `events` writers set a plain-language `payload.summary`; the Event Log derives summaries at read time (`services/event_summaries.py`) for types that lack one — never backfill or mutate stored events to fix a summary
 - Task/event surfaces shown to end users must be plain-language summaries — no raw JSON or tool-call payloads in user-facing views; that detail belongs in LangSmith traces and the Event Log's technical detail only
 
 **Ingestion**
