@@ -53,3 +53,25 @@ class MessageOut(BaseModel):
 
 class MessageCreate(BaseModel):
     content: str
+
+
+# --- Event Log ---------------------------------------------------------------
+class EventOut(BaseModel):
+    id: str
+    created_at: datetime
+    source_system: str
+    event_type: str
+    entity_type: str | None = None
+    entity_id: str | None = None
+    summary: str  # derived at read time (services/event_summaries.py)
+    payload: dict[str, Any] = {}  # raw jsonb — the sanctioned technical detail
+
+
+class EventPage(BaseModel):
+    events: list[EventOut] = []
+    next_cursor: str | None = None
+
+
+class EventFacets(BaseModel):
+    source_systems: list[str] = []
+    event_types: list[str] = []
