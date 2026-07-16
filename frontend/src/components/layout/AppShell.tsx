@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { MessageSquare, Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ThemeToggle } from "./ThemeToggle";
 
 const nav = [
   { to: "/", label: "Chat", icon: MessageSquare, end: true },
@@ -35,8 +36,11 @@ export function AppShell() {
             </NavLink>
           ))}
         </nav>
-        <div className="mt-auto p-3 text-xs text-muted-foreground">
-          Control Center · v0.1
+        <div className="mt-auto flex flex-col gap-2 p-2">
+          <ThemeToggle />
+          <div className="px-1 text-xs text-muted-foreground">
+            Control Center · v0.1
+          </div>
         </div>
       </aside>
       <main className="flex min-w-0 flex-1 flex-col">
