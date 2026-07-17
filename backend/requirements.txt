@@ -24,3 +24,6 @@ httpx==0.27.2
 # starlette<0.42 that fastapi 0.115 pins.
 mcp==1.28.1
 sse-starlette==2.1.3
+
+# Module 7: automations engine — cron expression validation (7a) + scheduling (7b).
+croniter==6.0.0

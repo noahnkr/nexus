@@ -295,6 +295,107 @@ for queued actions, status transitions, manual task creation, and a "View histor
 drill-down into the Event Log. In Chat, a gated call shows an amber "queued" chip
 linking to the Tasks page.
 
+### Automations Engine (Module 7a)
+
+Automations are validated, declarative **WHEN / IF / THEN** recipes stored in the
+core `automations` table and executed by an in-app engine (no n8n). A recipe is
+JSON with three parts:
+
+- **trigger** (WHEN) — `{"type":"event","event_type":…,"source_system":…?}`,
+  `{"type":"cron","expression":"0 9 * * 1"}`, or `{"type":"manual"}`.
+- **conditions** (IF) — an AND-list of field comparisons `{"field":…,"op":…,"value":…}`.
+  Fields root at `trigger.` (the triggering event), `entity.` (the linked canonical
+  row), or `context.` (accumulated step outputs). Operators: `eq neq gt gte lt lte
+  contains not_contains exists not_exists`. Conditions are declarative only — no code,
+  no LLM in the control path.
+- **steps** (THEN, max 20, run in order) — `tool` (runs an MCP tool through the
+  audited `execute_tool` seam; gated tools queue for approval and pause the run),
+  `delay` (`minutes`/`hours`/`days`, parks the run), `condition` (a mid-sequence
+  stop-guard; false ⇒ the run completes early), `function` (a safe pure computation
+  from the function registry — `now`, `days_since`, plus vertical scoring fns), and
+  `generate` (LLM content into `context`; `"model":"fast"` uses the cheap model).
+  `{{path}}` templates in a tool `input`, function `args`, or generate `prompt`
+  render from `{trigger, entity, context}`.
+
+Each step commits in its own transaction (durable across waits/crashes), everything
+the engine writes carries `source_system='automation'`, and the run lifecycle is
+audited: `automation.run_started` → … → `automation.run_completed` /
+`automation.run_failed` (fails also raise a plain-language review task) /
+`automation.run_skipped` (concurrency: one active run per automation+entity). The
+per-step `step_log` is the plain-language run trail. Recipes default to `paused` on
+create; only `active` automations fire from triggers (Module 7b's loops).
+
+Endpoints (all tenant-scoped via RLS; a bad recipe is a 422 with a plain-language
+message):
+
+```
+GET    /api/automations?status=active|paused        list (with active-run counts)
+POST   /api/automations                             create {name, description?, trigger,
+         conditions?, steps?} → 201 (status defaults to paused)
+GET    /api/automations/{id}                        full recipe
+PATCH  /api/automations/{id}                        partial update; recipe changes
+         revalidate; status flips active/paused
+DELETE /api/automations/{id}                        204 (runs cascade)
+POST   /api/automations/{id}/run  {entity_type?, entity_id?}
+         manual "run now" — starts + advances synchronously, returns the run
+         (may be completed / waiting / waiting_approval / failed); 409 if an active
+         run already exists for this automation+entity
+GET    /api/automations/{id}/runs                   run history (newest first)
+GET    /api/automation-runs/{id}                    run detail (status, context, step_log, error)
+```
+
+Example — a "welcome a new lead" recipe (curl-runnable once you have a JWT):
+
+```bash
+curl -X POST http://localhost:8000/api/automations \
+  -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" -d '{
+    "name": "Welcome a new lead",
+    "trigger": {"type": "event", "event_type": "lead.created", "source_system": "welcomehome"},
+    "conditions": [],
+    "steps": [
+      {"type": "generate", "model": "fast", "save_as": "msg",
+       "prompt": "Write a one-line friendly welcome text to {{entity.name}} from Acme Home Care."},
+      {"type": "tool", "tool": "send_sms",
+       "input": {"to": "{{entity.phone}}", "body": "{{context.msg}}"}, "save_as": "sent"}
+    ]
+  }'
+# then trigger it manually for a specific lead:
+curl -X POST http://localhost:8000/api/automations/$ID/run \
+  -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" \
+  -d '{"entity_type": "lead", "entity_id": "<lead-uuid>"}'
+```
+
+The gated `send_sms` step parks the run at `waiting_approval` with a task in the
+Tasks page; approving it resumes the run to completion. No new **required** env vars;
+`FAST_MODEL` overrides the cheap model (default `claude-haiku-4-5-20251001`).
+
+**Background engine (Module 7b).** Triggers, scheduling, and wait-wakes run in an
+in-process loop started in the FastAPI lifespan (one process, one pool — no worker
+deployment). Each cycle runs four phases under the machine tenant:
+
+- **event dispatcher** — polls `events` behind a durable `(created_at, id)` cursor
+  (stored in `connector_state._automations`), starts a run for every `active`
+  event-trigger automation whose `event_type`/`source_system` matches. On first run
+  it initializes the cursor to the latest event (no history replay); automation-emitted
+  events are never dispatched (automations can't trigger automations).
+- **cron scheduler** — fires `active` cron automations when `next_fire_at ≤ now()`,
+  advancing `next_fire_at` (via `croniter`) *before* running so a slow run can't
+  double-fire. Activating a cron automation (or changing its expression) via PATCH
+  arms `next_fire_at`.
+- **waker** — resumes `waiting` runs whose `wake_at` has passed (delay steps).
+- **recovery sweep** — re-advances any run stuck in `running` past a staleness
+  threshold (a crash mid-advance; per-step transactions make re-entry safe) and
+  arms any un-armed active cron automation.
+
+Approving/rejecting a gated automation step resumes/cancels the parked run in the
+same request. Optional env (all have defaults):
+
+```
+NEXUS_AUTOMATIONS_ENABLED=true        # false disables the loops (API + manual runs still work)
+NEXUS_AUTOMATIONS_POLL_SECONDS=5      # cycle interval
+NEXUS_AUTOMATIONS_STALE_MINUTES=10    # recovery threshold for stuck `running` runs
+```
+
 ## Notes on Templating
 
 This repo is designed so that a second deployment, in a different vertical, requires:

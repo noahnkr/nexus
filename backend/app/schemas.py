@@ -144,3 +144,62 @@ class HomeSummary(BaseModel):
     pending_approvals: int = 0
     documents: DocumentCounts = DocumentCounts()
     events_today: int = 0
+
+
+# --- Automations -------------------------------------------------------------
+# trigger/conditions/steps ride as raw JSON: the engine's `validate_recipe` is the
+# schema authority (plain-language 422s), and M8's builder renders the recipe shape.
+class AutomationCreate(BaseModel):
+    name: str
+    description: str | None = None
+    trigger: dict[str, Any]
+    conditions: list[dict[str, Any]] = []
+    steps: list[dict[str, Any]] = []
+
+
+class AutomationPatch(BaseModel):
+    """Partial update. A present trigger/conditions/steps triggers revalidation of
+    the merged recipe; `status` flips active/paused."""
+    name: str | None = None
+    description: str | None = None
+    status: str | None = None
+    trigger: dict[str, Any] | None = None
+    conditions: list[dict[str, Any]] | None = None
+    steps: list[dict[str, Any]] | None = None
+
+
+class AutomationOut(BaseModel):
+    id: str
+    name: str
+    description: str | None = None
+    status: str  # active | paused
+    trigger: dict[str, Any]
+    conditions: list[dict[str, Any]] = []
+    steps: list[dict[str, Any]] = []
+    next_fire_at: datetime | None = None
+    created_by: str | None = None
+    active_runs: int = 0  # runs currently running/waiting/waiting_approval
+    created_at: datetime
+    updated_at: datetime
+
+
+class RunOut(BaseModel):
+    id: str
+    automation_id: str
+    status: str  # running | waiting | waiting_approval | completed | failed | cancelled
+    trigger_event_id: str | None = None
+    entity_type: str | None = None
+    entity_id: str | None = None
+    context: dict[str, Any] = {}
+    step_index: int = 0
+    step_log: list[dict[str, Any]] = []  # per-step plain-language trail (M8 timeline)
+    wake_at: datetime | None = None
+    error: str | None = None
+    finished_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RunNow(BaseModel):
+    entity_type: str | None = None
+    entity_id: str | None = None
