@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg.rows import dict_row
 
 from ..db import tenant_conn
-from ..deps import get_tenant_id
+from ..deps import get_current_user, get_tenant_id
 from ..schemas import (
     ActionResolution,
     PendingActionOut,
@@ -309,10 +309,13 @@ async def approve(
     action_id: str,
     conn=Depends(tenant_conn),
     tenant_id: str = Depends(get_tenant_id),
+    user: dict = Depends(get_current_user),
 ):
     action_id = _validate_action_id(action_id)
     try:
-        task_id = await approve_action(conn, tenant_id, action_id)
+        task_id = await approve_action(
+            conn, tenant_id, action_id, resolved_by=user["email"]
+        )
     except ActionNotFound:
         raise HTTPException(status_code=404, detail="pending action not found")
     except ActionAlreadyResolved:
@@ -326,11 +329,14 @@ async def reject(
     body: RejectBody | None = None,
     conn=Depends(tenant_conn),
     tenant_id: str = Depends(get_tenant_id),
+    user: dict = Depends(get_current_user),
 ):
     action_id = _validate_action_id(action_id)
     note = body.note if body else None
     try:
-        task_id = await reject_action(conn, tenant_id, action_id, note=note)
+        task_id = await reject_action(
+            conn, tenant_id, action_id, resolved_by=user["email"], note=note
+        )
     except ActionNotFound:
         raise HTTPException(status_code=404, detail="pending action not found")
     except ActionAlreadyResolved:

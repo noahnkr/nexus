@@ -128,3 +128,19 @@ class RejectBody(BaseModel):
 class ActionResolution(BaseModel):
     action: PendingActionOut
     task: TaskOut
+
+
+# --- Home summary ------------------------------------------------------------
+class DocumentCounts(BaseModel):
+    ready: int = 0
+    processing: int = 0
+    failed: int = 0
+
+
+class HomeSummary(BaseModel):
+    """At-a-glance counts for the Home landing widgets. Read-only, business-agnostic
+    (core tables only), RLS-scoped."""
+    open_tasks: int = 0
+    pending_approvals: int = 0
+    documents: DocumentCounts = DocumentCounts()
+    events_today: int = 0

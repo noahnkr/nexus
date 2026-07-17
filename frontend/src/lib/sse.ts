@@ -1,6 +1,6 @@
 // SSE over fetch POST. EventSource can't POST a body, so we read the response
 // stream ourselves and parse `event:`/`data:` frames separated by a blank line.
-import type { Source } from "./api";
+import { authFetch, type Source } from "./api";
 
 export interface ChatHandlers {
   onStart?: (d: { thread_id: string; user_message_id: string }) => void;
@@ -24,7 +24,7 @@ export async function streamChat(
   handlers: ChatHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
-  const res = await fetch(`/api/chat/threads/${threadId}/messages`, {
+  const res = await authFetch(`/api/chat/threads/${threadId}/messages`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ content }),

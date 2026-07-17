@@ -43,8 +43,11 @@ def _require(*names):
         pytest.skip(f"missing env: {', '.join(missing)}", allow_module_level=True)
 
 
-def mint_tenant_jwt(tenant_id: str) -> str:
-    """HS256 token PostgREST will verify: role=authenticated, tenant in app_metadata."""
+def mint_tenant_jwt(tenant_id: str, email: str | None = None) -> str:
+    """HS256 token PostgREST + the backend both verify: role=authenticated, tenant
+    in app_metadata. The backend's `get_tenant_id` accepts this HS256 path (no
+    network) alongside the ES256 tokens Supabase Auth issues. An optional `email`
+    claim populates `get_current_user` (used to exercise `resolved_by` identity)."""
     import jwt
 
     now = int(time.time())
@@ -56,7 +59,16 @@ def mint_tenant_jwt(tenant_id: str) -> str:
         "iat": now,
         "exp": now + 3600,
     }
+    if email is not None:
+        payload["email"] = email
     return jwt.encode(payload, SUPABASE_JWT_SECRET, algorithm="HS256")
+
+
+def bearer_headers(tenant_id: str = DEMO_TENANT, email: str | None = None) -> dict:
+    """Authorization header carrying an HS256 tenant JWT — the app-client shape for
+    the JWT-protected `/api` routes (Module 6). Plain function (not just a fixture)
+    so the asyncio.run-based API scenarios can build it inline."""
+    return {"Authorization": f"Bearer {mint_tenant_jwt(tenant_id, email=email)}"}
 
 
 def _rest_client(jwt_token: str | None):
@@ -136,3 +148,17 @@ def set_tenant(conn, tenant_id: str):
     """Set the request.app.tenant_id GUC on a psycopg connection (session scope)."""
     with conn.cursor() as cur:
         cur.execute("select set_config('request.app.tenant_id', %s, false)", (tenant_id,))
+
+
+@pytest.fixture()
+def auth_headers():
+    """Demo-tenant bearer header for JWT-protected `/api` routes."""
+    _require("SUPABASE_JWT_SECRET")
+    return bearer_headers(DEMO_TENANT)
+
+
+@pytest.fixture()
+def auth_headers_probe():
+    """Probe-tenant bearer header — used to prove RLS isolation through the API."""
+    _require("SUPABASE_JWT_SECRET")
+    return bearer_headers(PROBE_TENANT)

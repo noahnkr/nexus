@@ -2,46 +2,66 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Nexus Control Center — "Signal" palette (Module 6).
+   A calm, cool-slate operational canvas with a single confident teal-cyan accent
+   (evokes a live signal / connected systems — the hub's whole job). Status hues
+   are named as semantic tokens so amber=pending, emerald=done/ready, red=failed,
+   blue=processing read consistently across every surface, light and dark. */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222 47% 11%;
+    --background: 210 40% 99%;
+    --foreground: 215 32% 14%;
     --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
-    --primary: 222 47% 20%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96%;
-    --secondary-foreground: 222 47% 11%;
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
-    --accent: 210 40% 96%;
-    --accent-foreground: 222 47% 11%;
-    --destructive: 0 72% 51%;
+    --card-foreground: 215 32% 14%;
+
+    /* Accent: deep teal-cyan. Used for the brand mark, active nav, primary
+       buttons, focus rings — the one confident hue on an otherwise quiet page. */
+    --primary: 190 88% 32%;
+    --primary-foreground: 185 60% 97%;
+
+    --secondary: 210 36% 96%;
+    --secondary-foreground: 215 32% 18%;
+    --muted: 210 36% 96%;
+    --muted-foreground: 215 16% 46%;
+    --accent: 190 60% 94%;
+    --accent-foreground: 191 90% 22%;
+    --destructive: 0 72% 48%;
     --destructive-foreground: 210 40% 98%;
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 222 47% 20%;
+    --border: 214 28% 90%;
+    --input: 214 28% 88%;
+    --ring: 190 88% 32%;
     --radius: 0.6rem;
+
+    /* Semantic status hues (queued/pending, done/ready, failed, processing). */
+    --warning: 33 92% 42%;
+    --success: 152 58% 34%;
+    --info: 205 85% 40%;
   }
 
   .dark {
-    --background: 222 47% 11%;
-    --foreground: 210 40% 98%;
-    --card: 222 47% 13%;
-    --card-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222 47% 11%;
-    --secondary: 217 33% 18%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217 33% 18%;
-    --muted-foreground: 215 20% 65%;
-    --accent: 217 33% 20%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 63% 45%;
+    --background: 215 33% 9%;
+    --foreground: 210 32% 96%;
+    --card: 215 30% 12%;
+    --card-foreground: 210 32% 96%;
+
+    --primary: 187 82% 44%;
+    --primary-foreground: 200 60% 8%;
+
+    --secondary: 215 26% 17%;
+    --secondary-foreground: 210 32% 96%;
+    --muted: 215 26% 16%;
+    --muted-foreground: 215 18% 63%;
+    --accent: 191 50% 20%;
+    --accent-foreground: 187 82% 78%;
+    --destructive: 0 66% 52%;
     --destructive-foreground: 210 40% 98%;
-    --border: 217 33% 22%;
-    --input: 217 33% 22%;
-    --ring: 213 27% 70%;
+    --border: 215 24% 20%;
+    --input: 215 24% 22%;
+    --ring: 187 82% 44%;
+
+    --warning: 36 92% 56%;
+    --success: 151 52% 48%;
+    --info: 205 80% 58%;
   }
 
   * {
@@ -49,6 +69,27 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* Rendered assistant markdown — align the typography plugin's prose with the
+   palette (tight code surfaces, accent links, no oversized headings in chat). */
+@layer components {
+  .prose-chat {
+    @apply text-[0.9375rem] leading-relaxed;
+  }
+  .prose-chat :where(code):not(:where(pre code)) {
+    @apply rounded bg-muted px-1.5 py-0.5 text-[0.85em] font-medium;
+  }
+  .prose-chat :where(pre) {
+    @apply overflow-x-auto rounded-md border bg-muted/60 p-3 text-[0.85em];
+  }
+  .prose-chat :where(a) {
+    @apply font-medium text-primary underline underline-offset-2;
+  }
+  .prose-chat :where(table) {
+    @apply block w-full overflow-x-auto text-sm;
   }
 }

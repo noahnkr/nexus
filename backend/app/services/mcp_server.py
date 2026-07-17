@@ -24,7 +24,7 @@ from starlette.responses import PlainTextResponse
 
 from ..config import settings
 from ..db import tenant_tx
-from ..deps import get_tenant_id
+from ..deps import get_machine_tenant_id
 from ..llm import traceable
 
 # Importing the tools package runs the registry bootstrap (register() side
@@ -54,7 +54,7 @@ async def _dispatch(name: str, arguments: dict) -> types.CallToolResult:
     resolves every outcome to a ToolResult (and writes the `events` audit row),
     which we surface as a CallToolResult with `isError` set accordingly.
     """
-    tenant_id = get_tenant_id()
+    tenant_id = get_machine_tenant_id()
     async with tenant_tx(tenant_id) as conn:
         result = await execute_tool(
             conn, tenant_id, name, arguments, source_system="mcp"

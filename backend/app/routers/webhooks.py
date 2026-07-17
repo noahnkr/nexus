@@ -8,9 +8,10 @@ rules: verify the signature BEFORE any DB access (unauthenticated garbage never
 touches the database), then write the raw receipt to `events`, then resolve each
 normalized event to a canonical entity via `external_ids`.
 
-Single-tenant this phase via the standard `get_tenant_id` seam; Module 6 revisits
-identity. No user-facing JSON: task titles/summaries are plain language, raw
-payloads live only in `events.payload`.
+Tenant identity comes from `get_machine_tenant_id` (env `NEXUS_TENANT_ID`), not a
+user JWT: this ingress authenticates by HMAC signature, so it must never require
+the user-surface bearer token. No user-facing JSON: task titles/summaries are plain
+language, raw payloads live only in `events.payload`.
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..db import tenant_tx
-from ..deps import get_tenant_id
+from ..deps import get_machine_tenant_id
 from ..llm import traceable
 from ..services.connectors import get_adapter
 from ..services.connectors.resolution import route_normalized_event
@@ -32,7 +33,7 @@ router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 async def receive_webhook(
     source: str,
     request: Request,
-    tenant_id: str = Depends(get_tenant_id),
+    tenant_id: str = Depends(get_machine_tenant_id),
 ):
     adapter = get_adapter(source)
     if adapter is None:

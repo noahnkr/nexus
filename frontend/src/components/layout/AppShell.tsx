@@ -1,6 +1,8 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { ListTodo, MessageSquare, ScrollText, Upload } from "lucide-react";
+import { ListTodo, LogOut, MessageSquare, ScrollText, Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/lib/auth";
+import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "./ThemeToggle";
 
 const nav = [
@@ -11,6 +13,8 @@ const nav = [
 ];
 
 export function AppShell() {
+  const { session, signOut } = useAuth();
+  const email = session?.user?.email ?? "";
   return (
     <div className="flex h-screen w-full overflow-hidden">
       <aside className="flex w-56 shrink-0 flex-col border-r bg-muted/30">
@@ -40,6 +44,21 @@ export function AppShell() {
         </nav>
         <div className="mt-auto flex flex-col gap-2 p-2">
           <ThemeToggle />
+          {/* Temporary sign-out; 6b relocates this into a proper UserMenu. */}
+          {email && (
+            <div className="truncate px-1 text-xs text-muted-foreground" title={email}>
+              {email}
+            </div>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="justify-start"
+            onClick={() => signOut()}
+          >
+            <LogOut className="h-4 w-4" />
+            Sign out
+          </Button>
           <div className="px-1 text-xs text-muted-foreground">
             Control Center · v0.1
           </div>

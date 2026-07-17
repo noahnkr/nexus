@@ -64,30 +64,19 @@ export function TasksPage() {
   // Realtime: any task/pending_action change refetches the first page. Tasks are
   // mutable, so refetch-on-signal is simpler and always consistent at this scale.
   useEffect(() => {
-    let channel: ReturnType<typeof supabase.channel> | null = null;
-    let cancelled = false;
-    (async () => {
-      try {
-        const { token } = await api.getRealtimeToken();
-        await supabase.realtime.setAuth(token);
-      } catch {
-        // Live updates are a convenience; the list still loads without them.
-      }
-      if (cancelled) return;
-      const refetch = () => loadRef.current().catch(() => {});
-      channel = supabase
-        .channel("tasks-changes")
-        .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, refetch)
-        .on(
-          "postgres_changes",
-          { event: "*", schema: "public", table: "pending_actions" },
-          refetch,
-        )
-        .subscribe();
-    })();
+    // supabase-js forwards the signed-in session token to Realtime automatically.
+    const refetch = () => loadRef.current().catch(() => {});
+    const channel = supabase
+      .channel("tasks-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, refetch)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "pending_actions" },
+        refetch,
+      )
+      .subscribe();
     return () => {
-      cancelled = true;
-      if (channel) supabase.removeChannel(channel);
+      supabase.removeChannel(channel);
     };
   }, []);
 

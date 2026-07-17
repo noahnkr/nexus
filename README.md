@@ -170,6 +170,35 @@ npm run dev                   # -> http://localhost:5173  (proxies /api -> :8000
 Chat (default route `/`) streams responses over SSE with RAG citations; Ingestion
 (`/ingestion`) is drag-and-drop upload with live status via Supabase Realtime.
 
+### Auth Setup (Module 6)
+
+Every `/api` route is protected by Supabase Auth: the frontend signs in with email
++ password, and each request (including the chat SSE stream, file uploads, and
+Realtime) carries the session's access token. The backend verifies it in
+`deps.get_tenant_id` — accepting both the ES256 tokens Supabase Auth issues (via the
+project JWKS) and legacy HS256 tokens (via `SUPABASE_JWT_SECRET`) — and scopes every
+query to `app_metadata.tenant_id`. No valid token ⇒ 401; a valid token without a
+tenant claim ⇒ 403. The two machine paths keep their own credentials and are **not**
+JWT-gated: the webhook ingress verifies an HMAC signature, and `/mcp` a static
+bearer (`NEXUS_MCP_TOKEN`).
+
+There is no sign-up UI this phase — create the one office user in the Supabase
+dashboard (a one-time ops step):
+
+1. **Authentication → Add user**: enter the email + password, enable auto-confirm.
+2. Attach the tenant claim so RLS can scope the user (run against `SUPABASE_DB_URL`):
+
+   ```sql
+   update auth.users
+      set raw_app_meta_data = coalesce(raw_app_meta_data, '{}'::jsonb)
+          || '{"tenant_id": "00000000-0000-0000-0000-000000000001"}'::jsonb
+    where email = '<office-user-email>';
+   ```
+
+Then sign in at `/login`; the app redirects there automatically when signed out.
+`NEXUS_TENANT_ID` is no longer read for the user surface — it remains only for the
+machine paths (webhooks, `/mcp`), the seed, and the test harness.
+
 ### Connecting an MCP Client (Module 3a)
 
 The backend exposes its tool registry (the same tools chat uses) over MCP at

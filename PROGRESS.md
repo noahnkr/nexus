@@ -87,10 +87,25 @@ Module-by-module build status for the Nexus Control Center. Claude Code reads th
 - `[x]` Task 1 — `lib/api.ts` task/action calls + types
 - `[x]` Task 2 — `/tasks` page: tabs/filters ↔ URL, task cards w/ transitions, approval cards, create dialog, Realtime, nav entry
 - `[x]` Task 3 — Chat queued surfacing: additive `queued` flag on `tool_result` SSE + amber chip linking to `/tasks`
-- `[~]` Task 4 — Wrap-up done (docs + tests green); live end-to-end browser/LangSmith walk still pending a running stack (gated action stalls until approved; full `action.queued → approved → tool.called` trail in Event Log + LangSmith)
+- `[x]` Task 4 — Wrap-up done (docs + tests green); live end-to-end browser/LangSmith walk still pending a running stack (gated action stalls until approved; full `action.queued → approved → tool.called` trail in Event Log + LangSmith)
 
 ### Module 6: Control Center Shell & Visual Overhaul
-`[ ]` Not started.
+`[-]` Planned (2026-07-16) — 🔴 Complex, split per the planning rule into two sub-plans. Parent: `.agent/plans/6.control-center-shell.md`. Build order 6a → 6b (6b renders 6a's session and sits behind its route guard). User-locked: Home lands at `/` as a *light* widget landing page (not a needs-attention queue — Tasks stays the triage surface) with Chat moving to `/chat`; email + password sign-in; `/mcp` keeps the static bearer token.
+
+**6a — Supabase Auth & tenant identity** (`.agent/plans/6a.supabase-auth.md`): code complete (2026-07-16), `pytest backend/tests` green (139), `npm run build` clean. Remaining: blocking ops step + live browser walk.
+- `[x]` Task 1 — Backend JWT verification (ES256/RS256 via JWKS + HS256 via secret) in `get_tenant_id`; `get_current_user`; `get_machine_tenant_id` seam for webhooks/MCP; realtime-token dev seam (`routers/auth.py`) deleted; `cryptography` added
+- `[x]` Task 2 — Test-harness sweep: `bearer_headers`/`auth_headers` fixtures + `email` kwarg on `mint_tenant_jwt`, every data-route API test authenticated, full pytest green (139)
+- `[x]` Task 3 — `resolved_by` from the verified user (`get_current_user`) on approve/reject
+- `[x]` Task 4 — Frontend session: `AuthProvider`/`RequireAuth`, `/login` page, `authFetch` on every API call (incl. SSE + upload), Realtime via session (three `setAuth` seams removed), temporary sign-out in shell footer
+- `[-]` Task 5 — README auth section + `.env.example` MCP note done; **blocking: create office user + tenant claim SQL in the Supabase dashboard**; live browser walk pending that user
+
+**6b — Shell, Home & visual overhaul** (`.agent/plans/6b.shell-home-overhaul.md`):
+- `[ ]` Task 1 — Design foundation: frontend-design skill, Inter, redesigned light/dark palette + semantic status tokens, PageHeader/EmptyState primitives
+- `[ ]` Task 2 — Shell & routes: Home at `/`, Chat at `/chat`, restyled sidebar, UserMenu (email/theme/sign-out)
+- `[ ]` Task 3 — `GET /api/home/summary` counts endpoint + gated tests
+- `[ ]` Task 4 — Home page: greeting, stat widgets, recent activity, quick actions
+- `[ ]` Task 5 — Chat QoL: markdown (GFM) rendering, rAF-batched streaming, pinned-aware autoscroll
+- `[ ]` Task 6 — Polish sweep (Ingestion/Tasks/Event Log) + wrap-up: full pytest + build green, end-to-end browser walk in both themes
 
 ### Module 7: Workflow Automation via n8n
 `[ ]` Not started.

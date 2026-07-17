@@ -85,17 +85,8 @@ export function EventLogPage() {
   // Live tail: prepend matching INSERTs. The API remains the source of truth;
   // live rows show a fallback summary until a later fetch replaces them.
   useEffect(() => {
-    let channel: ReturnType<typeof supabase.channel> | null = null;
-    let cancelled = false;
-    (async () => {
-      try {
-        const { token } = await api.getRealtimeToken();
-        await supabase.realtime.setAuth(token);
-      } catch {
-        // Live updates are a convenience; the feed still loads without them.
-      }
-      if (cancelled) return;
-      channel = supabase
+    // supabase-js forwards the signed-in session token to Realtime automatically.
+    const channel = supabase
         .channel("events-changes")
         .on(
           "postgres_changes",
@@ -122,10 +113,8 @@ export function EventLogPage() {
           },
         )
         .subscribe();
-    })();
     return () => {
-      cancelled = true;
-      if (channel) supabase.removeChannel(channel);
+      supabase.removeChannel(channel);
     };
   }, []);
 
