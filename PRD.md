@@ -270,12 +270,52 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 ---
 
+## Module 7: Core Automations Framework
+
+**Goal**: the engine everything automation-shaped runs on — replacing the previously planned n8n integration with an in-app framework. The driving observation: outside two prescribed processes (the lead marketing funnel, M9; the caregiver hiring process, M10), no automation needs its entire flow specified step by step — most follow a **WHEN (trigger) → IF (condition) → THEN (actions)** recipe. This module builds that engine and its API, business-agnostic and headless; the Automations Center (M8) and the two pipeline views (M9–10) are all surfaces over it. Built as two sub-plans per the complexity rule.
+
+**Recipe model & synchronous engine**:
+
+- Two new core tables: `automations` (name, active/paused, declarative WHEN/IF/THEN definition as validated JSON) and `automation_runs` (durable run state: status, step index, accumulated context, wake time) — plus `pending_actions.automation_run_id` so approvals know which run they pause
+- Recipe vocabulary: event/cron/manual triggers; declarative IF conditions (field comparisons over trigger/entity/context — no code, no LLM in the control path); THEN steps of MCP tool calls (through the audited `execute_tool` seam with `source_system='automation'` — gated tools queue for approval exactly as from chat, pausing the run), delays/waits, mid-sequence condition guards, registered custom functions (the seam vertical scoring functions plug into), and LLM content generation with `{{path}}` templating
+- One active run per (automation, entity) — a re-trigger mid-flight is skipped, not double-sent; a failed step fails the run and creates a plain-language review task
+- REST API: automations CRUD with plain-language validation errors, manual run-now, run history — the whole engine curl-testable before any UI exists
+
+**Triggers, scheduling & durability**:
+
+- In-app engine loops (same process as the API, started in the FastAPI lifespan): an event-trigger dispatcher polling the immutable `events` stream behind a durable cursor (anything in the audit trail can trigger an automation; automation-emitted events are never re-dispatched — no cycles), a cron scheduler (`next_fire_at` bookkeeping), a waker for due delays, and a stale-run recovery sweep
+- Runs advance one transaction per step, so restarts resume mid-sequence without replaying side effects; approval resolution resumes (approve) or cancels (reject) the paused run through the same approvals engine
+- Run lifecycle events (`automation.run_started/completed/failed/skipped/cancelled`) in the Event Log, and every run traced as a LangSmith chain span
+
+**Deliverable for this module**: with no UI beyond curl and the existing Tasks page — a signed `lead.created` webhook fires an automation that generates a personalized message and queues a gated `send_sms`; the run visibly parks awaiting approval, approving it in Tasks resumes and completes the run; a cron automation fires on schedule; and a run parked on a multi-day delay survives a backend restart. The full trail is readable in the Event Log and LangSmith. Plans: `.agent/plans/7.core-automations-framework.md` (+ `7a.recipe-model-and-engine.md`, `7b.triggers-scheduler-durability.md`)
+
+---
+
+## Module 8: Automations Center
+
+**Goal**: give Module 7's headless engine its face — PRD interface #6, the monday.com-inspired generic automations surface. Office staff see every automation at a glance, manage them safely, and create new ones two ways: composing a recipe in a sentence builder, or describing the automation in plain English and reviewing what an agent drafts. The builder's components and vocabulary endpoint are deliberately reusable — Modules 9–10's constrained per-stage builders compose the same pieces. Built as two sub-plans per the complexity rule.
+
+**Center management**:
+
+- `/automations` grid of automation cards: status (active/paused with pause/resume), plain-language trigger line, "requires approval" chip when a step is gated, active-run and last-run info — live via Supabase Realtime (both tables already published)
+- Automation detail: read-mode recipe (sentence + step list), run history, and a per-step run timeline from the engine's `step_log`; raw recipe/context JSON only behind technical expanders
+- Run cancellation through the approvals seam (cancelling a run that's awaiting approval rejects its pending action — one seam, no orphans); definition edits are guarded while runs are in flight (409 — cancel or let them finish)
+- Home widget-grid extension: automations stat card (active count, today's runs)
+
+**Recipe builder & agent drafting** (dedicated pages, `/automations/new` + `/automations/{id}/edit`):
+
+- Sentence + step-list layout: WHEN and IF as an editable sentence with inline chips; THEN as a reorderable list of step cards (tool / delay / condition / function / generate) with schema-driven forms and a `{{path}}` template-insertion helper
+- A vocabulary endpoint feeds the whole builder (tools with input schemas + safety flags, functions, event types, operators) so new tools and vertical functions appear with zero frontend changes
+- Agent drafting: describe the automation → LLM drafts a Pydantic-validated recipe (one retry on validation failure) → the draft prefills the builder for human review — **drafts are never persisted by the agent**; the standard validated create path is the only writer
+
+**Deliverable for this module**: an office user types "when a new lead comes in from WelcomeHome, wait a day, then text them a personalized welcome," reviews the drafted recipe in the builder, activates it — and when the signed webhook fires, watches the run advance live on the detail page, park awaiting SMS approval, and complete after approving in Tasks; the whole trail readable in the Event Log and LangSmith. Plans: `.agent/plans/8.automations-center.md` (+ `8a.center-management.md`, `8b.recipe-builder.md`)
+
+---
+
 ## Subsequent Modules (summary)
 
-Modules 7–10 replace the previously planned n8n integration with an in-app automations platform. The observation driving the split: outside two prescribed processes — the **lead marketing funnel** and the **caregiver hiring process** — no automation needs its entire flow specified step by step; most follow a **WHEN (trigger) → IF (condition) → THEN (actions)** recipe. So instead of a general-purpose workflow builder, the system gets one shared engine (M7), a monday.com-style Automations Center for recipe-shaped automations (M8), and two pipeline dashboard views where the prescribed funnels live as per-stage action sequences (M9–10).
+Modules 9–10 complete the automations platform on Modules 7–8: two pipeline dashboard views where the prescribed funnels live as per-stage action sequences.
 
-7. **Core Automations Framework** — the business-agnostic engine all three surfaces run on: automation definitions (WHEN/IF/THEN) and durable runs as new core tables; trigger listeners over the events stream plus cron scheduling for time-based triggers and due waits; run status maintained across delay/wait sequences (runs survive restarts); step vocabulary of MCP tool actions (through the audited `execute_tool` seam — gated tools still queue for approval, pausing the run), conditionals, delays/waits, custom functions, and LLM content generation. Every trigger, step, and resolution lands in the Event Log. No builder UI in this module — engine + API only.
-8. **Automations Center** — PRD interface #6: a grid view of active automations (status, run history, pause/resume). Create and edit via a card/recipe sentence builder over the M7 vocabulary (monday.com-style), or describe the automation in natural language and an agent drafts the recipe for review before activation.
 9. **Leads View & Marketing Funnel** — PRD interface #7, the first vertical dashboard view (the entity-dashboard/pipeline pattern is core; lead specifics are the re-templating seam): funnel visualization over the pre-defined lead stages (inline or separate tab); an interactive per-stage outreach builder — deliberately less flexible than a free-form workflow since stages are fixed — composing automatic SMS/email/call tasks with delays, waits, conditionals, custom functions, and content generation on the M7 framework; a lead directory with expanded profiles (basic info, entity event log, AI "smart summary" of current state at the top); funnel/conversion metrics widgets.
 10. **Caregivers View & Hiring Process** — PRD interface #8, the same dashboard pattern instantiated for caregiver recruiting: hiring-stage pipeline with automated accepted/denied emails and scoring functions, applicant directory with smart summaries and event history, hiring metrics.
 11. **Deterministic Matching/Decision Harness** — generic phase-pipeline engine (check → check → human review on ambiguous cases), instantiated against this client's actual matching problem (e.g., can we serve this lead) using the Module 5 approval gate for ambiguous cases; the engine is core, the specific checks are per-client configuration
