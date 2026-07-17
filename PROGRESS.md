@@ -108,25 +108,25 @@ Module-by-module build status for the Nexus Control Center. Claude Code reads th
 - `[x]` Task 6 — Polish sweep: `PageHeader`/`EmptyState` across Ingestion/Tasks/Event Log + ThreadList; status badges consolidated onto semantic tokens (Badge `success`/`warning`/`info`, StatusBadge, TaskCard, ApprovalCard, ToolActivity); README routes note. Full pytest + build green; live browser walk pending
 
 ### Module 7: Core Automations Framework
-`[-]` Planned (2026-07-16) — 🔴 Complex, split per the planning rule into two sub-plans. Parent: `.agent/plans/7.core-automations-framework.md`. Build order 7a → 7b. The business-agnostic WHEN/IF/THEN engine (n8n dropped); engine + REST only — all UI and agent surfaces are M8+. User-locked: declarative-only IF conditions (function steps compute values into context); step failure ⇒ fail run + review task (no retries); one active run per (automation, entity), re-triggers skipped; no agent tools this module.
+`[x]` Complete (2026-07-17) — 🔴 Complex, split per the planning rule into two sub-plans (both done, live-validated). Parent: `.agent/plans/7.core-automations-framework.md`. Build order 7a → 7b. The business-agnostic WHEN/IF/THEN engine (n8n dropped); engine + REST only — all UI and agent surfaces are M8+. User-locked: declarative-only IF conditions (function steps compute values into context); step failure ⇒ fail run + review task (no retries); one active run per (automation, entity), re-triggers skipped; no agent tools this module. `pytest backend/tests` = 181 passed; `npm run build` clean; end-to-end live walk passed.
 
-**7a — Recipe model, tables & synchronous engine core** (`.agent/plans/7a.recipe-model-and-engine.md`):
-- `[ ]` Task 1 — Migration: `automations` + `automation_runs` core tables (RLS, concurrency partial-unique index, waker index), `pending_actions.automation_run_id`, Realtime publication
-- `[ ]` Task 2 — Recipe vocabulary (Pydantic + plain-language validation), `{{path}}` templates, function registry (core `now`/`days_since`), vertical entity-lookup seam
-- `[ ]` Task 3 — Engine core: `start_run`/`advance_run` (one tx per step), gate pause (`waiting_approval`), delay parking, fail path + review task, concurrency guard + `run_skipped`
-- `[ ]` Task 4 — Automations & runs REST API (CRUD w/ 422 plain errors, manual run-now, run history; RLS + 401 tests)
-- `[ ]` Task 5 — Wrap-up: README endpoints + recipe example, full pytest + build green
+**7a — Recipe model, tables & synchronous engine core** (`.agent/plans/7a.recipe-model-and-engine.md`): ✅ code complete (2026-07-17), `pytest backend/tests` green (172 passed, +32 automations tests); `npm run build` clean
+- `[x]` Task 1 — Migration pushed (`20260717000000_automations_infra.sql`): `automations` + `automation_runs` core tables (4-policy RLS, concurrency partial-unique index, waker index), `pending_actions.automation_run_id`, Realtime publication. Verified live on the remote DB.
+- `[x]` Task 2 — Recipe vocabulary (`recipe.py`, Pydantic discriminated unions + plain-language `validate_recipe`), `{{path}}` templates (`templates.py`, type-preserving full-value refs, fail-loud on missing path), function registry (`functions.py`, core `now`/`days_since`), vertical entity-lookup seam (`entities.py`). 20 offline tests green.
+- `[x]` Task 3 — Engine core (`engine.py`): `start_run`/`advance_run` (one `tenant_tx` per step), gate pause (`waiting_approval` + `automation_run_id` stamp), delay parking (`waiting` + `wake_at`), fail path + high-priority review task + `automation.run_failed`, concurrency guard + `automation.run_skipped`, `step_log` trail, `@traceable` chain span. 8 gated tests green.
+- `[x]` Task 4 — Automations & runs REST API (`routers/automations.py`): CRUD w/ 422 plain errors, manual run-now (skip-conditions override → 409 on concurrency), run history/detail; RLS + 401 tests green.
+- `[x]` Task 5 — Wrap-up: README automations section (endpoints + curl-runnable "welcome a new lead" recipe); `croniter` + `fast_model` added; full `pytest backend/tests` green (172); `npm run build` clean.
 
-**7b — Triggers, scheduler & durable runs** (`.agent/plans/7b.triggers-scheduler-durability.md`):
-- `[ ]` Task 1 — Engine loop skeleton in lifespan + settings (`NEXUS_AUTOMATIONS_ENABLED`, poll seconds, stale minutes); testable `*_once()` ticks
-- `[ ]` Task 2 — Event dispatcher: keyset poll of `events` behind a durable `connector_state` cursor; loop guard (automation events never re-dispatched); no history replay on first run
-- `[ ]` Task 3 — Cron triggers: `next_fire_at` bookkeeping (croniter), `skip locked` claims, advance-before-run, PATCH recompute
-- `[ ]` Task 4 — Waker for due `waiting` runs + stale-`running` recovery sweep
-- `[ ]` Task 5 — Approval resume/cancel hook in `services/approvals.py` (approved→resume in-request; rejected→cancelled; post-approval failure→run failed, no second task)
-- `[ ]` Task 6 — Wrap-up + live end-to-end walk: webhook → generate → gated send_sms → approve in Tasks → run completes; full Event Log + LangSmith trail; cron + restart-survival checks
+**7b — Triggers, scheduler & durable runs** (`.agent/plans/7b.triggers-scheduler-durability.md`): ✅ code complete + live-validated (2026-07-17), `pytest backend/tests` green (181 passed, +9 scheduler tests); `npm run build` clean
+- `[x]` Task 1 — Engine loop skeleton (`scheduler.py` `run_cycle` + four `*_once()` ticks) in lifespan + settings (`NEXUS_AUTOMATIONS_ENABLED`, `_POLL_SECONDS`, `_STALE_MINUTES`); uvicorn smoke green enabled + disabled; `test_cycle_runs_clean` green
+- `[x]` Task 2 — Event dispatcher: keyset `(created_at, id)` poll of `events` behind a durable `connector_state._automations` cursor; loop guard (automation-sourced events never dispatched); no history replay on first run. Gated tests green.
+- `[x]` Task 3 — Cron triggers: `next_fire_at` bookkeeping (croniter, `next_fire`), `for update skip locked` claims, advance-before-run, PATCH recompute on activation/expression change. Gated tests green.
+- `[x]` Task 4 — Waker for due `waiting` runs + stale-`running` recovery sweep (+ arms un-armed active cron). Gated tests green.
+- `[x]` Task 5 — Approval resume/cancel hook in `services/approvals.py` (approved→resume in-request via `resume_after_approval`; rejected→`cancel_after_rejection`; post-approval failure→run failed, no second review task). Gated tests green.
+- `[x]` Task 6 — Wrap-up: README engine-loops section + `.env.example` entries. **Live walk PASSED** (running server): seeded `lead.created` → dispatcher started the run → live `generate` (fast model) produced a welcome message → gated `send_sms` parked `waiting_approval` with a task → API approve resumed and completed the run; full plain-language Event Log trail (`lead.created → automation.run_started → action.queued → action.approved → tool.called → automation.run_completed`, all `source_system='automation'`).
 
 ### Module 8: Automations Center
-`[-]` Planned (2026-07-16) — 🔴 Complex, split per the planning rule into two sub-plans. Parent: `.agent/plans/8.automations-center.md`. Build order 8a → 8b; requires Module 7 built first. User-locked: sentence + step-list builder layout; dedicated builder pages (`/automations/new`, `/{id}/edit`); agent drafting = draft → review in builder (drafts never persisted by the agent); no starter templates. Plan 7a amended at planning time: `automation_runs.step_log` + `FunctionDef.input_schema` (both consumed here).
+`[ ]` Planned (2026-07-16) — 🔴 Complex, split per the planning rule into two sub-plans. Parent: `.agent/plans/8.automations-center.md`. Build order 8a → 8b; requires Module 7 built first. User-locked: sentence + step-list builder layout; dedicated builder pages (`/automations/new`, `/{id}/edit`); agent drafting = draft → review in builder (drafts never persisted by the agent); no starter templates. Plan 7a amended at planning time: `automation_runs.step_log` + `FunctionDef.input_schema` (both consumed here).
 
 **8a — Grid, run history & management** (`.agent/plans/8a.center-management.md`):
 - `[ ]` Task 1 — Backend: `POST /api/automation-runs/{id}/cancel` (waiting_approval cancels via the approvals seam), definition-edit guard (409 w/ runs in flight), list enrichment (`active_runs`/`last_run`/`requires_approval`), Home summary automations block
@@ -153,3 +153,27 @@ Module-by-module build status for the Nexus Control Center. Claude Code reads th
 
 ### Module 12: Advanced RAG & Scale-Up
 `[ ]` Not started. (Formerly Module 10. The former Module 9 "Custom Views / Plugin Apps" placeholder is retired — Modules 9–10 now carry the vertical-view pattern in scope; anything beyond them stays out of scope.)
+
+### Future Plans
+
+* Settings View
+* Content generation and output files e.g., formatted dynamic care plan
+* Stop / cancel streaming. Abort chat strea mid rresponse. Also fix send button positioning and text box. Button height does not match text input and text input not centered.
+* Sidebarr collapse to icons
+* Calender date input improvement that matches theme. Current one is ugly.
+* Home page dashboard with census, billable hours week-over-week, new starts, caregiver headcount, coverage rate (% of visits filled), AR/unbilled, and the top open alerts.
+* Referral-source dashboard — which partners (hospitals, senior-living, discharge planners) send leads that actually convert. Referral ROI drives where the owner spends relationship time; this is the highest-value net-new growth view not already on the roadmap.
+* Client & care oversight: 
+    * Active census — count of active clients, by region/payer, plus authorized hours vs scheduled vs delivered. The gap between authorized and delivered is direct revenue leakage — owners obsess over it.
+    * Per-client care overview — care plan, assigned caregivers, schedule, family contacts, status (active / hospital-hold / discharged). Care plans and visit notes flow through your ingestion + RAG so they're searchable in chat.
+    * Visit verification (EVV) — worth flagging even if you hadn't considered it: Electronic Visit Verification (clock-in/out, missed/late visits) is legally mandated for Medicaid-funded home care in most states. It's connector-shaped and you already have telephony/EHR placeholder adapters (GoTo Connect, WellSky) to hang it on.
+* Scheduling system:  the daily fire in home care, so it's the flagship. Three linked pieces:
+    * Schedule board — a week calendar, caregivers as rows and visits as blocks (or flip to client-rows). Color by state: confirmed / unfilled / call-out / overtime-risk. This is a direct render of schedules joined to resources and clients.
+    * Coverage / open-shift view — the "who's not covered tomorrow" list. Unfilled or at-risk visits, sorted by how soon. This is the single view an owner opens first every morning.
+    * Caregiver–client matching tool — the smart part. Given an open shift, rank available caregivers by: qualification match (qualifications), region proximity (regions), availability, continuity (has this caregiver served this client before — owners care enormously about this), and overtime/conflict avoidance. This is almost exactly what the planned M11 matching harness is for, exposed as an MCP tool like find_available_caregivers so you can also just ask in chat: "who can cover Margaret's Tuesday 9am?"
+    * The call-out → replacement flow ties it together and shows off your existing plumbing: caregiver calls out → matching tool ranks replacements → gated send_sms offers the shift → owner approves in Tasks → creal event.
+* Workforce & Compliance 
+    * Caregiver roster / utilization — headcount, active vs inactive, hours-this-week, utilization %, availability. Overlaps M10.
+    * Credential expiry tracker — CPR, TB test, background check, license, all with expiry dates on qualifications. This is a killer automations use case: WHEN a credential is within 30/60 days of expiry, THEN queue a task + notify. In this industry an expired credential can mean a caregiver legally can't work a shift — surfacing it before it bites is high-value and cheap given the engine exists.
+    * Retention / at-risk view — turnover in home care runs 70–80%/yr; a view flagging declining hours, missed shifts, or short tenure lets the owner intervene before someone quits.
+    The scheduling system (your example, built out)

@@ -46,7 +46,19 @@ class Settings(BaseSettings):
 
     # Model ids (overridable). Sonnet is primary for chat; Haiku for cheap routing.
     chat_model: str = "claude-sonnet-5"
+    # Cheap model for high-volume/low-stakes generation — the automations `generate`
+    # step's `fast` option maps here (Haiku-for-high-volume stack rule).
+    fast_model: str = "claude-haiku-4-5-20251001"
     embedding_model: str = "voyage-3.5"
+
+    # Automations engine loops (Module 7b). The in-process dispatcher/cron/waker/
+    # recovery cycle runs in the FastAPI lifespan. All optional/overridable:
+    #   enabled=false disables the loops entirely (the REST API + manual runs still
+    #   work); poll_seconds is the cycle interval; stale_minutes is how long a run
+    #   may sit in `running` before the recovery sweep re-advances it.
+    nexus_automations_enabled: bool = True
+    nexus_automations_poll_seconds: float = 5
+    nexus_automations_stale_minutes: int = 10
 
     # LangSmith — no-ops gracefully when the key is unset.
     langsmith_tracing: str = ""

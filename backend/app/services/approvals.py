@@ -23,6 +23,7 @@ from __future__ import annotations
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
+from .automations import cancel_after_rejection, resume_after_approval
 from .events import log_event
 from .tools import execute_tool
 
@@ -41,7 +42,7 @@ async def _lock_action(conn, action_id: str) -> dict:
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """select pa.id, pa.task_id, pa.tool_name, pa.tool_input, pa.status,
-                      pa.source_system, t.title as task_title
+                      pa.source_system, pa.automation_run_id, t.title as task_title
                  from public.pending_actions pa
                  join public.tasks t on t.id = pa.task_id
                 where pa.id = %s
@@ -112,6 +113,21 @@ async def approve_action(
             "outcome": final_status,
         },
     )
+
+    # If this action gated an automation step (Module 7b), resume the paused run in
+    # the same request: on success the run continues from the gated step; on a
+    # post-approval handler failure the run fails with NO second review task (the
+    # failed action's task already stays pending — one human surface per failure).
+    if action.get("automation_run_id") is not None:
+        error = None
+        if result.is_error and isinstance(result.data, dict):
+            error = result.data.get("error")
+        await resume_after_approval(
+            conn, tenant_id, str(action["automation_run_id"]),
+            tool_result=result.data if isinstance(result.data, dict) else {},
+            is_error=result.is_error, error=error,
+        )
+
     return task_id
 
 
@@ -151,4 +167,11 @@ async def reject_action(
             "tool_name": action["tool_name"],
         },
     )
+
+    # A rejected gated automation step cancels its run (Module 7b).
+    if action.get("automation_run_id") is not None:
+        await cancel_after_rejection(
+            conn, tenant_id, str(action["automation_run_id"]), resolved_by=resolved_by
+        )
+
     return task_id
