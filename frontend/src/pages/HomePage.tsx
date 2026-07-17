@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, FileText, ListTodo, ScrollText } from "lucide-react";
+import { CheckCircle2, FileText, ListTodo, ScrollText, Zap } from "lucide-react";
 import { api, type EventOut, type HomeSummary } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { StatCard } from "@/components/home/StatCard";
@@ -61,6 +61,13 @@ export function HomePage() {
           .join(" · ")
       : "In the knowledge base";
 
+  const auto = summary?.automations;
+  const autoSub = auto?.failed_today
+    ? `${auto.failed_today} failed today`
+    : auto?.runs_today
+      ? `${auto.runs_today} run${auto.runs_today === 1 ? "" : "s"} today`
+      : "Active recipes";
+
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-6xl px-6 py-8 md:px-8 md:py-10">
@@ -79,7 +86,7 @@ export function HomePage() {
         </header>
 
         {/* At-a-glance counts */}
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
           <StatCard
             to="/tasks"
             label="Open tasks"
@@ -104,6 +111,15 @@ export function HomePage() {
             icon={FileText}
             sublabel={docSub}
             tone={docs?.failed ? "warning" : "default"}
+            loading={loading}
+          />
+          <StatCard
+            to="/automations"
+            label="Automations"
+            count={auto?.active ?? 0}
+            icon={Zap}
+            sublabel={autoSub}
+            tone={auto?.failed_today ? "warning" : "info"}
             loading={loading}
           />
           <StatCard

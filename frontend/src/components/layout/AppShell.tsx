@@ -5,16 +5,19 @@ import {
   MessageSquare,
   ScrollText,
   Upload,
+  Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { UserMenu } from "./UserMenu";
 
 // Tasks sits above Ingestion: it's the daily-triage surface, Ingestion is
-// occasional. Home lands at "/"; Chat moved to "/chat".
+// occasional. Automations (the Center) sits between Tasks and Ingestion. Home
+// lands at "/"; Chat moved to "/chat".
 const nav = [
   { to: "/", label: "Home", icon: Home, end: true },
   { to: "/chat", label: "Chat", icon: MessageSquare, end: false },
   { to: "/tasks", label: "Tasks", icon: ListTodo, end: false },
+  { to: "/automations", label: "Automations", icon: Zap, end: false },
   { to: "/ingestion", label: "Ingestion", icon: Upload, end: false },
   { to: "/events", label: "Event Log", icon: ScrollText, end: false },
 ];

@@ -6,6 +6,9 @@ import { ChatPage } from "@/pages/ChatPage";
 import { IngestionPage } from "@/pages/IngestionPage";
 import { TasksPage } from "@/pages/TasksPage";
 import { EventLogPage } from "@/pages/EventLogPage";
+import { AutomationsPage } from "@/pages/AutomationsPage";
+import { AutomationDetailPage } from "@/pages/AutomationDetailPage";
+import { AutomationBuilderPage } from "@/pages/AutomationBuilderPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { RequireAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
@@ -24,6 +27,10 @@ const router = createBrowserRouter([
       { path: "chat", element: <ChatPage /> },
       { path: "ingestion", element: <IngestionPage /> },
       { path: "tasks", element: <TasksPage /> },
+      { path: "automations", element: <AutomationsPage /> },
+      { path: "automations/new", element: <AutomationBuilderPage /> },
+      { path: "automations/:id", element: <AutomationDetailPage /> },
+      { path: "automations/:id/edit", element: <AutomationBuilderPage /> },
       { path: "events", element: <EventLogPage /> },
       // Stale bookmarks (old "/" was Chat) and unknown paths land on Home.
       { path: "*", element: <Navigate to="/" replace /> },

@@ -126,21 +126,21 @@ Module-by-module build status for the Nexus Control Center. Claude Code reads th
 - `[x]` Task 6 — Wrap-up: README engine-loops section + `.env.example` entries. **Live walk PASSED** (running server): seeded `lead.created` → dispatcher started the run → live `generate` (fast model) produced a welcome message → gated `send_sms` parked `waiting_approval` with a task → API approve resumed and completed the run; full plain-language Event Log trail (`lead.created → automation.run_started → action.queued → action.approved → tool.called → automation.run_completed`, all `source_system='automation'`).
 
 ### Module 8: Automations Center
-`[ ]` Planned (2026-07-16) — 🔴 Complex, split per the planning rule into two sub-plans. Parent: `.agent/plans/8.automations-center.md`. Build order 8a → 8b; requires Module 7 built first. User-locked: sentence + step-list builder layout; dedicated builder pages (`/automations/new`, `/{id}/edit`); agent drafting = draft → review in builder (drafts never persisted by the agent); no starter templates. Plan 7a amended at planning time: `automation_runs.step_log` + `FunctionDef.input_schema` (both consumed here).
+`[x]` Complete (2026-07-17) — 🔴 Complex, split into two sub-plans (both done, live-validated). Parent: `.agent/plans/8.automations-center.md`. Build order 8a → 8b. User-locked: sentence + step-list builder layout; dedicated builder pages (`/automations/new`, `/{id}/edit`); agent drafting = draft → review in builder (drafts never persisted by the agent); no starter templates. `pytest backend/tests` = 189 passed; `npm run build` clean; live draft→create→activate→run→approve walk passed.
 
-**8a — Grid, run history & management** (`.agent/plans/8a.center-management.md`):
-- `[ ]` Task 1 — Backend: `POST /api/automation-runs/{id}/cancel` (waiting_approval cancels via the approvals seam), definition-edit guard (409 w/ runs in flight), list enrichment (`active_runs`/`last_run`/`requires_approval`), Home summary automations block
-- `[ ]` Task 2 — `/automations` grid page + nav entry: cards w/ status pill, plain-language trigger line (`describeRecipe`), approval chip, pause/resume, delete
-- `[ ]` Task 3 — `/automations/{id}` detail: read-mode recipe components, run history, `step_log` timeline drawer, cancel-run
-- `[ ]` Task 4 — Realtime live updates (both tables), Home StatCard, README + wrap-up
+**8a — Grid, run history & management** (`.agent/plans/8a.center-management.md`): ✅ code complete (2026-07-17)
+- `[x]` Task 1 — Backend: `POST /api/automation-runs/{id}/cancel` (waiting_approval cancels via `reject_action`; running/waiting via engine `cancel_run`), definition-edit guard (409 w/ runs in flight), list enrichment (`active_runs`/`last_run`/`requires_approval`), Home summary automations block. Gated tests green.
+- `[x]` Task 2 — `/automations` grid page + nav entry (Zap): cards w/ status pill, `describeRecipe` trigger line, approval chip, active-run/last-run lines, pause/resume (optimistic), overflow menu (View/Edit/Delete), Realtime debounced refetch
+- `[x]` Task 3 — `/automations/{id}` detail: read-mode recipe components (`TriggerSentence`/`ConditionChips`/`StepCard`), recipe-JSON toggle, run history (`RunList`), `step_log` timeline drawer (`RunTimeline`) w/ context expander + cancel-run
+- `[x]` Task 4 — Realtime on both tables, Home StatCard (Zap, warning tone on `failed_today`), `lib/recipe.ts` (`describeRecipe` + run-status meta + gated-tool helper)
 
-**8b — Recipe builder & agent drafting** (`.agent/plans/8b.recipe-builder.md`):
-- `[ ]` Task 1 — `GET /api/automations/vocabulary` (tools + schemas + safety, functions, event types, operators) + cron-preview helper
-- `[ ]` Task 2 — `POST /api/automations/draft`: LLM → Pydantic-validated recipe, one retry on validation failure, never persisted, `automation_draft` trace span
-- `[ ]` Task 3 — Builder page (create): WHEN/IF sentence chips, THEN step cards w/ schema-driven forms + `{{path}}` template insert, live sentence preview
-- `[ ]` Task 4 — Edit mode + guard UX (409 banner → cancel runs → retry)
-- `[ ]` Task 5 — Draft-review flow (DraftBox → prefill builder → explanation banner → normal save)
-- `[ ]` Task 6 — Wrap-up + live walk: describe → draft → activate → webhook → live run → approve → complete, in both themes
+**8b — Recipe builder & agent drafting** (`.agent/plans/8b.recipe-builder.md`): ✅ code complete + live-validated (2026-07-17)
+- `[x]` Task 1 — `GET /api/automations/vocabulary` (tools+schema+safety+label, functions, operators, event types [observed ∪ core-known, automation-sourced excluded], field roots) + `GET /cron-preview` (auth-gated). `TOOL_LABELS` lifted to `services/tools/labels.py`. Gated tests green.
+- `[x]` Task 2 — `POST /api/automations/draft`: forced-tool-use structured output → `AutomationDraft` → `validate_recipe`, one retry on failure, never persisted, 503 without key, `automation_draft` trace span. Offline-mocked + gated-live tests green.
+- `[x]` Task 3 — Builder page (create): editable `TriggerSentence` (event/cron/manual + cron preview), `ConditionChips`, `StepList`/`StepCard` (5 types), `SchemaForm` (JSON-Schema→forms, raw-JSON degrade), `TemplateInsert`, live sentence preview
+- `[x]` Task 4 — Edit mode (`/{id}/edit`) + guard UX (409 banner → cancel runs → retry via `cancelRunsAndRetry`)
+- `[x]` Task 5 — Draft-review flow (`DraftBox` → prefill builder → explanation banner → normal save; dirty-confirm on replace)
+- `[x]` Task 6 — Wrap-up: README Automations Center section. **Live walk passed** (running server): vocabulary (16 tools, send_sms gated) → cron-preview → real-LLM draft ("WelcomeHome Lead Welcome Text": event trigger + generate + gated send_sms) → create-from-draft (paused) → activate → seeded `lead.created` → dispatcher run → gated park → approve → completed. Browser builder UI type-checked via clean build; full in-browser walk (both themes) pending the Module 6 office user.
 
 ### Module 9: Leads View & Marketing Funnel
 `[ ]` Not started. First vertical dashboard view (entity-dashboard/pipeline pattern is core; lead content is the re-templating seam): stage funnel, per-stage outreach sequence builder (SMS/email/call tasks, delays, waits, conditionals, content generation on the M7 framework), lead directory with expanded profiles (basic info, entity event log, AI smart summary), funnel metrics. Depends on Module 7.

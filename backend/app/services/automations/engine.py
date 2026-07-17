@@ -618,3 +618,33 @@ async def cancel_after_rejection(
         conn, tenant_id, run, automation, "automation.run_cancelled",
         f"Automation '{automation['name']}' cancelled — approval rejected{who}",
     )
+
+
+async def cancel_run(
+    conn, tenant_id: str, run_id: str, *, resolved_by: str | None = None,
+) -> bool:
+    """Directly cancel an active run (Module 8a's cancel-run endpoint) for the
+    `running`/`waiting` case, or a `waiting_approval` run that has no still-pending
+    action to reject through. Returns False if the run is already terminal (the
+    router turns that into a 409). The `waiting_approval`-with-pending-action case
+    is handled by the router via `approvals.reject_action` — the one sanctioned
+    seam — so this never orphans a pending approval."""
+    run = await _load_run_for_update(conn, run_id)
+    if run is None or run["status"] not in ("running", "waiting", "waiting_approval"):
+        return False
+    automation = await _load_automation(conn, str(run["automation_id"])) or {
+        "id": run["automation_id"], "name": "(deleted)",
+    }
+    log = _append_log(run, run["step_index"], "run", "cancelled by user", "stopped")
+    await conn.execute(
+        "update public.automation_runs set status='cancelled', step_log=%s, "
+        "finished_at=now() where id=%s",
+        (Json(log), run_id),
+    )
+    run["step_log"] = log
+    who = f" by {resolved_by}" if resolved_by else ""
+    await _log_run_event(
+        conn, tenant_id, run, automation, "automation.run_cancelled",
+        f"Automation '{automation['name']}' cancelled{who}",
+    )
+    return True

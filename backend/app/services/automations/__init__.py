@@ -11,6 +11,7 @@ registry seam.
 from .engine import (
     advance_run,
     cancel_after_rejection,
+    cancel_run,
     get_run,
     resume_after_approval,
     start_run,
@@ -28,4 +29,5 @@ __all__ = [
     "get_run",
     "resume_after_approval",
     "cancel_after_rejection",
+    "cancel_run",
 ]

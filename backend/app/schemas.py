@@ -137,6 +137,14 @@ class DocumentCounts(BaseModel):
     failed: int = 0
 
 
+class AutomationHomeCounts(BaseModel):
+    """Home widget counts for automations (Module 8a). `failed_today` drives the
+    card's warning tone client-side."""
+    active: int = 0
+    runs_today: int = 0
+    failed_today: int = 0
+
+
 class HomeSummary(BaseModel):
     """At-a-glance counts for the Home landing widgets. Read-only, business-agnostic
     (core tables only), RLS-scoped."""
@@ -144,6 +152,7 @@ class HomeSummary(BaseModel):
     pending_approvals: int = 0
     documents: DocumentCounts = DocumentCounts()
     events_today: int = 0
+    automations: AutomationHomeCounts = AutomationHomeCounts()
 
 
 # --- Automations -------------------------------------------------------------
@@ -168,6 +177,12 @@ class AutomationPatch(BaseModel):
     steps: list[dict[str, Any]] | None = None
 
 
+class LastRun(BaseModel):
+    """The most recent run's at-a-glance state for the grid card (Module 8a)."""
+    status: str
+    at: datetime
+
+
 class AutomationOut(BaseModel):
     id: str
     name: str
@@ -179,6 +194,8 @@ class AutomationOut(BaseModel):
     next_fire_at: datetime | None = None
     created_by: str | None = None
     active_runs: int = 0  # runs currently running/waiting/waiting_approval
+    last_run: LastRun | None = None  # newest run's status + time (grid card)
+    requires_approval: bool = False  # any step calls a gated (unsafe) tool
     created_at: datetime
     updated_at: datetime
 
@@ -203,3 +220,53 @@ class RunOut(BaseModel):
 class RunNow(BaseModel):
     entity_type: str | None = None
     entity_id: str | None = None
+
+
+# --- Automations builder vocabulary + drafting (Module 8b) --------------------
+class VocabTool(BaseModel):
+    name: str
+    label: str  # plain-language name (shared with chat's activity labels)
+    description: str
+    input_schema: dict[str, Any]
+    safe: bool  # False -> gated (requires approval); the builder shows the amber chip
+
+
+class VocabFunction(BaseModel):
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+
+
+class VocabTriggers(BaseModel):
+    event_types: list[str] = []
+    source_systems: list[str] = []
+
+
+class Vocabulary(BaseModel):
+    """Everything the builder renders from — so new tools/functions/event types
+    appear with zero frontend changes (the M9/M10 seam)."""
+    triggers: VocabTriggers
+    tools: list[VocabTool] = []
+    functions: list[VocabFunction] = []
+    operators: list[str] = []
+    generate_models: list[str] = []
+    field_roots: list[str] = []
+
+
+class CronPreview(BaseModel):
+    next: list[datetime] = []
+
+
+class DraftRequest(BaseModel):
+    description: str
+
+
+class AutomationDraft(BaseModel):
+    """An agent-drafted, UNSAVED recipe returned for human review in the builder.
+    Never persisted by the agent (CLAUDE.md) — the standard create path saves it."""
+    name: str
+    description: str | None = None
+    trigger: dict[str, Any]
+    conditions: list[dict[str, Any]] = []
+    steps: list[dict[str, Any]] = []
+    explanation: str
