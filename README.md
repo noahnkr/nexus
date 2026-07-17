@@ -1,19 +1,20 @@
 # Nexus Control Center
 
-An operational control center for small businesses that unifies messy, cross-platform business data — CRM, phone service, line-of-business systems, email — into a single canonical source of truth, exposed through a conversational AI agent and a set of purpose-built interfaces (chat, ingestion, tasks, event log, workflows).
+An operational control center for small businesses that unifies messy, cross-platform business data — CRM, phone service, line-of-business systems, email — into a single canonical source of truth, exposed through a conversational AI agent and a set of purpose-built interfaces (chat, ingestion, tasks, event log, automations, entity pipeline views).
 
-The core is built to be **business-agnostic**: interfaces, the MCP tool layer, the event/task system, and the workflow engine are shared scaffolding. What changes per client is the Postgres entity schema and any domain-specific connectors or decision harnesses layered on top. This first build validates the architecture against an in-home senior care business.
+The core is built to be **business-agnostic**: interfaces, the MCP tool layer, the event/task system, and the automations engine are shared scaffolding. What changes per client is the Postgres entity schema and any domain-specific connectors, pipeline views, or decision harnesses layered on top. This first build validates the architecture against an in-home senior care business.
 
 See [`PRD.md`](./PRD.md) for full scope, target users, and success criteria. See [`CLAUDE.md`](./CLAUDE.md) for build rules and conventions if you're developing this with Claude Code.
 
 ## What's Here
 
-- **Chat** — threaded conversations with an AI agent that has retrieval access to unstructured business context (via RAG) and structured business data (via parameterized tools), and can take gated actions (send a message, create a task, trigger a workflow)
+- **Chat** — threaded conversations with an AI agent that has retrieval access to unstructured business context (via RAG) and structured business data (via parameterized tools), and can take gated actions (send a message, create a task, trigger an automation)
 - **Ingestion** — manual document upload with chunking/embedding status
-- **Control Center Home** — a single "needs attention" queue for pending tasks, paused workflow approvals, and flagged events
+- **Control Center Home** — landing dashboard: at-a-glance counts, recent activity, quick actions
 - **Tasks** — anything needing a human decision, created automatically or manually
 - **Event Log** — an immutable audit trail of everything that happened across every connected system and every agent action
-- **Workflows / Automations** — n8n-based automation, with custom nodes wrapping the same MCP tools the chat agent uses
+- **Automations Center** — a grid of WHEN → IF → THEN automations built on an in-app engine whose steps call the same MCP tools the chat agent uses; created via a recipe builder or described in natural language and drafted by an agent
+- **Leads / Caregivers** — pipeline dashboard views: the lead marketing funnel and the caregiver hiring process as pre-defined stages with per-stage automated outreach, plus entity directories with event history and AI smart summaries
 - **Settings** — connector and agent configuration (env vars, no admin UI in this phase)
 
 ## Stack
@@ -26,14 +27,14 @@ See [`PRD.md`](./PRD.md) for full scope, target users, and success criteria. See
 | LLM | Anthropic Messages API |
 | Embeddings / Reranking | Voyage AI |
 | Agent tooling | MCP server |
-| Workflow automation | n8n |
+| Automations | Custom in-app engine (event listeners + cron scheduling, durable runs; no n8n) |
 | Observability | LangSmith |
 
 ## Architecture at a Glance
 
 ```
 Frontend (React)
-  chat · ingestion · control center · tasks · event log · workflows · settings
+  home · chat · ingestion · tasks · event log · automations · leads · caregivers · settings
         │
         ▼
 Backend (FastAPI)
@@ -46,14 +47,14 @@ Backend (FastAPI)
 MCP Server (tool layer)
   search_documents (vector/hybrid search)
   get_<entity> / list_<entity>_by_<field> (parameterized structured reads)
-  create_task / send_message / trigger_workflow (gated actions)
+  create_task / send_message / trigger_automation (gated actions)
         │
         ▼
 Data Layer
   Postgres: canonical entities (tenant-scoped, per-vertical schema)
           + pgvector document chunks (tagged to canonical entity IDs)
           + events (immutable) + tasks + pending_actions
-  n8n: workflow automation, calling the same MCP tools
+          + automations + automation_runs (durable WHEN/IF/THEN runs)
 ```
 
 Every table is scoped by `tenant_id` with Row-Level Security enforced at the Postgres level. Every tool call, webhook, and agent action writes an entry to the immutable event log. Any tool that changes state visible outside the system defaults to a human-approval gate (`pending_actions` → `tasks`) rather than executing immediately.
@@ -67,10 +68,12 @@ Every table is scoped by `tenant_id` with Row-Level Security enforced at the Pos
 4. Event Log
 5. Approval Gate & Task System
 6. Control Center Shell
-7. Workflow Automation via n8n
-8. Deterministic Matching/Decision Harness (generic engine, per-client configuration)
-9. Custom Views / Plugin Apps — *out of scope for this repo, future per-client work*
-10. Advanced RAG & Scale-Up (hybrid search, reranking, multi-format ingestion, sub-agents)
+7. Core Automations Framework (WHEN/IF/THEN engine: triggers, cron, durable runs, MCP tool steps)
+8. Automations Center (grid + recipe builder + agent-drafted automations)
+9. Leads View & Marketing Funnel (pipeline dashboard, per-stage outreach sequences)
+10. Caregivers View & Hiring Process (pipeline dashboard, accept/deny + scoring)
+11. Deterministic Matching/Decision Harness (generic engine, per-client configuration)
+12. Advanced RAG & Scale-Up (hybrid search, reranking, multi-format ingestion, sub-agents)
 
 Track live status in [`PROGRESS.md`](./PROGRESS.md).
 
@@ -84,7 +87,6 @@ Track live status in [`PROGRESS.md`](./PROGRESS.md).
 - Anthropic API key
 - Voyage AI API key (embeddings + reranking)
 - LangSmith API key
-- n8n instance (self-hosted, for Module 7+)
 
 ### Environment Variables
 
@@ -218,7 +220,7 @@ claude mcp add --transport http nexus http://localhost:8000/mcp \
 ```
 
 Then ask it to, e.g., list new leads — the answer comes from seed data via the
-`list_leads` tool. (Module 7's n8n custom nodes consume this same endpoint.)
+`list_leads` tool.
 
 ### Connector Webhook Ingress (Module 3b)
 
@@ -227,8 +229,9 @@ External systems deliver events to a single ingress, `POST /api/webhooks/{source
 event is verified, written to `events` as a raw receipt, then resolved to a
 canonical entity via `external_ids` before anything else is written — matched to
 an existing entity, auto-created (e.g. a new `lead.created`), or, when it can't be
-resolved, turned into a plain-language review task. Poll/export sources (and n8n
-in Module 7) re-POST into this same ingress, so the core stays webhook-shaped.
+resolved, turned into a plain-language review task. Poll/export sources (via
+Module 7's scheduled automations, or manual triggers) re-POST into this same
+ingress, so the core stays webhook-shaped.
 
 The placeholder adapters verify a shared-secret HMAC: set `NEXUS_WEBHOOK_SECRET`
 in `.env`; an unset secret 401s every request (fail closed). Each real connector
@@ -266,7 +269,8 @@ running, and the model reports that a task was created (a queued call is a succe
 not an error). Approving runs the tool through the same audited `execute_tool`
 seam; rejecting cancels the task. `create_task` is safe and runs immediately (an
 internal to-do with no outside effect). `send_sms`/`send_email` are placeholder
-executions this phase (no external delivery until Module 7 credentials).
+executions this phase (no external delivery until the automation modules wire
+real connector credentials).
 
 The gate lifecycle is fully auditable in `events`: `action.queued` → (`action.approved`
 + `tool.called` carrying `pending_action_id`) or `action.rejected`.
@@ -296,6 +300,7 @@ linking to the Tasks page.
 This repo is designed so that a second deployment, in a different vertical, requires:
 - A new entity schema (swap Module 0's business tables — `leads`/`clients`/`resources`/etc. — for the new vertical's equivalents)
 - New connector adapters for that business's external systems
-- Per-client configuration of the Module 8 decision harness
+- New pipeline-view content (stages, outreach sequences, scoring) on the shared entity-dashboard pattern
+- Per-client configuration of the Module 11 decision harness
 
-No changes should be needed to the core interfaces, the MCP tool layer's shape, the event/task system, or the workflow engine itself. If a change to those does turn out to be necessary when templating, that's a signal the core wasn't abstracted correctly and worth revisiting.
+No changes should be needed to the core interfaces, the MCP tool layer's shape, the event/task system, or the automations engine itself. If a change to those does turn out to be necessary when templating, that's a signal the core wasn't abstracted correctly and worth revisiting.
