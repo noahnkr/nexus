@@ -10,7 +10,7 @@ import uuid
 import httpx
 import pytest
 
-from conftest import DEMO_TENANT, NEXUS_APP_DB_URL, PROBE_TENANT
+from conftest import DEMO_TENANT, NEXUS_APP_DB_URL, PROBE_TENANT, bearer_headers
 
 pytestmark = pytest.mark.skipif(not NEXUS_APP_DB_URL, reason="NEXUS_APP_DB_URL not set")
 
@@ -84,7 +84,9 @@ async def _seed_and_query():
             )
 
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://t") as ac:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://t", headers=bearer_headers()
+        ) as ac:
             out = {}
 
             # Pagination over source_a (8 rows) at limit=5: two pages, no dup/miss.

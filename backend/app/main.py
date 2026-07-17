@@ -2,8 +2,9 @@
 
 Lifespan opens/closes the psycopg async pool. CORS is permissive for the local
 Vite dev server (the frontend also proxies /api, so CORS is a belt-and-braces
-allowance for direct calls). Routers: auth (realtime token), documents (ingestion),
-chat (threads + SSE).
+allowance for direct calls). Every `/api` route is JWT-protected (Module 6); the
+only unauthenticated openings are `/healthz`, the HMAC-verified webhook ingress,
+and the static-bearer `/mcp` mount.
 """
 from contextlib import asynccontextmanager
 
@@ -12,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .db import close_pool, open_pool
-from .routers import auth, chat, documents, events, tasks, webhooks
+from .routers import chat, documents, events, home, tasks, webhooks
 from .services.mcp_server import build_mcp_asgi_app, session_manager
 
 
@@ -38,7 +39,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth.router)
+app.include_router(home.router)
 app.include_router(documents.router)
 app.include_router(chat.router)
 app.include_router(webhooks.router)

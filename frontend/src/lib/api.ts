@@ -1,5 +1,25 @@
 // Typed client for the FastAPI backend. All calls go through the Vite /api proxy
 // in dev; in production the same paths are served behind the app origin.
+import { supabase } from "./supabase";
+
+// Every /api request carries the signed-in session's access token. A 401 means
+// the session expired or was revoked: sign out so the AuthProvider bounces to
+// /login. This is the single place a bearer header is attached — no scattered
+// literals, and FormData uploads keep their multipart content-type untouched.
+export async function authFetch(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+): Promise<Response> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  const headers = new Headers(init.headers);
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const res = await fetch(input, { ...init, headers });
+  if (res.status === 401) {
+    await supabase.auth.signOut();
+  }
+  return res;
+}
 
 export interface DocumentOut {
   id: string;
@@ -190,68 +210,64 @@ async function json<T>(res: Response): Promise<T> {
 
 export const api = {
   // Documents
-  listDocuments: () => fetch("/api/documents").then(json<DocumentOut[]>),
+  listDocuments: () => authFetch("/api/documents").then(json<DocumentOut[]>),
   getDocument: (id: string) =>
-    fetch(`/api/documents/${id}`).then(json<DocumentDetail>),
+    authFetch(`/api/documents/${id}`).then(json<DocumentDetail>),
   uploadDocument: (file: File) => {
     const body = new FormData();
     body.append("file", file);
-    return fetch("/api/documents", { method: "POST", body }).then(json<DocumentOut>);
+    return authFetch("/api/documents", { method: "POST", body }).then(json<DocumentOut>);
   },
   deleteDocument: (id: string) =>
-    fetch(`/api/documents/${id}`, { method: "DELETE" }).then((r) => {
+    authFetch(`/api/documents/${id}`, { method: "DELETE" }).then((r) => {
       if (!r.ok && r.status !== 204) throw new Error(`delete failed: ${r.status}`);
     }),
 
   // Chat threads
-  listThreads: () => fetch("/api/chat/threads").then(json<ThreadOut[]>),
+  listThreads: () => authFetch("/api/chat/threads").then(json<ThreadOut[]>),
   createThread: (title?: string) =>
-    fetch("/api/chat/threads", {
+    authFetch("/api/chat/threads", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ title: title ?? null }),
     }).then(json<ThreadOut>),
   deleteThread: (id: string) =>
-    fetch(`/api/chat/threads/${id}`, { method: "DELETE" }).then((r) => {
+    authFetch(`/api/chat/threads/${id}`, { method: "DELETE" }).then((r) => {
       if (!r.ok && r.status !== 204) throw new Error(`delete failed: ${r.status}`);
     }),
   listMessages: (threadId: string) =>
-    fetch(`/api/chat/threads/${threadId}/messages`).then(json<MessageOut[]>),
+    authFetch(`/api/chat/threads/${threadId}/messages`).then(json<MessageOut[]>),
 
   // Event Log
   listEvents: (params: EventQuery = {}) =>
-    fetch(`/api/events${eventQueryString(params)}`).then(json<EventPage>),
-  getEventFacets: () => fetch("/api/events/facets").then(json<EventFacets>),
+    authFetch(`/api/events${eventQueryString(params)}`).then(json<EventPage>),
+  getEventFacets: () => authFetch("/api/events/facets").then(json<EventFacets>),
 
   // Tasks & approvals
   listTasks: (params: TaskQuery = {}) =>
-    fetch(`/api/tasks${queryString(params as Record<string, unknown>)}`).then(
+    authFetch(`/api/tasks${queryString(params as Record<string, unknown>)}`).then(
       json<TaskPage>,
     ),
   createTask: (body: TaskCreate) =>
-    fetch("/api/tasks", {
+    authFetch("/api/tasks", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     }).then(json<Task>),
   patchTask: (id: string, status: TaskStatus) =>
-    fetch(`/api/tasks/${id}`, {
+    authFetch(`/api/tasks/${id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ status }),
     }).then(json<Task>),
   approveAction: (id: string) =>
-    fetch(`/api/pending-actions/${id}/approve`, { method: "POST" }).then(
+    authFetch(`/api/pending-actions/${id}/approve`, { method: "POST" }).then(
       json<ActionResolution>,
     ),
   rejectAction: (id: string, note?: string) =>
-    fetch(`/api/pending-actions/${id}/reject`, {
+    authFetch(`/api/pending-actions/${id}/reject`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ note: note ?? null }),
     }).then(json<ActionResolution>),
-
-  // Realtime token (dev seam; replaced by Supabase Auth in Module 6)
-  getRealtimeToken: () =>
-    fetch("/api/auth/realtime-token").then(json<{ token: string; expires_in: number }>),
 };

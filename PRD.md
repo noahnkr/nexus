@@ -241,9 +241,33 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 ---
 
+## Module 6: Control Center Shell & Visual Overhaul
+
+**Goal**: turn the collection of views into the actual product — a control center someone logs into. Real auth replaces the env-tenant seam (PRD interface #8), a Home landing page gives the shell a front door (PRD interface #3, deliberately light this phase), and a full visual overhaul brings every existing view up to a "visually stunning, sleek, professional" bar using the frontend-design plugin. Built as two sub-plans per the complexity rule.
+
+**Auth & tenant identity**:
+
+- Supabase Auth with email + password for the office user (created once via dashboard with `app_metadata.tenant_id` set); login page, persisted session, sign-out
+- `deps.get_tenant_id()` swaps its body for the verified Supabase JWT claim — HS256 (legacy secret) and ES256 (project JWKS) both accepted; every `/api` route fails closed (401/403) except the credentialed machine paths, which keep their own auth and move to a separate machine-tenant seam: the webhook ingress (HMAC signature) and `/mcp` (static bearer token, kept deliberately — MCP consumers are machines; per-client OAuth waits for a real external need)
+- The frontend attaches the session access token to every API call; Supabase Realtime rides the real session, retiring the minted realtime-token dev seam; approval resolutions record the resolving user (`resolved_by`)
+
+**Control Center Home** (landing page at `/`; Chat moves to `/chat`):
+
+- A *home*, not a duplicated needs-attention queue (Tasks already serves triage): greeting, at-a-glance stat widgets (open tasks, pending approvals, document pipeline, today's events) each linking into its full view, a recent-activity glance from the Event Log, and quick actions (new chat, upload, new task)
+- Backed by one read-only `GET /api/home/summary` counts endpoint over core tables only — business-agnostic, RLS-scoped; laid out as a widget grid future modules extend (workflow status in M7, harness outcomes in M8)
+
+**Visual overhaul & chat QoL**:
+
+- Design system pass: typography (Inter), redesigned light/dark token palette, semantic status tokens, shared `PageHeader`/`EmptyState`/skeleton primitives; restyled shell with grouped nav and a user menu (email, theme, sign out)
+- Chat: markdown rendering for assistant messages (GFM tables/lists/code), smoother streaming (frame-batched deltas), pinned-aware autoscroll with jump-to-latest
+- Polish sweep across Ingestion, Tasks, and Event Log — presentational only, zero behaviour changes
+
+**Deliverable for this module**: a stranger can be handed the URL and it behaves like a product — login required (API fails closed without a valid token), landing on a Home page that summarizes the operation at a glance, with every Module 1–5 flow (chat with tools, ingestion, approvals, event trail) still working end to end inside a visibly redesigned, professional shell. Plans: `.agent/plans/6.control-center-shell.md` (+ `6a.supabase-auth.md`, `6b.shell-home-overhaul.md`)
+
+---
+
 ## Subsequent Modules (summary)
 
-6. **Control Center Shell & Visual Overhaul** — auth, nav, unified needs-attention queue; Chat and Event Log become views inside it. Establish a visually stunning, sleek, professional control center shell with a frontend design overhaul. Improve the UI and UX for existing views with quality of life features and design improvementsthat make it feel more polished and user-friendly (chat, ingestion, event log). Use the frontend-design plugin.
 7. **Workflow Automation via n8n** — custom nodes calling MCP tools, embedded/linked editor
 8. **Deterministic Matching/Decision Harness** — generic phase-pipeline engine (check → check → human review on ambiguous cases), instantiated against this client's actual matching problem (e.g., can we serve this lead) using the Module 5 approval gate for ambiguous cases; the engine is core, the specific checks are per-client configuration
 9. **Custom Views / Plugin Apps** *(explicitly out of scope for this PRD — see Out of Scope)* — future domain-specific views (e.g., a scheduler) would land here, reading/writing exclusively through Module 2–3 tools

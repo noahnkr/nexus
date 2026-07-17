@@ -24,35 +24,25 @@ export function IngestionPage() {
     api.listDocuments().then(setDocuments).catch((e) => toast.error(String(e)));
   }, []);
 
-  // Live status via Supabase Realtime. The anon client needs the tenant token.
+  // Live status via Supabase Realtime. The signed-in supabase-js client forwards
+  // the session token to Realtime automatically, so postgres_changes RLS scopes
+  // to the tenant with no extra wiring.
   useEffect(() => {
-    let channel: ReturnType<typeof supabase.channel> | null = null;
-    let cancelled = false;
-    (async () => {
-      try {
-        const { token } = await api.getRealtimeToken();
-        await supabase.realtime.setAuth(token);
-      } catch {
-        // Realtime is a live-updates convenience; the table still loads without it.
-      }
-      if (cancelled) return;
-      channel = supabase
-        .channel("documents-changes")
-        .on(
-          "postgres_changes",
-          { event: "INSERT", schema: "public", table: "documents" },
-          (payload) => upsert(payload.new as DocumentOut),
-        )
-        .on(
-          "postgres_changes",
-          { event: "UPDATE", schema: "public", table: "documents" },
-          (payload) => upsert(payload.new as DocumentOut),
-        )
-        .subscribe();
-    })();
+    const channel = supabase
+      .channel("documents-changes")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "documents" },
+        (payload) => upsert(payload.new as DocumentOut),
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "documents" },
+        (payload) => upsert(payload.new as DocumentOut),
+      )
+      .subscribe();
     return () => {
-      cancelled = true;
-      if (channel) supabase.removeChannel(channel);
+      supabase.removeChannel(channel);
     };
   }, [upsert]);
 

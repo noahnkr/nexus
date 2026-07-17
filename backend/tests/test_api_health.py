@@ -28,4 +28,6 @@ def test_app_has_expected_routes():
 
     paths = {getattr(r, "path", None) for r in app.routes}
     assert "/healthz" in paths
-    assert "/api/auth/realtime-token" in paths
+    # The realtime-token dev seam was retired in Module 6 (Realtime rides the
+    # real Supabase session token now).
+    assert "/api/auth/realtime-token" not in paths

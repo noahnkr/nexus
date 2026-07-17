@@ -11,7 +11,7 @@ import asyncio
 import httpx
 import pytest
 
-from conftest import DEMO_TENANT, NEXUS_APP_DB_URL
+from conftest import DEMO_TENANT, NEXUS_APP_DB_URL, bearer_headers
 
 pytestmark = pytest.mark.skipif(
     not NEXUS_APP_DB_URL, reason="NEXUS_APP_DB_URL not set"
@@ -52,7 +52,9 @@ async def _with_app(fn):
     await db.open_pool()
     try:
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://t") as ac:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://t", headers=bearer_headers()
+        ) as ac:
             return await fn(ac)
     finally:
         await db.close_pool()
