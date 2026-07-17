@@ -34,9 +34,12 @@ const PRIORITY_VARIANT: Record<TaskPriority, "default" | "secondary" | "destruct
   low: "outline",
 };
 
-const STATUS_VARIANT: Record<TaskStatus, "default" | "secondary" | "outline" | "success"> = {
-  pending: "default",
-  in_progress: "secondary",
+const STATUS_VARIANT: Record<
+  TaskStatus,
+  "secondary" | "outline" | "success" | "warning" | "info"
+> = {
+  pending: "warning",
+  in_progress: "info",
   done: "success",
   cancelled: "outline",
 };

@@ -182,6 +182,14 @@ export interface ActionResolution {
   task: Task;
 }
 
+// --- Home summary ------------------------------------------------------------
+export interface HomeSummary {
+  open_tasks: number;
+  pending_approvals: number;
+  documents: { ready: number; processing: number; failed: number };
+  events_today: number;
+}
+
 function queryString(params: Record<string, unknown>): string {
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -209,6 +217,9 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export const api = {
+  // Home
+  getHomeSummary: () => authFetch("/api/home/summary").then(json<HomeSummary>),
+
   // Documents
   listDocuments: () => authFetch("/api/documents").then(json<DocumentOut[]>),
   getDocument: (id: string) =>

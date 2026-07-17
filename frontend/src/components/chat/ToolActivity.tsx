@@ -23,7 +23,7 @@ export function ToolActivity({ tools }: { tools?: UITool[] }) {
               t.status === "error"
                 ? "border-destructive/40 text-destructive"
                 : t.status === "queued"
-                  ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                  ? "border-warning/40 bg-warning/10 text-warning"
                   : "border-border text-muted-foreground",
             )}
           >

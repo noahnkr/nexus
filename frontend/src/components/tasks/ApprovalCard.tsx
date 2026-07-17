@@ -58,7 +58,7 @@ export function ApprovalCard({
   return (
     <div className="rounded-md border bg-muted/30 p-3">
       <div className="flex items-center gap-2 text-sm font-medium">
-        <Clock className="h-4 w-4 text-amber-500" />
+        <Clock className="h-4 w-4 text-warning" />
         {toolLabel(action.tool_name)}
       </div>
 

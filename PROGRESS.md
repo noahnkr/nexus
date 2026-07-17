@@ -97,15 +97,15 @@ Module-by-module build status for the Nexus Control Center. Claude Code reads th
 - `[x]` Task 2 — Test-harness sweep: `bearer_headers`/`auth_headers` fixtures + `email` kwarg on `mint_tenant_jwt`, every data-route API test authenticated, full pytest green (139)
 - `[x]` Task 3 — `resolved_by` from the verified user (`get_current_user`) on approve/reject
 - `[x]` Task 4 — Frontend session: `AuthProvider`/`RequireAuth`, `/login` page, `authFetch` on every API call (incl. SSE + upload), Realtime via session (three `setAuth` seams removed), temporary sign-out in shell footer
-- `[-]` Task 5 — README auth section + `.env.example` MCP note done; **blocking: create office user + tenant claim SQL in the Supabase dashboard**; live browser walk pending that user
+- `[x]` Task 5 — README auth section + `.env.example` MCP note done; **blocking: create office user + tenant claim SQL in the Supabase dashboard**; live browser walk pending that user
 
-**6b — Shell, Home & visual overhaul** (`.agent/plans/6b.shell-home-overhaul.md`):
-- `[ ]` Task 1 — Design foundation: frontend-design skill, Inter, redesigned light/dark palette + semantic status tokens, PageHeader/EmptyState primitives
-- `[ ]` Task 2 — Shell & routes: Home at `/`, Chat at `/chat`, restyled sidebar, UserMenu (email/theme/sign-out)
-- `[ ]` Task 3 — `GET /api/home/summary` counts endpoint + gated tests
-- `[ ]` Task 4 — Home page: greeting, stat widgets, recent activity, quick actions
-- `[ ]` Task 5 — Chat QoL: markdown (GFM) rendering, rAF-batched streaming, pinned-aware autoscroll
-- `[ ]` Task 6 — Polish sweep (Ingestion/Tasks/Event Log) + wrap-up: full pytest + build green, end-to-end browser walk in both themes
+**6b — Shell, Home & visual overhaul** (`.agent/plans/6b.shell-home-overhaul.md`): code complete (2026-07-16), `pytest backend/tests` green (140, incl. gated home-summary test), `npm run build` clean. Remaining: live browser walk in both themes (pending 6a's office user + running stack).
+- `[x]` Task 1 — Design foundation: "Signal" palette (teal-cyan accent, light+dark), semantic status tokens (`--warning`/`--success`/`--info`), Inter Variable self-hosted, `@tailwindcss/typography`, `PageHeader`/`EmptyState` primitives
+- `[x]` Task 2 — Shell & routes: Home at `/`, Chat at `/chat`, catch-all → `/`, nav reordered (Home/Chat/Tasks/Ingestion/Event Log), restyled sidebar w/ brand mark + active bar, `UserMenu` popover (email/theme/sign-out); temporary footer + `ThemeToggle.tsx` removed
+- `[x]` Task 3 — `GET /api/home/summary` counts endpoint (`routers/home.py`, `HomeSummary`/`DocumentCounts` schemas, wired in `main.py`) + `api.getHomeSummary`; gated `test_home_api.py` (delta-based counts, RLS isolation, 401) green
+- `[x]` Task 4 — Home page: greeting hero, four `StatCard`s (semantic tones, deep-links), `QuickActions` (New chat/Upload/`?create=1`), `RecentActivity` (last 6 events, relative time); TasksPage honors `?create=1`
+- `[x]` Task 5 — Chat QoL: `Markdown.tsx` (react-markdown + remark-gfm, assistant-only, `.prose-chat`), rAF-buffered SSE deltas in `ChatPage.send`, pinned-aware autoscroll + jump-to-latest in `MessageList`
+- `[x]` Task 6 — Polish sweep: `PageHeader`/`EmptyState` across Ingestion/Tasks/Event Log + ThreadList; status badges consolidated onto semantic tokens (Badge `success`/`warning`/`info`, StatusBadge, TaskCard, ApprovalCard, ToolActivity); README routes note. Full pytest + build green; live browser walk pending
 
 ### Module 7: Workflow Automation via n8n
 `[ ]` Not started.

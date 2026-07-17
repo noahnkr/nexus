@@ -8,6 +8,7 @@ import {
   type ToolCall,
 } from "@/lib/api";
 import { streamChat } from "@/lib/sse";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { ThreadList } from "@/components/chat/ThreadList";
 import { MessageList, type UIMessage } from "@/components/chat/MessageList";
 import type { UITool } from "@/components/chat/ToolActivity";
@@ -123,6 +124,26 @@ export function ChatPage() {
       { id: nextId(), role: "assistant", text: "", citations: [], tools: [], streaming: true },
     ]);
 
+    // Buffer incoming text deltas and flush at most once per animation frame:
+    // collapses re-render-per-token into re-render-per-frame, which keeps the
+    // react-markdown reparse bounded during a fast stream.
+    let pending = "";
+    let raf: number | null = null;
+    const flush = () => {
+      raf = null;
+      if (!pending) return;
+      const chunk = pending;
+      pending = "";
+      patchLastAssistant((m) => ({ ...m, text: m.text + chunk }));
+    };
+    const flushNow = () => {
+      if (raf != null) {
+        cancelAnimationFrame(raf);
+        raf = null;
+      }
+      flush();
+    };
+
     try {
       await streamChat(threadId, text, {
         onTool: ({ tool_use_id, label }) =>
@@ -145,15 +166,20 @@ export function ChatPage() {
           })),
         onCitations: ({ sources }: { sources: Source[] }) =>
           patchLastAssistant((m) => ({ ...m, citations: sources })),
-        onText: ({ delta }) =>
-          patchLastAssistant((m) => ({ ...m, text: m.text + delta })),
-        onDone: ({ assistant_message_id }) =>
+        onText: ({ delta }) => {
+          pending += delta;
+          if (raf == null) raf = requestAnimationFrame(flush);
+        },
+        onDone: ({ assistant_message_id }) => {
+          flushNow();
           patchLastAssistant((m) => ({
             ...m,
             id: assistant_message_id,
             streaming: false,
-          })),
+          }));
+        },
         onError: ({ message }) => {
+          flushNow();
           toast.error(message);
           patchLastAssistant((m) => ({
             ...m,
@@ -162,8 +188,10 @@ export function ChatPage() {
           }));
         },
       });
+      flushNow();
       await refreshThreads();
     } catch (e) {
+      flushNow();
       toast.error(String(e));
       patchLastAssistant((m) => ({ ...m, streaming: false }));
     } finally {
@@ -181,9 +209,10 @@ export function ChatPage() {
         onDelete={deleteThread}
       />
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 items-center border-b px-6">
-          <h1 className="text-lg font-semibold">Chat</h1>
-        </header>
+        <PageHeader
+          title="Chat"
+          description="Ask questions and draft actions — grounded in your documents and data."
+        />
         <MessageList messages={messages} />
         <MessageInput onSend={send} disabled={streaming} />
       </div>
