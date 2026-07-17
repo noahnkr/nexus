@@ -2,20 +2,22 @@
 
 ## What We're Building
 
-A control center application — the operational nexus for a small business — that unifies messy, cross-platform business data (CRM, phone service, line-of-business system, email) into a single canonical source of truth, exposed through a conversational AI agent and a set of purpose-built interfaces. The core is deliberately business-agnostic: the interfaces, MCP tool layer, event/task system, and workflow engine are shared scaffolding; what changes per client is the Postgres entity schema (Module 0) and any domain-specific connectors or harnesses built on top of it. This first build validates the architecture against an in-home senior care business, but no core interface should assume care-specific concepts.
+A control center application — the operational nexus for a small business — that unifies messy, cross-platform business data (CRM, phone service, line-of-business system, email) into a single canonical source of truth, exposed through a conversational AI agent and a set of purpose-built interfaces. The core is deliberately business-agnostic: the interfaces, MCP tool layer, event/task system, and automations engine are shared scaffolding; what changes per client is the Postgres entity schema (Module 0) and any domain-specific connectors, pipeline views, or harnesses built on top of it. This first build validates the architecture against an in-home senior care business, but no core interface should assume care-specific concepts.
 
-**8 interfaces:**
+**10 interfaces:**
 
-1. **Chat** (default view) — Threaded conversations with the AI agent; retrieval-augmented responses over unstructured business context, plus structured data lookups and action-taking via MCP tools
+1. **Chat** — Threaded conversations with the AI agent; retrieval-augmented responses over unstructured business context, plus structured data lookups and action-taking via MCP tools
 2. **Ingestion** — Upload files manually, track processing status, manage documents, view chunking/embedding results
-3. **Control Center Home** — Unified "needs attention" queue: pending tasks, paused workflow approvals, and flagged events in one place, regardless of origin
-4. **Tasks** — Pending/in-progress/done items, created automatically (agent, workflow, harness) or manually; each links back to its originating event(s)
+3. **Control Center Home** (default view) — Landing dashboard: at-a-glance stats, recent activity, quick actions; a widget grid later modules extend
+4. **Tasks** — Pending/in-progress/done items, created automatically (agent, automation, harness) or manually; each links back to its originating event(s)
 5. **Event Log** — Immutable, append-only audit feed of everything that happened across every connected system and every agent/tool action
-6. **Workflows / Automations** — n8n embedded/linked, with custom nodes wrapping MCP tools (send SMS, trigger on CRM webhook, etc.)
-7. **Settings** — Connector configuration, user preferences, agent behavior toggles (config primarily via env vars for this phase — see Out of Scope)
-8. **Auth / Login** — Session-based auth, tenant-scoped from the data layer up
+6. **Automations Center** — monday.com-style grid of WHEN → IF → THEN automations; create via a recipe/card sentence builder or by describing the automation and letting an agent draft it
+7. **Leads** — Lead pipeline dashboard: marketing-funnel stages with per-stage outreach sequences, lead directory with expanded profiles and AI smart summaries, funnel metrics
+8. **Caregivers** — Hiring-process dashboard: stage pipeline with automated accept/deny emails and scoring, applicant directory with smart summaries, hiring metrics
+9. **Settings** — Connector configuration, user preferences, agent behavior toggles (config primarily via env vars for this phase — see Out of Scope)
+10. **Auth / Login** — Session-based auth, tenant-scoped from the data layer up
 
-Business-specific views (e.g., a caregiver scheduler, a marketing hub) are plugin views layered on top of this core once it's validated — deliberately excluded from this PRD so the core stays portable across clients. See Out of Scope.
+The Leads and Caregivers views (interfaces #7–8) are the first *vertical* views: the entity-dashboard + pipeline pattern they're built on is core scaffolding, while their content (lead stages, hiring stages, scoring) lives in the re-templating seam. Business-specific views beyond those two remain excluded — see Out of Scope.
 
 ## Target Users
 
@@ -45,7 +47,9 @@ Business-specific views (e.g., a caregiver scheduler, a marketing hub) are plugi
 - ✅ MCP server exposing all agent-callable tools (structured queries, vector search, connector actions, task creation)
 - ✅ Immutable Event Log across all systems and agent/tool actions
 - ✅ Task system with approval-gate pattern for external-facing/state-changing actions
-- ✅ n8n-based workflow automation with custom connector nodes
+- ✅ Custom automations framework (WHEN → IF → THEN): event-trigger listeners + cron-scheduled triggers, durable run state across delays/waits, steps executing MCP tools through the audited/gated seam, custom functions, LLM content generation
+- ✅ Automations Center interface (grid of active automations; recipe sentence builder; agent-built automations from a natural-language description)
+- ✅ Entity pipeline views (Leads, Caregivers): pre-defined stage funnels with per-stage outreach sequences, entity directories with event history and AI smart summaries, dashboard metrics
 - ✅ Deterministic multi-phase harness *pattern* (generic engine: phase → programmatic check → human review on ambiguous cases), implemented against this client's actual matching problem as the first reference case, but built as a reusable engine, not care-specific logic
 - ✅ LLM observability/tracing (LangSmith)
 - ✅ Prompt caching for repeated system prompt/tool-definition context
@@ -63,7 +67,7 @@ Business-specific views (e.g., a caregiver scheduler, a marketing hub) are plugi
 - ❌ Open-ended text-to-SQL against state-changing tables (client/schedule writes always go through parameterized tools, never generated SQL)
 - ❌ PDF bounding-box citation grounding
 - ❌ Full HIPAA compliance certification (system is designed with audit logging, access control, and data-flow discipline in mind, but formal compliance review/BAA execution is a separate legal/business workstream, not an engineering deliverable of this PRD)
-- ❌ Business-specific plugin views (e.g., a caregiver scheduler, a marketing hub) — these read/write through the core MCP tools but are built and scoped separately, per client, once the core here is validated; keeping them out of this PRD is what keeps the core templatable
+- ❌ Business-specific plugin views **beyond the Leads and Caregivers views** (e.g., a caregiver scheduler) — the two in-scope views validate the core entity-dashboard/pipeline pattern; anything further is built and scoped separately, per client, once the core here is validated; keeping the rest out of this PRD is what keeps the core templatable
 
 ## Stack
 
@@ -76,7 +80,7 @@ Business-specific views (e.g., a caregiver scheduler, a marketing hub) are plugi
 | Embeddings | Voyage AI |
 | Reranking | Voyage AI reranker |
 | Agent Tooling | MCP server (custom tools) |
-| Workflow Automation | n8n (self-hosted), custom nodes wrapping MCP tools |
+| Automations | Custom in-app engine — event listeners + cron scheduling, durable runs, steps via MCP tools (no n8n) |
 | Observability | LangSmith (Anthropic wrapper + `@traceable` for tool/harness spans) |
 
 ## Constraints
@@ -137,13 +141,13 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 - Threaded conversations persisted in new core tables: `chat_threads` and `chat_messages`, with messages stored as Anthropic content-block JSON verbatim so Module 2's `tool_use`/`tool_result` blocks need no schema change
 - Responses streamed via SSE (`start` → `citations` → `text` deltas → `done`/`error`)
-- Basic RAG: query embedding → plain pgvector cosine top-k over `document_chunks` → retrieved context injected into the system prompt with numbered citations; hybrid search and reranking stay in Module 10
+- Basic RAG: query embedding → plain pgvector cosine top-k over `document_chunks` → retrieved context injected into the system prompt with numbered citations; hybrid search and reranking stay in Module 12
 - Prompt caching (`cache_control`) on the static system block; full conversation history sent per call (stateless Messages API)
 
 **Ingestion**:
 
 - Drag-and-drop upload → Supabase Storage → background chunking/embedding pipeline (FastAPI BackgroundTasks — no worker queue at this scale)
-- All four formats (PDF, DOCX, HTML, Markdown/TXT) via lightweight parsers behind a swappable parser interface; the Docling upgrade in Module 10 replaces parser registry entries only
+- All four formats (PDF, DOCX, HTML, Markdown/TXT) via lightweight parsers behind a swappable parser interface; the Docling upgrade in Module 12 replaces parser registry entries only
 - Voyage AI embeddings (1024-dim, matching the `document_chunks` column), batched
 - Document status transitions (`uploaded → processing → ready/failed`) surfaced live to the frontend via Supabase Realtime; every transition also writes an immutable `events` row
 
@@ -160,7 +164,7 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 ## Module 2: Structured Data Access
 
-**Goal**: give the agent governed access to the structured side of the canonical data model — named, parameterized read tools over the entity schema plus a scoped read-only text-to-SQL reporting tool — and wire them into Chat as a real agentic tool loop, so a question routes to structured tools, vector search (now a tool itself), or both. This module establishes the tool registry that Module 3's MCP server, Module 5's approval gate, and Module 7's n8n nodes all build on.
+**Goal**: give the agent governed access to the structured side of the canonical data model — named, parameterized read tools over the entity schema plus a scoped read-only text-to-SQL reporting tool — and wire them into Chat as a real agentic tool loop, so a question routes to structured tools, vector search (now a tool itself), or both. This module establishes the tool registry that Module 3's MCP server, Module 5's approval gate, and Module 7's automation steps all build on.
 
 **Tool layer**:
 
@@ -181,7 +185,7 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 ## Module 3: MCP Server & External Connectors
 
-**Goal**: open the system in both directions — outward, an MCP server exposing the Module 2 tool registry to external clients (Claude clients now, n8n custom nodes in Module 7); inward, a webhook ingress and connector-adapter seam that normalizes events from external systems into canonical entities via `external_ids` before anything else is written. Built as two sub-plans per the complexity rule.
+**Goal**: open the system in both directions — outward, an MCP server exposing the Module 2 tool registry to external clients (Claude clients now, automation steps in Module 7); inward, a webhook ingress and connector-adapter seam that normalizes events from external systems into canonical entities via `external_ids` before anything else is written. Built as two sub-plans per the complexity rule.
 
 **MCP server**:
 
@@ -191,9 +195,9 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 **Connector ingress & entity resolution**:
 
-- Single ingress `POST /api/webhooks/{source}` with per-adapter signature verification (raw receipt written to `events` for every accepted call); poll-based sources (via n8n in Module 7, or manual triggers) re-post into this same ingress so the core stays webhook-shaped
+- Single ingress `POST /api/webhooks/{source}` with per-adapter signature verification (raw receipt written to `events` for every accepted call); poll-based sources (via Module 7's scheduled automations, or manual triggers) re-post into this same ingress so the core stays webhook-shaped
 - Adapter seam per source: `verify()` + async `normalize()` → canonical `NormalizedEvent`s; five adapters shipped as placeholders documenting the researched real integration flows — WelcomeHome (CRM, webhook subscriptions), GoTo Connect (VoIP/SMS, notification channels), WellSky Personal Care (EHR, FHIR webhooks/poll fallback), Gmail (Pub/Sub push + history fetch-back), Google Calendar (watch channels + syncToken fetch-back); real adapters later replace only adapter-file internals, never the seam
-- Resolution routing per normalized event: matched via `external_ids` → link + record; unmatched but explicitly new (e.g. `lead.created`) → auto-create canonical row + mapping via the vertical-seam entity writers; unmatched reference → plain-language review task linked to the originating event (fuzzy matching stays in Module 8)
+- Resolution routing per normalized event: matched via `external_ids` → link + record; unmatched but explicitly new (e.g. `lead.created`) → auto-create canonical row + mapping via the vertical-seam entity writers; unmatched reference → plain-language review task linked to the originating event (fuzzy matching stays in Module 11)
 - New core table `connector_state` (tenant-scoped, RLS) for durable connector cursors — Gmail `historyId`, Calendar `syncToken`, channel renewals
 
 **Deliverable for this module**: an MCP client (e.g. Claude Code) can connect to `/mcp` with a bearer token and call the same governed tools as chat, fully audited; a simulated signed webhook for each of the five sources flows through ingress → normalization → entity resolution, auto-creating a lead, matching known external ids, and stalling unknowns as review tasks — every step visible in `events` and LangSmith. Plans: `.agent/plans/3.mcp-and-connectors.md` (+ `3a.mcp-server.md`, `3b.connector-ingress.md`)
@@ -228,7 +232,7 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 - `execute_tool()`'s unsafe-tool refusal becomes the queue path: an `action.queued` event, a high-priority task titled in plain language (each gated tool provides a `gate_describe` that names the affected entities), and a `pending_actions` row holding the exact tool input — the model is told the action is queued (not an error) so it reports honestly
 - Approval executes synchronously through `execute_tool` with an approved-action bypass — one seam for every execution, so the post-approval run writes the standard `tool.called` audit row plus an `action.approved` outcome event; rejection cancels the task with an `action.rejected` event; failed executions stay visible (`failed` action, task remains open)
-- First write tools: vertical-seam entity writes (`update_lead_status`, `update_client_status`, `create_schedule`, `cancel_schedule`, all gated), core gated `send_sms`/`send_email` with placeholder log-only execution documenting the real GoTo/Gmail flows (credentials arrive with Module 7's connector work), and a safe `create_task` so the agent can create internal coordination tasks immediately
+- First write tools: vertical-seam entity writes (`update_lead_status`, `update_client_status`, `create_schedule`, `cancel_schedule`, all gated), core gated `send_sms`/`send_email` with placeholder log-only execution documenting the real GoTo/Gmail flows (credentials arrive with the automation modules' real connector work), and a safe `create_task` so the agent can create internal coordination tasks immediately
 - Tasks & approvals API: keyset-paginated task list with embedded pending actions, manual task creation, validated status transitions, approve/reject endpoints — `tasks` and `pending_actions` join the Realtime publication
 
 **Tasks interface**:
@@ -254,7 +258,7 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 **Control Center Home** (landing page at `/`; Chat moves to `/chat`):
 
 - A *home*, not a duplicated needs-attention queue (Tasks already serves triage): greeting, at-a-glance stat widgets (open tasks, pending approvals, document pipeline, today's events) each linking into its full view, a recent-activity glance from the Event Log, and quick actions (new chat, upload, new task)
-- Backed by one read-only `GET /api/home/summary` counts endpoint over core tables only — business-agnostic, RLS-scoped; laid out as a widget grid future modules extend (workflow status in M7, harness outcomes in M8)
+- Backed by one read-only `GET /api/home/summary` counts endpoint over core tables only — business-agnostic, RLS-scoped; laid out as a widget grid future modules extend (automation status in M8, harness outcomes in M11)
 
 **Visual overhaul & chat QoL**:
 
@@ -268,10 +272,16 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 ## Subsequent Modules (summary)
 
-7. **Workflow Automation via n8n** — custom nodes calling MCP tools, embedded/linked editor
-8. **Deterministic Matching/Decision Harness** — generic phase-pipeline engine (check → check → human review on ambiguous cases), instantiated against this client's actual matching problem (e.g., can we serve this lead) using the Module 5 approval gate for ambiguous cases; the engine is core, the specific checks are per-client configuration
-9. **Custom Views / Plugin Apps** *(explicitly out of scope for this PRD — see Out of Scope)* — future domain-specific views (e.g., a scheduler) would land here, reading/writing exclusively through Module 2–3 tools
-10. **Advanced RAG & Scale-Up** — hybrid search, reranking, multi-format ingestion (Docling), sub-agents, validated against this client's small corpus before applying to a larger future client
+Modules 7–10 replace the previously planned n8n integration with an in-app automations platform. The observation driving the split: outside two prescribed processes — the **lead marketing funnel** and the **caregiver hiring process** — no automation needs its entire flow specified step by step; most follow a **WHEN (trigger) → IF (condition) → THEN (actions)** recipe. So instead of a general-purpose workflow builder, the system gets one shared engine (M7), a monday.com-style Automations Center for recipe-shaped automations (M8), and two pipeline dashboard views where the prescribed funnels live as per-stage action sequences (M9–10).
+
+7. **Core Automations Framework** — the business-agnostic engine all three surfaces run on: automation definitions (WHEN/IF/THEN) and durable runs as new core tables; trigger listeners over the events stream plus cron scheduling for time-based triggers and due waits; run status maintained across delay/wait sequences (runs survive restarts); step vocabulary of MCP tool actions (through the audited `execute_tool` seam — gated tools still queue for approval, pausing the run), conditionals, delays/waits, custom functions, and LLM content generation. Every trigger, step, and resolution lands in the Event Log. No builder UI in this module — engine + API only.
+8. **Automations Center** — PRD interface #6: a grid view of active automations (status, run history, pause/resume). Create and edit via a card/recipe sentence builder over the M7 vocabulary (monday.com-style), or describe the automation in natural language and an agent drafts the recipe for review before activation.
+9. **Leads View & Marketing Funnel** — PRD interface #7, the first vertical dashboard view (the entity-dashboard/pipeline pattern is core; lead specifics are the re-templating seam): funnel visualization over the pre-defined lead stages (inline or separate tab); an interactive per-stage outreach builder — deliberately less flexible than a free-form workflow since stages are fixed — composing automatic SMS/email/call tasks with delays, waits, conditionals, custom functions, and content generation on the M7 framework; a lead directory with expanded profiles (basic info, entity event log, AI "smart summary" of current state at the top); funnel/conversion metrics widgets.
+10. **Caregivers View & Hiring Process** — PRD interface #8, the same dashboard pattern instantiated for caregiver recruiting: hiring-stage pipeline with automated accepted/denied emails and scoring functions, applicant directory with smart summaries and event history, hiring metrics.
+11. **Deterministic Matching/Decision Harness** — generic phase-pipeline engine (check → check → human review on ambiguous cases), instantiated against this client's actual matching problem (e.g., can we serve this lead) using the Module 5 approval gate for ambiguous cases; the engine is core, the specific checks are per-client configuration
+12. **Advanced RAG & Scale-Up** — hybrid search, reranking, multi-format ingestion (Docling), sub-agents, validated against this client's small corpus before applying to a larger future client
+
+*(The former "Custom Views / Plugin Apps" placeholder module is retired: the Leads and Caregivers views now carry that pattern in scope; anything beyond them stays out of scope per the Out of Scope list.)*
 
 ---
 
@@ -282,4 +292,4 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 - Every tool call — read, write, or gated — appears in both the Event Log (business-facing) and LangSmith (developer-facing trace)
 - Any tool marked as requiring approval never executes without a human clearing it in the Task queue first, verified by attempting to trigger one and confirming it stalls at `pending_actions` until approved
 - The system runs correctly against this client's actual document/data volume without hybrid search or reranking tuning that was optimized for a scale this client doesn't have
-- The MCP tool layer, event/task system, workflow engine, and interface shell are documented well enough that standing up a second tenant business — in a *different* vertical — requires no changes to the core interfaces or Modules 1–7 code, only a new entity schema (Module 0 equivalent), new connector adapters, and per-client harness configuration
+- The MCP tool layer, event/task system, automations engine, and interface shell are documented well enough that standing up a second tenant business — in a *different* vertical — requires no changes to the core code, only a new entity schema (Module 0 equivalent), new connector adapters, new pipeline-view content (stages, sequences, scoring), and per-client harness configuration

@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Nexus Control Center: a business-agnostic operational hub with chat (default), ingestion, tasks, event log, workflows, and settings interfaces, backed by a canonical entity data model and an MCP tool layer that bridges external systems (CRM, phone, line-of-business, email). First instantiation targets an in-home senior care business; core is built to be re-templated for other verticals by swapping the entity schema, not the surrounding architecture. Config via env vars, no admin UI.
+Nexus Control Center: a business-agnostic operational hub with home (default), chat, ingestion, tasks, event log, an automations center, entity pipeline views (leads/caregivers), and settings interfaces, backed by a canonical entity data model and an MCP tool layer that bridges external systems (CRM, phone, line-of-business, email). First instantiation targets an in-home senior care business; core is built to be re-templated for other verticals by swapping the entity schema, not the surrounding architecture. Config via env vars, no admin UI.
 
 See `PRD.md` for full scope, module breakdown, and success criteria. This file governs *how* to build; the PRD governs *what*.
 
@@ -13,7 +13,7 @@ See `PRD.md` for full scope, module breakdown, and success criteria. This file g
 - Embeddings: Voyage AI
 - Reranking: Voyage AI reranker
 - Agent tooling: MCP server (custom tools, exposed to the Anthropic API as `tools`)
-- Workflow automation: n8n (self-hosted), custom nodes wrapping MCP tools
+- Automations: custom in-app engine (no n8n) — event-trigger listeners + cron scheduling, durable run state across waits, steps execute MCP tools through `execute_tool`
 - Observability: LangSmith (`wrap_anthropic` + `@traceable` for tool/harness spans)
 
 ## Rules
@@ -32,7 +32,7 @@ See `PRD.md` for full scope, module breakdown, and success criteria. This file g
 - The FastAPI backend connects to Postgres as the dedicated `nexus_app` role (`nobypassrls`, member of `authenticated`) and sets the `request.app.tenant_id` GUC per request/transaction — never as `postgres` (has BYPASSRLS) and never with the service-role key for data access. The service-role key is reserved for migrations/ops and Storage uploads only
 - Tenant identity for the user-facing API comes from `deps.get_tenant_id()` — the verified Supabase JWT's `app_metadata.tenant_id` claim (HS256 legacy secret and ES256 project JWKS both accepted); every `/api` route fails closed (401/403) without a valid token. The credentialed machine paths — webhook ingress (HMAC signature) and `/mcp` (static bearer) — resolve tenant via `deps.get_machine_tenant_id()` (env `NEXUS_TENANT_ID`) and never via user JWTs; nothing else reads the env tenant at request time. All tenant-dependent code goes through these two seams
 - Every inbound webhook/connector event must resolve to a canonical entity via `external_ids` before writing anywhere else — never let a connector write directly into a business table without entity resolution
-- All inbound connector traffic enters through the single `POST /api/webhooks/{source}` ingress (signature-verified per adapter, raw receipt written to `events` before normalization) — poll/export-based sources are handled by external pollers (n8n/manual) that re-post into this same ingress, never by a second inbound path. Connector adapters live in `backend/app/services/connectors/adapters/` (one file per source: `verify` + `normalize` only); `services/connectors/entity_writers.py` is part of the vertical re-templating seam alongside the entity migration and `services/tools/entities.py`
+- All inbound connector traffic enters through the single `POST /api/webhooks/{source}` ingress (signature-verified per adapter, raw receipt written to `events` before normalization) — poll/export-based sources are handled by external pollers (scheduled automations/manual) that re-post into this same ingress, never by a second inbound path. Connector adapters live in `backend/app/services/connectors/adapters/` (one file per source: `verify` + `normalize` only); `services/connectors/entity_writers.py` is part of the vertical re-templating seam alongside the entity migration and `services/tools/entities.py`
 
 **Structured data access**
 - No open-ended text-to-SQL against tables that can be written to. Client/schedule/lead writes always go through named, parameterized tools with defined inputs/outputs
@@ -66,7 +66,7 @@ See `PRD.md` for full scope, module breakdown, and success criteria. This file g
   - ✅ **Simple** — Single-pass executable, low risk
   - ⚠️ **Medium** — May need iteration, some complexity
   - 🔴 **Complex** — Break into sub-plans before executing
-- Modules involving the MCP tool layer, the approval-gate pattern, or the matching/decision harness (Modules 3, 5, 8) should default to 🔴 Complex and be broken into sub-plans rather than attempted single-pass
+- Modules involving the MCP tool layer, the approval-gate pattern, the automations framework, or the matching/decision harness (Modules 3, 5, 7, 11) should default to 🔴 Complex and be broken into sub-plans rather than attempted single-pass
 
 ## Development Flow
 
@@ -77,4 +77,4 @@ See `PRD.md` for full scope, module breakdown, and success criteria. This file g
 
 ## Progress
 
-Check `PROGRESS.md` for current module status. Update it as you complete tasks. Module numbering follows the PRD's module list (0 through 10); Module 9 (custom plugin views) is explicitly deferred — do not implement business-specific views under this repo.
+Check `PROGRESS.md` for current module status. Update it as you complete tasks. Module numbering follows the PRD's module list (0 through 12). The Leads and Caregivers views (Modules 9–10) are the two sanctioned vertical views — their dashboard/pipeline *pattern* is core, their content (stages, sequences, scoring) belongs to the re-templating seam; business-specific views beyond those two stay out of scope for this repo.

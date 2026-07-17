@@ -1,6 +1,6 @@
 # Progress
 
-Module-by-module build status for the Nexus Control Center. Claude Code reads this file at the start of a session to understand where the project stands; update the relevant tasks as work completes. Module numbering follows the PRD's module list (0–10).
+Module-by-module build status for the Nexus Control Center. Claude Code reads this file at the start of a session to understand where the project stands; update the relevant tasks as work completes. Module numbering follows the PRD's module list (0–12; renumbered 2026-07-16 when Module 7 was expanded into Modules 7–10 and n8n was dropped).
 
 ## Convention
 - `[ ]` = Not started
@@ -90,7 +90,7 @@ Module-by-module build status for the Nexus Control Center. Claude Code reads th
 - `[x]` Task 4 — Wrap-up done (docs + tests green); live end-to-end browser/LangSmith walk still pending a running stack (gated action stalls until approved; full `action.queued → approved → tool.called` trail in Event Log + LangSmith)
 
 ### Module 6: Control Center Shell & Visual Overhaul
-`[-]` Planned (2026-07-16) — 🔴 Complex, split per the planning rule into two sub-plans. Parent: `.agent/plans/6.control-center-shell.md`. Build order 6a → 6b (6b renders 6a's session and sits behind its route guard). User-locked: Home lands at `/` as a *light* widget landing page (not a needs-attention queue — Tasks stays the triage surface) with Chat moving to `/chat`; email + password sign-in; `/mcp` keeps the static bearer token.
+`[x]` Planned (2026-07-16) — 🔴 Complex, split per the planning rule into two sub-plans. Parent: `.agent/plans/6.control-center-shell.md`. Build order 6a → 6b (6b renders 6a's session and sits behind its route guard). User-locked: Home lands at `/` as a *light* widget landing page (not a needs-attention queue — Tasks stays the triage surface) with Chat moving to `/chat`; email + password sign-in; `/mcp` keeps the static bearer token.
 
 **6a — Supabase Auth & tenant identity** (`.agent/plans/6a.supabase-auth.md`): code complete (2026-07-16), `pytest backend/tests` green (139), `npm run build` clean. Remaining: blocking ops step + live browser walk.
 - `[x]` Task 1 — Backend JWT verification (ES256/RS256 via JWKS + HS256 via secret) in `get_tenant_id`; `get_current_user`; `get_machine_tenant_id` seam for webhooks/MCP; realtime-token dev seam (`routers/auth.py`) deleted; `cryptography` added
@@ -107,14 +107,20 @@ Module-by-module build status for the Nexus Control Center. Claude Code reads th
 - `[x]` Task 5 — Chat QoL: `Markdown.tsx` (react-markdown + remark-gfm, assistant-only, `.prose-chat`), rAF-buffered SSE deltas in `ChatPage.send`, pinned-aware autoscroll + jump-to-latest in `MessageList`
 - `[x]` Task 6 — Polish sweep: `PageHeader`/`EmptyState` across Ingestion/Tasks/Event Log + ThreadList; status badges consolidated onto semantic tokens (Badge `success`/`warning`/`info`, StatusBadge, TaskCard, ApprovalCard, ToolActivity); README routes note. Full pytest + build green; live browser walk pending
 
-### Module 7: Workflow Automation via n8n
-`[ ]` Not started.
+### Module 7: Core Automations Framework
+`[ ]` Not started. Default 🔴 Complex — break into sub-plans. Replaces the former "Workflow Automation via n8n" module (n8n dropped 2026-07-16): the business-agnostic WHEN/IF/THEN engine — automation definitions + durable runs (new core tables), event-trigger listeners + cron scheduling, run state maintained across delays/waits, steps via MCP tools through `execute_tool` (gated tools pause the run at an approval), conditionals, custom functions, LLM content generation. Engine + API only; all three surfaces below build on it.
 
-### Module 8: Deterministic Matching/Decision Harness
-`[ ]` Not started. Default 🔴 Complex — break into sub-plans.
+### Module 8: Automations Center
+`[ ]` Not started. Grid view of active automations (status, run history, pause/resume); create via a monday.com-style recipe sentence builder or describe-it-and-an-agent-drafts-it. Depends on Module 7.
 
-### Module 9: Custom Views / Plugin Apps
-Deferred — explicitly out of scope for this repo (see PRD Out of Scope).
+### Module 9: Leads View & Marketing Funnel
+`[ ]` Not started. First vertical dashboard view (entity-dashboard/pipeline pattern is core; lead content is the re-templating seam): stage funnel, per-stage outreach sequence builder (SMS/email/call tasks, delays, waits, conditionals, content generation on the M7 framework), lead directory with expanded profiles (basic info, entity event log, AI smart summary), funnel metrics. Depends on Module 7.
 
-### Module 10: Advanced RAG & Scale-Up
-`[ ]` Not started.
+### Module 10: Caregivers View & Hiring Process
+`[ ]` Not started. Same dashboard pattern for caregiver recruiting: hiring-stage pipeline, automated accepted/denied emails, scoring functions, applicant directory with smart summaries, hiring metrics. Depends on Module 7 (and reuses Module 9's view pattern).
+
+### Module 11: Deterministic Matching/Decision Harness
+`[ ]` Not started. Default 🔴 Complex — break into sub-plans. (Formerly Module 8.)
+
+### Module 12: Advanced RAG & Scale-Up
+`[ ]` Not started. (Formerly Module 10. The former Module 9 "Custom Views / Plugin Apps" placeholder is retired — Modules 9–10 now carry the vertical-view pattern in scope; anything beyond them stays out of scope.)
