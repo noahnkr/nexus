@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends
 from psycopg.rows import dict_row
 
 from ..db import tenant_conn
-from ..schemas import DocumentCounts, HomeSummary
+from ..schemas import AutomationHomeCounts, DocumentCounts, HomeSummary
 
 router = APIRouter(prefix="/api/home", tags=["home"])
 
@@ -35,7 +35,14 @@ async def home_summary(conn=Depends(tenant_conn)):
               (select count(*) from public.documents
                  where status = 'failed')                               as docs_failed,
               (select count(*) from public.events
-                 where created_at >= date_trunc('day', now()))          as events_today
+                 where created_at >= date_trunc('day', now()))          as events_today,
+              (select count(*) from public.automations
+                 where status = 'active')                               as automations_active,
+              (select count(*) from public.automation_runs
+                 where created_at >= date_trunc('day', now()))          as runs_today,
+              (select count(*) from public.automation_runs
+                 where status = 'failed'
+                   and created_at >= date_trunc('day', now()))          as failed_today
             """
         )
         r = await cur.fetchone()
@@ -49,4 +56,9 @@ async def home_summary(conn=Depends(tenant_conn)):
             failed=r["docs_failed"],
         ),
         events_today=r["events_today"],
+        automations=AutomationHomeCounts(
+            active=r["automations_active"],
+            runs_today=r["runs_today"],
+            failed_today=r["failed_today"],
+        ),
     )

@@ -21,28 +21,64 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
+from ..config import settings
 from ..db import tenant_conn, tenant_tx
 from ..deps import get_current_user, get_tenant_id
 from ..schemas import (
     AutomationCreate,
+    AutomationDraft,
     AutomationOut,
     AutomationPatch,
+    CronPreview,
+    DraftRequest,
+    LastRun,
     RunNow,
     RunOut,
+    Vocabulary,
+    VocabFunction,
+    VocabTool,
+    VocabTriggers,
 )
+from ..services.approvals import ActionAlreadyResolved, reject_action
 from ..services.automations import (
     RecipeError,
     advance_run,
+    cancel_run,
     get_run,
     start_run,
     validate_recipe,
 )
+from ..services.automations.draft import DraftError, draft_recipe
+from ..services.automations.functions import all_functions
+from ..services.automations.recipe import OPERATORS
 from ..services.automations.scheduler import next_fire
+from ..services.tools import all_tools, get_tool
+from ..services.tools.labels import tool_label
+
+# Core event types the builder should always offer, even before any have been
+# observed in the events table (the vocabulary unions these with observed facets).
+_KNOWN_EVENT_TYPES = [
+    "lead.created", "lead.updated", "client.created", "client.updated",
+    "schedule.created", "schedule.cancelled",
+]
 
 router = APIRouter(prefix="/api", tags=["automations"])
 
 _ACTIVE_STATES = ("running", "waiting", "waiting_approval")
+_TERMINAL_STATES = ("completed", "failed", "cancelled")
 _MAX_RUN_LIMIT = 100
+
+
+def _requires_approval(steps: list) -> bool:
+    """True if any tool step calls a gated (unsafe) tool — the recipe will pause
+    for approval. Computed server-side against the tool registry so the grid can
+    warn office staff before a run parks."""
+    for step in steps or []:
+        if isinstance(step, dict) and step.get("type") == "tool":
+            tool = get_tool(step.get("tool", ""))
+            if tool is not None and not tool.safe:
+                return True
+    return False
 
 
 def _valid_uuid(value: str, what: str) -> str:
@@ -52,7 +88,10 @@ def _valid_uuid(value: str, what: str) -> str:
         raise HTTPException(status_code=400, detail=f"{what} must be a valid id")
 
 
-def _automation_out(row: dict, active_runs: int = 0) -> AutomationOut:
+def _automation_out(
+    row: dict, active_runs: int = 0, last_run: LastRun | None = None
+) -> AutomationOut:
+    steps = row["steps"] or []
     return AutomationOut(
         id=str(row["id"]),
         name=row["name"],
@@ -60,10 +99,12 @@ def _automation_out(row: dict, active_runs: int = 0) -> AutomationOut:
         status=row["status"],
         trigger=row["trigger"] or {},
         conditions=row["conditions"] or [],
-        steps=row["steps"] or [],
+        steps=steps,
         next_fire_at=row["next_fire_at"],
         created_by=row["created_by"],
         active_runs=active_runs,
+        last_run=last_run,
+        requires_approval=_requires_approval(steps),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -102,6 +143,26 @@ async def _active_run_counts(conn, automation_ids: list[str]) -> dict[str, int]:
         return {str(r["automation_id"]): r["n"] for r in await cur.fetchall()}
 
 
+async def _last_runs(conn, automation_ids: list[str]) -> dict[str, LastRun]:
+    """Newest run per automation (status + finished_at or created_at) for the grid
+    card — one DISTINCT ON query instead of N lateral joins."""
+    if not automation_ids:
+        return {}
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """select distinct on (automation_id)
+                      automation_id, status, coalesce(finished_at, created_at) as at
+                 from public.automation_runs
+                where automation_id = any(%s)
+                order by automation_id, created_at desc""",
+            (automation_ids,),
+        )
+        return {
+            str(r["automation_id"]): LastRun(status=r["status"], at=r["at"])
+            for r in await cur.fetchall()
+        }
+
+
 async def _load_row(conn, automation_id: str) -> dict | None:
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute("select * from public.automations where id = %s", (automation_id,))
@@ -123,8 +184,13 @@ async def list_automations(conn=Depends(tenant_conn), status: str | None = None)
             f"select * from public.automations{where} order by created_at desc", params
         )
         rows = await cur.fetchall()
-    counts = await _active_run_counts(conn, [str(r["id"]) for r in rows])
-    return [_automation_out(r, counts.get(str(r["id"]), 0)) for r in rows]
+    ids = [str(r["id"]) for r in rows]
+    counts = await _active_run_counts(conn, ids)
+    last = await _last_runs(conn, ids)
+    return [
+        _automation_out(r, counts.get(str(r["id"]), 0), last.get(str(r["id"])))
+        for r in rows
+    ]
 
 
 @router.post("/automations", response_model=AutomationOut, status_code=201)
@@ -156,6 +222,84 @@ async def create_automation(
     return _automation_out(row, 0)
 
 
+# ---------------------------------------------------------------------------
+# builder vocabulary + cron preview + agent drafting (Module 8b)
+# NOTE: these literal paths are registered BEFORE /automations/{automation_id} so
+# FastAPI doesn't capture "vocabulary"/"cron-preview"/"draft" as an id.
+# ---------------------------------------------------------------------------
+async def _build_vocabulary(conn) -> Vocabulary:
+    """Everything the builder renders from. Event types union a core-known list with
+    what's actually been observed (automation-sourced excluded); tools/functions
+    come straight from the registries so new ones appear with no frontend change."""
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            "select distinct event_type from public.events "
+            "where source_system <> 'automation' order by event_type"
+        )
+        observed_types = [r["event_type"] for r in await cur.fetchall()]
+        await cur.execute(
+            "select distinct source_system from public.events "
+            "where source_system <> 'automation' order by source_system"
+        )
+        sources = [r["source_system"] for r in await cur.fetchall()]
+
+    event_types = sorted(set(_KNOWN_EVENT_TYPES) | set(observed_types))
+    tools = [
+        VocabTool(name=t.name, label=tool_label(t.name), description=t.description,
+                  input_schema=t.input_schema, safe=t.safe)
+        for t in all_tools()
+    ]
+    functions = [
+        VocabFunction(name=f.name, description=f.description, input_schema=f.input_schema)
+        for f in all_functions()
+    ]
+    return Vocabulary(
+        triggers=VocabTriggers(event_types=event_types, source_systems=sources),
+        tools=tools,
+        functions=functions,
+        operators=list(OPERATORS),
+        generate_models=["default", "fast"],
+        field_roots=["trigger", "entity", "context"],
+    )
+
+
+@router.get("/automations/vocabulary", response_model=Vocabulary)
+async def get_vocabulary(conn=Depends(tenant_conn)):
+    return await _build_vocabulary(conn)
+
+
+@router.get("/automations/cron-preview", response_model=CronPreview)
+async def cron_preview(expr: str, _tenant: str = Depends(get_tenant_id)):
+    from datetime import datetime, timezone
+
+    from croniter import croniter
+
+    if len(expr.split()) != 5 or not croniter.is_valid(expr):
+        raise HTTPException(
+            status_code=422,
+            detail="not a valid schedule (expected 5 fields like '0 9 * * 1').",
+        )
+    it = croniter(expr, datetime.now(timezone.utc))
+    return CronPreview(next=[it.get_next(datetime) for _ in range(3)])
+
+
+@router.post("/automations/draft", response_model=AutomationDraft)
+async def draft_automation(body: DraftRequest, conn=Depends(tenant_conn)):
+    if not settings.anthropic_api_key:
+        raise HTTPException(status_code=503, detail="drafting requires an Anthropic API key")
+    description = (body.description or "").strip()
+    if not description:
+        raise HTTPException(status_code=422, detail="describe what you want to automate")
+    vocab = await _build_vocabulary(conn)
+    try:
+        return await draft_recipe(description, vocab)
+    except DraftError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"message": str(exc), "technical": exc.detail},
+        )
+
+
 @router.get("/automations/{automation_id}", response_model=AutomationOut)
 async def get_automation(automation_id: str, conn=Depends(tenant_conn)):
     automation_id = _valid_uuid(automation_id, "automation_id")
@@ -163,7 +307,8 @@ async def get_automation(automation_id: str, conn=Depends(tenant_conn)):
     if row is None:
         raise HTTPException(status_code=404, detail="automation not found")
     counts = await _active_run_counts(conn, [automation_id])
-    return _automation_out(row, counts.get(automation_id, 0))
+    last = await _last_runs(conn, [automation_id])
+    return _automation_out(row, counts.get(automation_id, 0), last.get(automation_id))
 
 
 @router.patch("/automations/{automation_id}", response_model=AutomationOut)
@@ -186,7 +331,23 @@ async def patch_automation(
     trigger = body.trigger if body.trigger is not None else row["trigger"]
     conditions = body.conditions if body.conditions is not None else row["conditions"]
     steps = body.steps if body.steps is not None else row["steps"]
-    if body.trigger is not None or body.conditions is not None or body.steps is not None:
+    definition_changed = (
+        body.trigger is not None or body.conditions is not None or body.steps is not None
+    )
+    if definition_changed:
+        # Edit guard (8a): the engine reads steps from the row at each advance, so a
+        # definition edit while runs are in flight would change them mid-run. Block
+        # it with a plain message; name/description/status edits are always allowed.
+        counts = await _active_run_counts(conn, [automation_id])
+        in_flight = counts.get(automation_id, 0)
+        if in_flight:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{in_flight} run{'s' if in_flight != 1 else ''} in flight — "
+                    "cancel them or let them finish before editing the recipe."
+                ),
+            )
         try:
             validate_recipe({"trigger": trigger, "conditions": conditions, "steps": steps})
         except RecipeError as exc:
@@ -226,7 +387,8 @@ async def patch_automation(
         )
         updated = await cur.fetchone()
     counts = await _active_run_counts(conn, [automation_id])
-    return _automation_out(updated, counts.get(automation_id, 0))
+    last = await _last_runs(conn, [automation_id])
+    return _automation_out(updated, counts.get(automation_id, 0), last.get(automation_id))
 
 
 @router.delete("/automations/{automation_id}", status_code=204)
@@ -307,4 +469,59 @@ async def get_run_detail(run_id: str, conn=Depends(tenant_conn)):
     row = await get_run(conn, run_id)
     if row is None:
         raise HTTPException(status_code=404, detail="run not found")
+    return _run_out(row)
+
+
+@router.post("/automation-runs/{run_id}/cancel", response_model=RunOut)
+async def cancel_run_endpoint(
+    run_id: str,
+    conn=Depends(tenant_conn),
+    tenant_id: str = Depends(get_tenant_id),
+    user: dict = Depends(get_current_user),
+):
+    """Cancel an active run. A `waiting_approval` run with a still-pending action is
+    cancelled *through* `approvals.reject_action` (the sanctioned seam — resolving
+    action + task + run together); otherwise the run is flipped directly. 409 on a
+    terminal run, 404 unknown."""
+    run_id = _valid_uuid(run_id, "run_id")
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            "select id, status from public.automation_runs where id = %s for update",
+            (run_id,),
+        )
+        run = await cur.fetchone()
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    if run["status"] in _TERMINAL_STATES:
+        raise HTTPException(
+            status_code=409, detail=f"this run is already {run['status']}"
+        )
+
+    # waiting_approval with a live pending action -> go through the approvals seam so
+    # the action + task + run all resolve in one place (its 7b hook cancels the run).
+    action_id = None
+    if run["status"] == "waiting_approval":
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "select id from public.pending_actions "
+                "where automation_run_id = %s and status = 'pending' limit 1",
+                (run_id,),
+            )
+            pa = await cur.fetchone()
+        action_id = str(pa["id"]) if pa else None
+
+    if action_id is not None:
+        try:
+            await reject_action(
+                conn, tenant_id, action_id,
+                resolved_by=user.get("email"), note="Automation run cancelled by user",
+            )
+        except ActionAlreadyResolved:
+            # Raced to resolved between our lock and reject — fall back to direct cancel.
+            await cancel_run(conn, tenant_id, run_id, resolved_by=user.get("email"))
+    else:
+        await cancel_run(conn, tenant_id, run_id, resolved_by=user.get("email"))
+
+    row = await get_run(conn, run_id)
+    assert row is not None
     return _run_out(row)

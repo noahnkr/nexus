@@ -1,6 +1,9 @@
 // Typed client for the FastAPI backend. All calls go through the Vite /api proxy
 // in dev; in production the same paths are served behind the app origin.
 import { supabase } from "./supabase";
+import type { Condition, RunStatus, Step, Trigger } from "./recipe";
+
+export type { RunStatus };
 
 // Every /api request carries the signed-in session's access token. A 401 means
 // the session expired or was revoked: sign out so the AuthProvider bounces to
@@ -182,12 +185,129 @@ export interface ActionResolution {
   task: Task;
 }
 
+// --- Automations -------------------------------------------------------------
+export interface LastRun {
+  status: RunStatus;
+  at: string;
+}
+
+export interface Automation {
+  id: string;
+  name: string;
+  description: string | null;
+  status: "active" | "paused";
+  trigger: Trigger;
+  conditions: Condition[];
+  steps: Step[];
+  next_fire_at: string | null;
+  created_by: string | null;
+  active_runs: number;
+  last_run: LastRun | null;
+  requires_approval: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AutomationCreate {
+  name: string;
+  description?: string | null;
+  trigger: Trigger;
+  conditions?: Condition[];
+  steps?: Step[];
+}
+
+export interface AutomationPatch {
+  name?: string;
+  description?: string | null;
+  status?: "active" | "paused";
+  trigger?: Trigger;
+  conditions?: Condition[];
+  steps?: Step[];
+}
+
+export interface StepLogEntry {
+  index: number;
+  type: string;
+  summary: string;
+  status: "ok" | "queued" | "waiting" | "stopped" | "failed";
+  at: string;
+}
+
+export interface Run {
+  id: string;
+  automation_id: string;
+  status: RunStatus;
+  trigger_event_id: string | null;
+  entity_type: string | null;
+  entity_id: string | null;
+  context: Record<string, unknown>;
+  step_index: number;
+  step_log: StepLogEntry[];
+  wake_at: string | null;
+  error: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// --- Builder vocabulary + drafting (8b) --------------------------------------
+export interface VocabTool {
+  name: string;
+  label: string;
+  description: string;
+  input_schema: JSONSchema;
+  safe: boolean;
+}
+
+export interface VocabFunction {
+  name: string;
+  description: string;
+  input_schema: JSONSchema;
+}
+
+export interface Vocabulary {
+  triggers: { event_types: string[]; source_systems: string[] };
+  tools: VocabTool[];
+  functions: VocabFunction[];
+  operators: string[];
+  generate_models: string[];
+  field_roots: string[];
+}
+
+export interface JSONSchema {
+  type?: string;
+  properties?: Record<string, JSONSchemaProp>;
+  required?: string[];
+}
+
+export interface JSONSchemaProp {
+  type?: string;
+  description?: string;
+  enum?: string[];
+  default?: unknown;
+  maximum?: number;
+}
+
+export interface CronPreview {
+  next: string[];
+}
+
+export interface AutomationDraft {
+  name: string;
+  description: string | null;
+  trigger: Trigger;
+  conditions: Condition[];
+  steps: Step[];
+  explanation: string;
+}
+
 // --- Home summary ------------------------------------------------------------
 export interface HomeSummary {
   open_tasks: number;
   pending_approvals: number;
   documents: { ready: number; processing: number; failed: number };
   events_today: number;
+  automations: { active: number; runs_today: number; failed_today: number };
 }
 
 function queryString(params: Record<string, unknown>): string {
@@ -281,4 +401,50 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ note: note ?? null }),
     }).then(json<ActionResolution>),
+
+  // Automations
+  listAutomations: (status?: "active" | "paused") =>
+    authFetch(`/api/automations${status ? `?status=${status}` : ""}`).then(
+      json<Automation[]>,
+    ),
+  getAutomation: (id: string) =>
+    authFetch(`/api/automations/${id}`).then(json<Automation>),
+  createAutomation: (body: AutomationCreate) =>
+    authFetch("/api/automations", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<Automation>),
+  patchAutomation: (id: string, body: AutomationPatch) =>
+    authFetch(`/api/automations/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<Automation>),
+  deleteAutomation: (id: string) =>
+    authFetch(`/api/automations/${id}`, { method: "DELETE" }).then((r) => {
+      if (!r.ok && r.status !== 204) throw new Error(`delete failed: ${r.status}`);
+    }),
+  runAutomation: (id: string, entity?: { entity_type?: string; entity_id?: string }) =>
+    authFetch(`/api/automations/${id}/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(entity ?? {}),
+    }).then(json<Run>),
+  listRuns: (id: string, limit = 50) =>
+    authFetch(`/api/automations/${id}/runs?limit=${limit}`).then(json<Run[]>),
+  getRun: (id: string) => authFetch(`/api/automation-runs/${id}`).then(json<Run>),
+  cancelRun: (id: string) =>
+    authFetch(`/api/automation-runs/${id}/cancel`, { method: "POST" }).then(json<Run>),
+  getVocabulary: () => authFetch("/api/automations/vocabulary").then(json<Vocabulary>),
+  cronPreview: (expr: string) =>
+    authFetch(`/api/automations/cron-preview?expr=${encodeURIComponent(expr)}`).then(
+      json<CronPreview>,
+    ),
+  draftAutomation: (description: string) =>
+    authFetch("/api/automations/draft", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ description }),
+    }).then(json<AutomationDraft>),
 };

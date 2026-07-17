@@ -71,24 +71,9 @@ PERSONA = (
 
 # Plain-language progress labels (D8). Args are only used to append a short,
 # already-plain string (a search query or a report purpose) — never raw JSON.
-TOOL_LABELS = {
-    "search_documents": "Searching documents",
-    "list_leads": "Looking up leads",
-    "get_lead": "Looking up a lead",
-    "list_clients": "Looking up clients",
-    "get_client": "Looking up a client",
-    "list_resources": "Looking up caregivers",
-    "get_resource_availability": "Checking caregiver availability",
-    "list_schedules": "Looking up schedules",
-    "run_report": "Running a report",
-    "update_lead_status": "Updating a lead",
-    "update_client_status": "Updating a client",
-    "create_schedule": "Scheduling a visit",
-    "cancel_schedule": "Cancelling a visit",
-    "create_task": "Creating a task",
-    "send_sms": "Sending a text message",
-    "send_email": "Sending an email",
-}
+# The map lives in the tool layer (services/tools/labels.py) so chat and the
+# automations vocabulary endpoint share one source of truth.
+from .tools.labels import TOOL_LABELS  # noqa: E402
 
 
 class ThreadNotFound(Exception):

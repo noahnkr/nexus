@@ -396,6 +396,49 @@ NEXUS_AUTOMATIONS_POLL_SECONDS=5      # cycle interval
 NEXUS_AUTOMATIONS_STALE_MINUTES=10    # recovery threshold for stuck `running` runs
 ```
 
+### Automations Center (Module 8)
+
+The Automations Center is the UI over the engine — nav → **Automations**. It only
+*manages* recipes; every effect still runs behind the M7 API.
+
+- **Grid** (`/automations`) — a card per automation with a plain-language trigger
+  line (`describeRecipe()`), an amber "requires approval" chip when any step calls a
+  gated tool, active-run and last-run lines, pause/resume, and delete. Live via
+  Realtime on `automations` + `automation_runs`.
+- **Detail** (`/automations/{id}`) — the recipe rendered read-mode (WHEN sentence,
+  IF chips, THEN step cards; raw JSON behind a toggle) plus run history. A run row
+  opens a timeline drawer built from `step_log`, with the accumulated `context`
+  behind a technical expander and a **Cancel run** button for active runs.
+- **Builder** (`/automations/new`, `/automations/{id}/edit`) — the monday.com-style
+  **sentence + step-list** builder: an editable WHEN line (event/cron/manual, with a
+  live next-fires preview for cron), IF condition chips, and a reorderable list of
+  THEN step cards whose forms are generated from each tool/function's JSON Schema
+  (with a `{{template}}` inserter on text fields). The server is the validator of
+  record — a 422 renders inline; editing a definition with runs in flight returns a
+  409 with a "cancel runs & save" path.
+- **Describe → draft → review** — on the create page, describe the automation in
+  plain language and the agent drafts a complete recipe that prefills the builder
+  for review. **Agent drafts are never persisted** (CLAUDE.md): the draft endpoint is
+  read-only w.r.t. the database and the standard create path is the only writer.
+
+Backend additions (all tenant-scoped via RLS):
+
+```
+POST /api/automation-runs/{id}/cancel   cancel an active run (waiting_approval routes
+        through the approvals seam so action + task + run resolve together); 409 terminal
+GET  /api/automations/vocabulary        tools (+schema/safety/label), functions, operators,
+        event types (observed ∪ core-known, automation-sourced excluded), field roots
+GET  /api/automations/cron-preview?expr= next 3 fire times for a cron expression; 422 on garbage
+POST /api/automations/draft {description}
+        agent-drafted, Pydantic-validated, UNSAVED recipe (one retry on validation
+        failure); 503 without ANTHROPIC_API_KEY, 422 if it can't produce a valid recipe
+```
+
+`GET /api/automations` list rows are enriched with `active_runs`, `last_run`, and
+`requires_approval`; `GET /api/home/summary` gains an `automations` block
+(`active`, `runs_today`, `failed_today`) driving a Home StatCard. Drafting needs
+`ANTHROPIC_API_KEY`; no other new env vars.
+
 ## Notes on Templating
 
 This repo is designed so that a second deployment, in a different vertical, requires:
