@@ -167,8 +167,11 @@ npm install
 npm run dev                   # -> http://localhost:5173  (proxies /api -> :8000)
 ```
 
-Chat (default route `/`) streams responses over SSE with RAG citations; Ingestion
-(`/ingestion`) is drag-and-drop upload with live status via Supabase Realtime.
+Home (default route `/`) is a light landing page — greeting, at-a-glance counts,
+recent activity, and quick actions. Chat moved to `/chat`; it streams responses over
+SSE with RAG citations and renders assistant replies as GFM markdown. Ingestion
+(`/ingestion`) is drag-and-drop upload with live status via Supabase Realtime; Tasks
+(`/tasks`) and Event Log (`/events`) round out the shell.
 
 ### Auth Setup (Module 6)
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api, type DocumentOut } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { DocumentTable } from "@/components/ingestion/DocumentTable";
 import { UploadDropzone } from "@/components/ingestion/UploadDropzone";
 
@@ -72,11 +73,12 @@ export function IngestionPage() {
   };
 
   return (
-    <div className="flex flex-col">
-      <header className="flex h-14 items-center border-b px-6">
-        <h1 className="text-lg font-semibold">Ingestion</h1>
-      </header>
-      <div className="flex flex-col gap-6 p-6">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <PageHeader
+        title="Ingestion"
+        description="Upload documents to the knowledge base. Status updates live as each file is processed."
+      />
+      <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-6">
         <UploadDropzone onFiles={handleFiles} disabled={uploading} />
         <DocumentTable documents={documents} onDelete={handleDelete} />
       </div>

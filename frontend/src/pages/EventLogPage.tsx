@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
+import { ScrollText } from "lucide-react";
 import { api, type EventFacets, type EventOut, type EventQuery } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import { fallbackSummary, matchesFilters } from "@/lib/events";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { EmptyState } from "@/components/layout/EmptyState";
 import { EventFilters } from "@/components/events/EventFilters";
 import { EventRow } from "@/components/events/EventRow";
 
@@ -141,9 +144,10 @@ export function EventLogPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex h-14 shrink-0 items-center border-b px-6">
-        <h1 className="text-lg font-semibold">Event Log</h1>
-      </header>
+      <PageHeader
+        title="Event Log"
+        description="Every tool call, webhook, and approval — the system's audit trail, newest first."
+      />
 
       <div className="flex min-h-0 flex-1 flex-col gap-4 p-6">
         <EventFilters facets={facets} filters={filters} onChange={patchFilters} />
@@ -156,8 +160,12 @@ export function EventLogPage() {
               ))}
             </div>
           ) : events.length === 0 ? (
-            <div className="p-10 text-center text-sm text-muted-foreground">
-              No events match these filters.
+            <div className="p-6">
+              <EmptyState
+                icon={ScrollText}
+                title="No events"
+                description="Nothing matches these filters yet. Activity appears here as the system works."
+              />
             </div>
           ) : (
             <>

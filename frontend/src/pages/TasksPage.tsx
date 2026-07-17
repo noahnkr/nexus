@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Plus } from "lucide-react";
+import { ListTodo, Plus } from "lucide-react";
 import { api, type Task, type TaskCreate, type TaskStatus } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { EmptyState } from "@/components/layout/EmptyState";
 import { TaskFilters } from "@/components/tasks/TaskFilters";
 import { TaskCard } from "@/components/tasks/TaskCard";
 import { CreateTaskDialog } from "@/components/tasks/CreateTaskDialog";
@@ -35,6 +37,16 @@ export function TasksPage() {
 
   const apiStatus = status === "" ? undefined : status;
   const apiPriority = priority || undefined;
+
+  // Home's "New task" quick action deep-links here with ?create=1 — open the
+  // dialog once, then strip the param so a refresh doesn't reopen it.
+  useEffect(() => {
+    if (searchParams.get("create") === null) return;
+    setCreating(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete("create");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const loadFirst = useCallback(async () => {
     const page = await api.listTasks({
@@ -161,12 +173,15 @@ export function TasksPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex h-14 shrink-0 items-center justify-between border-b px-6">
-        <h1 className="text-lg font-semibold">Tasks</h1>
-        <Button size="sm" onClick={() => setCreating(true)}>
-          <Plus className="h-4 w-4" /> New task
-        </Button>
-      </header>
+      <PageHeader
+        title="Tasks"
+        description="Work that needs doing, plus actions waiting on your approval."
+        action={
+          <Button size="sm" onClick={() => setCreating(true)}>
+            <Plus className="h-4 w-4" /> New task
+          </Button>
+        }
+      />
 
       <div className="flex min-h-0 flex-1 flex-col gap-4 p-6">
         <TaskFilters
@@ -184,9 +199,16 @@ export function TasksPage() {
               ))}
             </div>
           ) : tasks.length === 0 ? (
-            <div className="rounded-lg border p-10 text-center text-sm text-muted-foreground">
-              No tasks match these filters.
-            </div>
+            <EmptyState
+              icon={ListTodo}
+              title="No tasks here"
+              description="Nothing matches these filters. Create a task, or approvals drafted in chat will land here."
+              action={
+                <Button size="sm" variant="outline" onClick={() => setCreating(true)}>
+                  <Plus className="h-4 w-4" /> New task
+                </Button>
+              }
+            />
           ) : (
             <div className="flex flex-col gap-3">
               {tasks.map((t) => (

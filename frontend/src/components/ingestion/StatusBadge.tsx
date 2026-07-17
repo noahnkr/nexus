@@ -3,7 +3,7 @@ import type { DocumentOut } from "@/lib/api";
 
 const map: Record<DocumentOut["status"], { label: string; variant: any }> = {
   uploaded: { label: "Uploaded", variant: "secondary" },
-  processing: { label: "Processing", variant: "default" },
+  processing: { label: "Processing", variant: "info" },
   ready: { label: "Ready", variant: "success" },
   failed: { label: "Failed", variant: "destructive" },
 };
