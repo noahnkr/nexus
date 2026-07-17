@@ -108,10 +108,39 @@ Module-by-module build status for the Nexus Control Center. Claude Code reads th
 - `[x]` Task 6 — Polish sweep: `PageHeader`/`EmptyState` across Ingestion/Tasks/Event Log + ThreadList; status badges consolidated onto semantic tokens (Badge `success`/`warning`/`info`, StatusBadge, TaskCard, ApprovalCard, ToolActivity); README routes note. Full pytest + build green; live browser walk pending
 
 ### Module 7: Core Automations Framework
-`[ ]` Not started. Default 🔴 Complex — break into sub-plans. Replaces the former "Workflow Automation via n8n" module (n8n dropped 2026-07-16): the business-agnostic WHEN/IF/THEN engine — automation definitions + durable runs (new core tables), event-trigger listeners + cron scheduling, run state maintained across delays/waits, steps via MCP tools through `execute_tool` (gated tools pause the run at an approval), conditionals, custom functions, LLM content generation. Engine + API only; all three surfaces below build on it.
+`[-]` Planned (2026-07-16) — 🔴 Complex, split per the planning rule into two sub-plans. Parent: `.agent/plans/7.core-automations-framework.md`. Build order 7a → 7b. The business-agnostic WHEN/IF/THEN engine (n8n dropped); engine + REST only — all UI and agent surfaces are M8+. User-locked: declarative-only IF conditions (function steps compute values into context); step failure ⇒ fail run + review task (no retries); one active run per (automation, entity), re-triggers skipped; no agent tools this module.
+
+**7a — Recipe model, tables & synchronous engine core** (`.agent/plans/7a.recipe-model-and-engine.md`):
+- `[ ]` Task 1 — Migration: `automations` + `automation_runs` core tables (RLS, concurrency partial-unique index, waker index), `pending_actions.automation_run_id`, Realtime publication
+- `[ ]` Task 2 — Recipe vocabulary (Pydantic + plain-language validation), `{{path}}` templates, function registry (core `now`/`days_since`), vertical entity-lookup seam
+- `[ ]` Task 3 — Engine core: `start_run`/`advance_run` (one tx per step), gate pause (`waiting_approval`), delay parking, fail path + review task, concurrency guard + `run_skipped`
+- `[ ]` Task 4 — Automations & runs REST API (CRUD w/ 422 plain errors, manual run-now, run history; RLS + 401 tests)
+- `[ ]` Task 5 — Wrap-up: README endpoints + recipe example, full pytest + build green
+
+**7b — Triggers, scheduler & durable runs** (`.agent/plans/7b.triggers-scheduler-durability.md`):
+- `[ ]` Task 1 — Engine loop skeleton in lifespan + settings (`NEXUS_AUTOMATIONS_ENABLED`, poll seconds, stale minutes); testable `*_once()` ticks
+- `[ ]` Task 2 — Event dispatcher: keyset poll of `events` behind a durable `connector_state` cursor; loop guard (automation events never re-dispatched); no history replay on first run
+- `[ ]` Task 3 — Cron triggers: `next_fire_at` bookkeeping (croniter), `skip locked` claims, advance-before-run, PATCH recompute
+- `[ ]` Task 4 — Waker for due `waiting` runs + stale-`running` recovery sweep
+- `[ ]` Task 5 — Approval resume/cancel hook in `services/approvals.py` (approved→resume in-request; rejected→cancelled; post-approval failure→run failed, no second task)
+- `[ ]` Task 6 — Wrap-up + live end-to-end walk: webhook → generate → gated send_sms → approve in Tasks → run completes; full Event Log + LangSmith trail; cron + restart-survival checks
 
 ### Module 8: Automations Center
-`[ ]` Not started. Grid view of active automations (status, run history, pause/resume); create via a monday.com-style recipe sentence builder or describe-it-and-an-agent-drafts-it. Depends on Module 7.
+`[-]` Planned (2026-07-16) — 🔴 Complex, split per the planning rule into two sub-plans. Parent: `.agent/plans/8.automations-center.md`. Build order 8a → 8b; requires Module 7 built first. User-locked: sentence + step-list builder layout; dedicated builder pages (`/automations/new`, `/{id}/edit`); agent drafting = draft → review in builder (drafts never persisted by the agent); no starter templates. Plan 7a amended at planning time: `automation_runs.step_log` + `FunctionDef.input_schema` (both consumed here).
+
+**8a — Grid, run history & management** (`.agent/plans/8a.center-management.md`):
+- `[ ]` Task 1 — Backend: `POST /api/automation-runs/{id}/cancel` (waiting_approval cancels via the approvals seam), definition-edit guard (409 w/ runs in flight), list enrichment (`active_runs`/`last_run`/`requires_approval`), Home summary automations block
+- `[ ]` Task 2 — `/automations` grid page + nav entry: cards w/ status pill, plain-language trigger line (`describeRecipe`), approval chip, pause/resume, delete
+- `[ ]` Task 3 — `/automations/{id}` detail: read-mode recipe components, run history, `step_log` timeline drawer, cancel-run
+- `[ ]` Task 4 — Realtime live updates (both tables), Home StatCard, README + wrap-up
+
+**8b — Recipe builder & agent drafting** (`.agent/plans/8b.recipe-builder.md`):
+- `[ ]` Task 1 — `GET /api/automations/vocabulary` (tools + schemas + safety, functions, event types, operators) + cron-preview helper
+- `[ ]` Task 2 — `POST /api/automations/draft`: LLM → Pydantic-validated recipe, one retry on validation failure, never persisted, `automation_draft` trace span
+- `[ ]` Task 3 — Builder page (create): WHEN/IF sentence chips, THEN step cards w/ schema-driven forms + `{{path}}` template insert, live sentence preview
+- `[ ]` Task 4 — Edit mode + guard UX (409 banner → cancel runs → retry)
+- `[ ]` Task 5 — Draft-review flow (DraftBox → prefill builder → explanation banner → normal save)
+- `[ ]` Task 6 — Wrap-up + live walk: describe → draft → activate → webhook → live run → approve → complete, in both themes
 
 ### Module 9: Leads View & Marketing Funnel
 `[ ]` Not started. First vertical dashboard view (entity-dashboard/pipeline pattern is core; lead content is the re-templating seam): stage funnel, per-stage outreach sequence builder (SMS/email/call tasks, delays, waits, conditionals, content generation on the M7 framework), lead directory with expanded profiles (basic info, entity event log, AI smart summary), funnel metrics. Depends on Module 7.
