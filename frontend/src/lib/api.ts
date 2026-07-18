@@ -268,6 +268,25 @@ export interface VocabFunction {
   input_schema: JSONSchema;
 }
 
+// Trigger-aware, plain-language field knowledge (Module 11a) — the token picker
+// and label helpers render from this. Mirrors backend schemas.FieldCatalog.
+export interface FieldRef {
+  path: string;
+  label: string;
+}
+
+export interface EntityFields {
+  label: string;
+  fields: FieldRef[];
+}
+
+export interface FieldCatalog {
+  trigger_fields: FieldRef[];
+  payload_by_event: Record<string, FieldRef[]>;
+  entities: Record<string, EntityFields>;
+  event_entity: Record<string, string>;
+}
+
 export interface Vocabulary {
   triggers: { event_types: string[]; source_systems: string[] };
   tools: VocabTool[];
@@ -276,6 +295,8 @@ export interface Vocabulary {
   generate_models: string[];
   field_roots: string[];
   field_suggestions: string[];
+  // Optional for resilience against older cached responses; present from 11a on.
+  field_catalog?: FieldCatalog;
 }
 
 export interface JSONSchema {
@@ -382,6 +403,95 @@ export interface LeadPatch {
 
 export interface LeadQuery {
   status?: string;
+  source?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
+}
+
+// --- Caregivers view (Module 10, vertical seam) ------------------------------
+export type ApplicantStage =
+  | "applied"
+  | "screening"
+  | "interview"
+  | "offer"
+  | "hired"
+  | "rejected";
+
+export interface QualificationRef {
+  id: string;
+  name: string;
+}
+
+export interface Applicant {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  source: string | null;
+  stage: ApplicantStage;
+  qualification_ids: string[];
+  region_ids: string[];
+  qualification_names: string[];
+  region_names: string[];
+  availability: Record<string, unknown>;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  // Set only on the PATCH response that moved an applicant to `hired` — the
+  // profile's hired banner names the created caregiver. Null on every read.
+  promoted_resource_id: string | null;
+  promoted_resource_name: string | null;
+}
+
+export interface ApplicantPage {
+  applicants: Applicant[];
+  total: number;
+}
+
+export interface ApplicantFacets {
+  sources: string[];
+  regions: RegionRef[];
+  qualifications: QualificationRef[];
+}
+
+export interface ApplicantSummary {
+  summary: string;
+  generated_at: string;
+}
+
+export interface ApplicantMetrics {
+  stages: StageCount[];
+  hire_rate: number;
+  new_last_7_days: number;
+  avg_days_to_hire: number | null;
+  top_sources: SourceCount[];
+}
+
+export interface ApplicantCreate {
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  source?: string | null;
+  qualification_ids?: string[];
+  region_ids?: string[];
+}
+
+// Only the fields being changed are sent (the server writes just those and emits
+// the matching event). A `stage` change routes through move_stage().
+export interface ApplicantPatch {
+  name?: string;
+  phone?: string | null;
+  email?: string | null;
+  source?: string | null;
+  notes?: string | null;
+  qualification_ids?: string[];
+  region_ids?: string[];
+  stage?: ApplicantStage;
+}
+
+export interface ApplicantQuery {
+  stage?: string;
   source?: string;
   q?: string;
   limit?: number;
@@ -557,4 +667,34 @@ export const api = {
       json<LeadSummary>,
     ),
   getLeadMetrics: () => authFetch("/api/leads/metrics").then(json<LeadMetrics>),
+
+  // Caregivers view (Module 10)
+  listApplicants: (params: ApplicantQuery = {}) =>
+    authFetch(`/api/applicants${queryString(params as Record<string, unknown>)}`).then(
+      json<ApplicantPage>,
+    ),
+  getApplicantFacets: () =>
+    authFetch("/api/applicants/facets").then(json<ApplicantFacets>),
+  createApplicant: (body: ApplicantCreate) =>
+    authFetch("/api/applicants", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<Applicant>),
+  getApplicant: (id: string) =>
+    authFetch(`/api/applicants/${id}`).then(json<Applicant>),
+  patchApplicant: (id: string, body: ApplicantPatch) =>
+    authFetch(`/api/applicants/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<Applicant>),
+  getApplicantSummary: (id: string) =>
+    authFetch(`/api/applicants/${id}/summary`).then(json<ApplicantSummary>),
+  regenerateApplicantSummary: (id: string) =>
+    authFetch(`/api/applicants/${id}/summary/regenerate`, { method: "POST" }).then(
+      json<ApplicantSummary>,
+    ),
+  getApplicantMetrics: () =>
+    authFetch("/api/applicants/metrics").then(json<ApplicantMetrics>),
 };

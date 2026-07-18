@@ -7,6 +7,8 @@ import { IngestionPage } from "@/pages/IngestionPage";
 import { TasksPage } from "@/pages/TasksPage";
 import { LeadsPage } from "@/pages/LeadsPage";
 import { LeadProfilePage } from "@/pages/LeadProfilePage";
+import { CaregiversPage } from "@/pages/CaregiversPage";
+import { CaregiverProfilePage } from "@/pages/CaregiverProfilePage";
 import { StageSequencePage } from "@/pages/StageSequencePage";
 import { EventLogPage } from "@/pages/EventLogPage";
 import { AutomationsPage } from "@/pages/AutomationsPage";
@@ -33,6 +35,9 @@ const router = createBrowserRouter([
       { path: "leads", element: <LeadsPage /> },
       { path: "leads/stages/:stage/sequence", element: <StageSequencePage view="leads" /> },
       { path: "leads/:id", element: <LeadProfilePage /> },
+      { path: "caregivers", element: <CaregiversPage /> },
+      { path: "caregivers/stages/:stage/sequence", element: <StageSequencePage view="caregivers" /> },
+      { path: "caregivers/:id", element: <CaregiverProfilePage /> },
       { path: "automations", element: <AutomationsPage /> },
       { path: "automations/new", element: <AutomationBuilderPage /> },
       { path: "automations/:id", element: <AutomationDetailPage /> },

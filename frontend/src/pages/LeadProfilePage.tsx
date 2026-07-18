@@ -113,7 +113,11 @@ export function LeadProfilePage() {
             <ArrowLeft className="h-4 w-4" /> All leads
           </Link>
 
-          <SmartSummary leadId={lead.id} />
+          <SmartSummary
+            entityId={lead.id}
+            getSummary={() => api.getLeadSummary(lead.id)}
+            regenerateSummary={() => api.regenerateLeadSummary(lead.id)}
+          />
 
           <LeadInfoCard lead={lead} facets={facets} onPatch={onPatch} busy={busy} />
 

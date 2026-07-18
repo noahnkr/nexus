@@ -280,15 +280,24 @@ async def _vocab_scenario():
             # an automation-sourced type should NOT.
             custom = f"vocab.custom.{_uuid.uuid4().hex[:8]}"
             auto_only = f"vocab.autoonly.{_uuid.uuid4().hex[:8]}"
+            # (11a) a non-automation lead.created payload key should surface under
+            # its event type in the catalog, humanized; an automation-sourced key
+            # for the same event type must NOT.
+            auto_key = f"autop{_uuid.uuid4().hex[:6]}"
             async with db.tenant_tx(DEMO_TENANT) as conn:
                 await log_event(conn, tenant_id=DEMO_TENANT, source_system="welcomehome",
                                 event_type=custom, payload={})
                 await log_event(conn, tenant_id=DEMO_TENANT, source_system="automation",
                                 event_type=auto_only, payload={})
+                await log_event(conn, tenant_id=DEMO_TENANT, source_system="welcomehome",
+                                event_type="lead.created", payload={"hours_per_week": 20})
+                await log_event(conn, tenant_id=DEMO_TENANT, source_system="automation",
+                                event_type="lead.created", payload={auto_key: 1})
 
             out["vocab"] = (await ac.get("/api/automations/vocabulary", headers=h)).json()
             out["custom"] = custom
             out["auto_only"] = auto_only
+            out["auto_key"] = auto_key
         return out
     finally:
         await db.close_pool()
@@ -321,3 +330,50 @@ def test_vocabulary():
     assert "trigger.payload.to" in fs or "trigger.event_type" in fs
     assert any(s.startswith("entity.") for s in fs)
     assert "entity.status" in fs  # a leads column, surfaced from the entity seam
+
+    # --- field_catalog (Module 11a) ---
+    fc = v["field_catalog"]
+    # 5 labeled core trigger fields, in the _trigger_scope shape order
+    assert [f["path"] for f in fc["trigger_fields"]] == [
+        "trigger.event_type", "trigger.source_system", "trigger.entity_type",
+        "trigger.entity_id", "trigger.created_at",
+    ]
+    assert all(f["label"] for f in fc["trigger_fields"])
+
+    # observed payload key surfaces under its event type, humanized; the
+    # automation-sourced key for the same event type does NOT appear
+    lead_payload = {f["path"]: f["label"] for f in fc["payload_by_event"].get("lead.created", [])}
+    assert lead_payload.get("trigger.payload.hours_per_week") == "Hours per week"
+    assert f"trigger.payload.{out['auto_key']}" not in lead_payload
+
+    # entities keyed by type: lead has its columns, no applicant/schedule leak
+    assert fc["entities"]["lead"]["label"] == "Lead"
+    lead_paths = {f["path"] for f in fc["entities"]["lead"]["fields"]}
+    assert "entity.status" in lead_paths
+    assert "entity.stage" not in lead_paths  # applicant column — must not leak in
+    assert "entity.start_time" not in lead_paths  # schedule column — must not leak in
+    assert fc["entities"]["applicant"]["label"] == "Applicant"
+
+    # event -> entity: observed maps lead.created; a core-known-but-unobserved type
+    # maps via the prefix heuristic
+    assert fc["event_entity"]["lead.created"] == "lead"
+    assert fc["event_entity"].get("client.updated") == "client"
+
+    # --- declared event knowledge (Module 11 fix): the registry is correct even
+    # with no observed history for the event type ---
+    # a declared connector event is offerable as a trigger before one ever arrived
+    assert "sms.received" in v["triggers"]["event_types"]
+    # its declared (nested) payload fields are present with curated labels
+    sms_payload = {f["path"]: f["label"] for f in fc["payload_by_event"]["sms.received"]}
+    assert sms_payload.get("trigger.payload.detail.message.text") == "Message text"
+    assert sms_payload.get("trigger.payload.detail.message.from") == "Sender number"
+    # declared entity mapping (no sms.received prefix table exists — must be declared)
+    assert fc["event_entity"]["sms.received"] == "lead"
+    # stage-change events declare from/to
+    stage_payload = {f["path"] for f in fc["payload_by_event"]["lead.stage_changed"]}
+    assert {"trigger.payload.from", "trigger.payload.to"} <= stage_payload
+    # every event type offers `summary` (the writers' plain-language convention)
+    assert "trigger.payload.summary" in lead_payload or any(
+        f["path"] == "trigger.payload.summary"
+        for f in fc["payload_by_event"]["lead.created"]
+    )

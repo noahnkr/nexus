@@ -1,20 +1,21 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { fieldGroups, type FieldContext } from "./FieldPicker";
 
-// A themed field-path autocomplete (WS2) — replaces the native <datalist> ("weird
-// triangle") in the condition editors. A controlled text input plus a popover that
-// filters `suggestions` by the current dotted token; picking one fills the field.
-// Free text is always allowed (suggestions guide, they don't constrain).
+// The condition FIELD side — a dotted path (not a template). A controlled text input
+// plus a popover of grouped, labeled fields from the catalog (Module 11b): label
+// primary, mono path secondary. Picking one fills the field; free text is always
+// allowed (suggestions guide, they don't constrain). Keyboard: arrows/enter/escape.
 export function FieldCombobox({
   value,
   onChange,
-  suggestions,
-  placeholder = "entity.status",
+  ctx,
+  placeholder = "pick a field",
   className,
 }: {
   value: string;
   onChange: (value: string) => void;
-  suggestions: string[];
+  ctx: FieldContext;
   placeholder?: string;
   className?: string;
 }) {
@@ -22,11 +23,19 @@ export function FieldCombobox({
   const [active, setActive] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
 
+  // Flat, labeled entries grouped by source; filtered by the current text.
+  const groups = useMemo(() => fieldGroups(ctx), [ctx]);
   const q = value.trim().toLowerCase();
-  const matches = (q
-    ? suggestions.filter((s) => s.toLowerCase().includes(q) && s.toLowerCase() !== q)
-    : suggestions
-  ).slice(0, 8);
+  const shownGroups = groups
+    .map((g) => ({
+      title: g.title,
+      items: g.items.filter(
+        (it) =>
+          !q || it.label.toLowerCase().includes(q) || it.path.toLowerCase().includes(q),
+      ),
+    }))
+    .filter((g) => g.items.length > 0);
+  const flat = shownGroups.flatMap((g) => g.items);
 
   useEffect(() => {
     if (!open) return;
@@ -39,8 +48,8 @@ export function FieldCombobox({
 
   useEffect(() => setActive(0), [value]);
 
-  const choose = (s: string) => {
-    onChange(s);
+  const choose = (path: string) => {
+    onChange(path);
     setOpen(false);
   };
 
@@ -49,21 +58,22 @@ export function FieldCombobox({
       setOpen(true);
       return;
     }
-    if (!open || matches.length === 0) return;
+    if (!open || flat.length === 0) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setActive((a) => (a + 1) % matches.length);
+      setActive((a) => (a + 1) % flat.length);
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setActive((a) => (a - 1 + matches.length) % matches.length);
-    } else if (e.key === "Enter" && matches[active]) {
+      setActive((a) => (a - 1 + flat.length) % flat.length);
+    } else if (e.key === "Enter" && flat[active]) {
       e.preventDefault();
-      choose(matches[active]);
+      choose(flat[active].path);
     } else if (e.key === "Escape") {
       setOpen(false);
     }
   };
 
+  let flatIndex = -1;
   return (
     <div ref={ref} className="relative">
       <input
@@ -80,24 +90,36 @@ export function FieldCombobox({
           className,
         )}
       />
-      {open && matches.length > 0 && (
-        <div className="absolute left-0 top-full z-30 mt-1 max-h-56 w-64 overflow-y-auto rounded-lg border bg-card py-1 shadow-lg">
-          {matches.map((s, i) => (
-            <button
-              key={s}
-              type="button"
-              onMouseEnter={() => setActive(i)}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                choose(s);
-              }}
-              className={cn(
-                "block w-full px-3 py-1.5 text-left font-mono text-xs transition-colors",
-                i === active ? "bg-muted text-foreground" : "text-muted-foreground",
-              )}
-            >
-              {s}
-            </button>
+      {open && flat.length > 0 && (
+        <div className="absolute left-0 top-full z-30 mt-1 max-h-64 w-72 overflow-y-auto rounded-lg border bg-card py-1 shadow-lg">
+          {shownGroups.map((g) => (
+            <div key={g.title}>
+              <p className="px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                {g.title}
+              </p>
+              {g.items.map((it) => {
+                flatIndex += 1;
+                const i = flatIndex;
+                return (
+                  <button
+                    key={it.path}
+                    type="button"
+                    onMouseEnter={() => setActive(i)}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      choose(it.path);
+                    }}
+                    className={cn(
+                      "flex w-full flex-col items-start px-3 py-1 text-left transition-colors",
+                      i === active ? "bg-muted" : "",
+                    )}
+                  >
+                    <span className="text-[13px] text-foreground">{it.label}</span>
+                    <span className="font-mono text-[10px] text-muted-foreground">{it.path}</span>
+                  </button>
+                );
+              })}
+            </div>
           ))}
         </div>
       )}

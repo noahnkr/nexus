@@ -2,6 +2,8 @@
 // plus `describeRecipe()` — the shared plain-language renderer used by the grid
 // cards, the detail page's read-mode components, and 8b's editable sentence line.
 // Non-technical staff read these strings; raw recipe JSON stays behind a toggle.
+import { labelForPath, labelizeTemplate } from "./template";
+import type { FieldCatalog } from "./api";
 
 export type TriggerType = "event" | "cron" | "manual";
 
@@ -159,25 +161,36 @@ export function humanizeField(field: string): string {
   return tail.replace(/_/g, " ");
 }
 
-export function describeCondition(c: Condition): string {
-  const field = humanizeField(c.field);
+// Read-mode condition text. With a catalog, the field and any templated value are
+// rendered in plain language ("Lead — Status is set", 'is "Phone"') instead of raw
+// dotted paths (Module 11b). Without one it falls back to the humanized tail.
+export function describeCondition(c: Condition, catalog?: FieldCatalog): string {
+  const field = catalog ? labelForPath(c.field, catalog) : humanizeField(c.field);
   const op = OP_PHRASES[c.op] ?? c.op;
   if (c.op === "exists" || c.op === "not_exists") return `${field} ${op}`;
-  return `${field} ${op} ${formatValue(c.value)}`;
+  return `${field} ${op} ${formatValue(c.value, catalog)}`;
 }
 
-function formatValue(v: unknown): string {
+function formatValue(v: unknown, catalog?: FieldCatalog): string {
   if (v === null || v === undefined) return "—";
-  if (typeof v === "string") return `"${v}"`;
+  if (typeof v === "string") return `"${labelizeTemplate(v, catalog)}"`;
   return String(v);
 }
 
-const FUNCTION_LABELS: Record<string, string> = {
-  now: "Get the current time",
-  days_since: "Count days since a date",
+// Plain-language function names for the builder select + read mode (Module 11b).
+export const FUNCTION_LABELS: Record<string, string> = {
+  weighted_score: "Calculate a score",
+  days_since: "Days since a date",
+  days_until: "Days until a date",
+  now: "Current date & time",
 };
 
-export function describeStep(step: Step): string {
+export function functionLabel(name: string | undefined): string {
+  if (!name) return "a calculation";
+  return FUNCTION_LABELS[name] ?? name.replace(/_/g, " ");
+}
+
+export function describeStep(step: Step, catalog?: FieldCatalog): string {
   switch (step.type) {
     case "tool":
       return toolLabel(step.tool);
@@ -186,11 +199,11 @@ export function describeStep(step: Step): string {
       return `Wait ${n} ${n === 1 ? unit.slice(0, -1) : unit}`;
     }
     case "condition": {
-      const list = (step.conditions ?? []).map(describeCondition).join(" and ");
+      const list = (step.conditions ?? []).map((c) => describeCondition(c, catalog)).join(" and ");
       return list ? `Continue only if ${list}` : "Continue only if …";
     }
     case "function":
-      return FUNCTION_LABELS[step.function ?? ""] ?? `Run ${step.function ?? "a function"}`;
+      return functionLabel(step.function);
     case "generate":
       return "Write a message with AI";
     case "wait_until":

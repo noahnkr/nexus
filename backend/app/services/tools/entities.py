@@ -24,6 +24,9 @@ from .registry import register
 LEAD_STATUSES = ["new", "contacted", "qualified", "converted", "lost"]
 CLIENT_STATUSES = ["active", "paused", "ended"]
 SCHEDULE_STATUSES = ["scheduled", "completed", "cancelled", "no_show"]
+# Caregiver-recruiting pipeline stages (Module 10); mirrors views/caregivers.py
+# STAGE_KEYS and the applicants.stage CHECK.
+APPLICANT_STAGES = ["applied", "screening", "interview", "offer", "hired", "rejected"]
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +268,66 @@ async def _get_resource_availability(conn, args: dict) -> ToolResult:
 
 
 # ---------------------------------------------------------------------------
+# applicants (caregiver-recruiting pipeline — Module 10)
+# ---------------------------------------------------------------------------
+async def _list_applicants(conn, args: dict) -> ToolResult:
+    stage = args.get("stage")
+    source = args.get("source")
+    search = _like(args.get("search"))
+    limit = _limit(args, 20)
+    rows = await _fetch_all(
+        conn,
+        """select id, name, phone, email, source, stage,
+                  qualification_ids, region_ids, created_at
+             from public.applicants
+            where (%(stage)s::text is null or stage = %(stage)s)
+              and (%(source)s::text is null or source = %(source)s)
+              and (%(search)s::text is null
+                   or name ilike %(search)s
+                   or email ilike %(search)s
+                   or phone ilike %(search)s)
+            order by created_at desc
+            limit %(limit)s""",
+        {"stage": stage, "source": source, "search": search, "limit": limit},
+    )
+    quals, regions = await _name_maps(conn)
+    for r in rows:
+        r["qualifications"] = [quals[q] for q in r.pop("qualification_ids") if q in quals]
+        r["regions"] = [regions[g] for g in r.pop("region_ids") if g in regions]
+    filt = _describe({"stage": stage, "source": source, "search": args.get("search")})
+    return ToolResult(
+        f"Found {len(rows)} applicant(s){filt}.", {"applicants": rows, "count": len(rows)}
+    )
+
+
+async def _get_applicant(conn, args: dict) -> ToolResult:
+    applicant_id = _require_uuid(args, "applicant_id")
+    applicant = await _fetch_one(
+        conn, "select * from public.applicants where id = %s", (applicant_id,)
+    )
+    if applicant is None:
+        return ToolResult("No applicant found with that id.", {"applicant": None})
+    quals, regions = await _name_maps(conn)
+    applicant["qualifications"] = [
+        quals[q] for q in applicant.pop("qualification_ids") if q in quals
+    ]
+    applicant["regions"] = [
+        regions[g] for g in applicant.pop("region_ids") if g in regions
+    ]
+    applicant["external_ids"] = await _fetch_all(
+        conn,
+        """select source_system, external_id, last_synced_at
+             from public.external_ids
+            where entity_type = 'applicant' and entity_id = %s""",
+        (applicant_id,),
+    )
+    return ToolResult(
+        f"Applicant: {applicant['name']} (stage {applicant['stage']}).",
+        {"applicant": applicant},
+    )
+
+
+# ---------------------------------------------------------------------------
 # schedules
 # ---------------------------------------------------------------------------
 async def _list_schedules(conn, args: dict) -> ToolResult:
@@ -485,6 +548,48 @@ async def _cancel_schedule(conn, args: dict) -> ToolResult:
     )
 
 
+# --- update_applicant_stage (Module 10) ---
+async def _describe_update_applicant_stage(conn, args: dict) -> str:
+    applicant_id = _require_uuid(args, "applicant_id")
+    name = await _lookup_name(conn, "applicants", applicant_id) or f"id {applicant_id[:8]}"
+    return f"Move applicant '{name}' to {args.get('stage')}"
+
+
+async def _update_applicant_stage(conn, args: dict) -> ToolResult:
+    """Move an applicant along the hiring pipeline. Delegates to the single
+    `move_stage()` path (never its own UPDATE) so a chat/MCP-approved move emits the
+    same `applicant.stage_changed` event — and, on `hired`, the same atomic
+    caregiver promotion — as a coordinator's UI move."""
+    applicant_id = _require_uuid(args, "applicant_id")
+    stage = args.get("stage")
+    if stage not in APPLICANT_STAGES:
+        raise ToolInputError(f"'stage' must be one of: {', '.join(APPLICANT_STAGES)}.")
+    name = await _lookup_name(conn, "applicants", applicant_id)
+    if name is None:
+        raise ToolInputError("No applicant found with that id.")
+
+    # The caller's tenant + source_system ride the event (the M7 loop guard depends
+    # on it). Lazy import avoids the tools<->views/automations import cycle.
+    from ..views.caregivers import MoveStageError, move_stage
+
+    inv = current_invocation()
+    tenant_id = inv["tenant_id"] if inv else None
+    source_system = inv["source_system"] if inv else "chat"
+    try:
+        result = await move_stage(conn, tenant_id, source_system, applicant_id, stage)
+    except MoveStageError as exc:
+        raise ToolInputError(str(exc))
+
+    data: dict = {"applicant_id": applicant_id, "stage": stage}
+    promoted = result["promoted"]
+    if promoted:
+        data["resource_id"] = promoted["resource_id"]
+        return ToolResult(
+            f"Moved applicant '{name}' to {stage}; caregiver record created.", data
+        )
+    return ToolResult(f"Moved applicant '{name}' to {stage}.", data)
+
+
 # ---------------------------------------------------------------------------
 # registration
 # ---------------------------------------------------------------------------
@@ -565,6 +670,32 @@ register(ToolDef(
     ),
     input_schema=_obj({"resource_id": {"type": "string", "description": "The caregiver's id."}}, ["resource_id"]),
     handler=_get_resource_availability,
+))
+
+register(ToolDef(
+    name="list_applicants",
+    description=(
+        "List caregiver job applicants (the hiring pipeline), optionally filtered by "
+        "stage, source, or a text search over name/email/phone. Returns each "
+        "applicant's qualification and region names."
+    ),
+    input_schema=_obj({
+        "stage": {"type": "string", "enum": APPLICANT_STAGES, "description": "Hiring stage filter."},
+        "source": {"type": "string", "description": "Where they applied from, e.g. 'indeed'."},
+        "search": {"type": "string", "description": "Case-insensitive match on name, email, or phone."},
+        "limit": {"type": "integer", "default": 20, "maximum": 100},
+    }),
+    handler=_list_applicants,
+))
+
+register(ToolDef(
+    name="get_applicant",
+    description=(
+        "Get one caregiver applicant by id, including their qualification and region "
+        "names, availability, notes, and cross-system external ids."
+    ),
+    input_schema=_obj({"applicant_id": {"type": "string", "description": "The applicant's id."}}, ["applicant_id"]),
+    handler=_get_applicant,
 ))
 
 register(ToolDef(
@@ -651,6 +782,23 @@ register(ToolDef(
     gate_describe=_describe_cancel_schedule,
 ))
 
+register(ToolDef(
+    name="update_applicant_stage",
+    description=(
+        "Move a caregiver applicant to a new hiring stage (e.g. advance to interview "
+        "or offer, or mark rejected). Moving an applicant to 'hired' also creates "
+        "their caregiver record. This changes a record and requires human approval "
+        "before it takes effect."
+    ),
+    input_schema=_obj({
+        "applicant_id": {"type": "string", "description": "The applicant's id."},
+        "stage": {"type": "string", "enum": APPLICANT_STAGES, "description": "New hiring stage."},
+    }, ["applicant_id", "stage"]),
+    handler=_update_applicant_stage,
+    safe=False,
+    gate_describe=_describe_update_applicant_stage,
+))
+
 
 # ---------------------------------------------------------------------------
 # SQL_SCHEMA_DOC — injected into run_report's description (reporting.py). Concise
@@ -666,7 +814,12 @@ leads(id uuid, name text, phone text, email text, source text,
 clients(id uuid, lead_id uuid -> leads.id, name text, phone text, email text,
         status text {active|paused|ended}, requirements jsonb, created_at timestamptz)
 resources(id uuid, name text, phone text, email text, qualification_ids uuid[],
-          region_ids uuid[], availability jsonb, created_at timestamptz)  -- caregivers
+          region_ids uuid[], availability jsonb, applicant_id uuid -> applicants.id,
+          created_at timestamptz)  -- caregivers (applicant_id set when hired from an applicant)
+applicants(id uuid, name text, phone text, email text, source text,
+           stage text {applied|screening|interview|offer|hired|rejected},
+           qualification_ids uuid[], region_ids uuid[], availability jsonb,
+           notes text, created_at timestamptz)  -- caregiver-recruiting pipeline
 schedules(id uuid, resource_id uuid -> resources.id, client_id uuid -> clients.id,
           start_time timestamptz, end_time timestamptz,
           status text {scheduled|completed|cancelled|no_show}, created_at timestamptz)

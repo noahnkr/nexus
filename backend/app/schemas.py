@@ -154,6 +154,84 @@ class LeadMetrics(BaseModel):
     top_sources: list[SourceCount] = []
 
 
+# --- Caregivers view (Module 10, vertical seam) ------------------------------
+class QualificationRef(BaseModel):
+    id: str
+    name: str
+
+
+class ApplicantOut(BaseModel):
+    id: str
+    name: str
+    phone: str | None = None
+    email: str | None = None
+    source: str | None = None
+    stage: str  # applied|screening|interview|offer|hired|rejected (applicants.stage)
+    qualification_ids: list[str] = []
+    region_ids: list[str] = []
+    qualification_names: list[str] = []  # resolved from qualifications
+    region_names: list[str] = []  # resolved from regions
+    availability: dict[str, Any] = {}
+    notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    # Set only on the PATCH response that moved an applicant to `hired` and created
+    # a caregiver — the profile's hired banner names it. Null on every read.
+    promoted_resource_id: str | None = None
+    promoted_resource_name: str | None = None
+
+
+class ApplicantPage(BaseModel):
+    applicants: list[ApplicantOut] = []
+    total: int = 0
+
+
+class ApplicantFacets(BaseModel):
+    sources: list[str] = []  # distinct non-null applicant sources
+    regions: list[RegionRef] = []  # create/edit selector
+    qualifications: list[QualificationRef] = []  # create/edit selector
+
+
+class ApplicantCreate(BaseModel):
+    name: str
+    phone: str | None = None
+    email: str | None = None
+    source: str | None = None
+    qualification_ids: list[str] = []
+    region_ids: list[str] = []
+
+
+class ApplicantPatch(BaseModel):
+    """Partial update. Only fields present in the request body are written (the
+    router reads `model_fields_set`). A `stage` change routes through
+    views/caregivers.move_stage() (emits applicant.stage_changed + hired-promotion);
+    other field changes emit one applicant.updated."""
+    name: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    source: str | None = None
+    notes: str | None = None
+    qualification_ids: list[str] | None = None
+    region_ids: list[str] | None = None
+    stage: str | None = None
+
+
+class ApplicantSummaryOut(BaseModel):
+    """On-demand AI hiring summary — generated per profile open, never persisted."""
+    summary: str
+    generated_at: datetime
+
+
+class ApplicantMetrics(BaseModel):
+    """Hiring funnel dashboard widgets (10b). All six stages, zero-filled; hire rate
+    as a percent; avg_days_to_hire null when none observed."""
+    stages: list[StageCount] = []
+    hire_rate: float = 0.0
+    new_last_7_days: int = 0
+    avg_days_to_hire: float | None = None
+    top_sources: list[SourceCount] = []
+
+
 # --- Tasks & approvals -------------------------------------------------------
 class PendingActionOut(BaseModel):
     id: str
@@ -326,6 +404,30 @@ class VocabTriggers(BaseModel):
     source_systems: list[str] = []
 
 
+# --- Field catalog (Module 11a) — trigger-aware, plain-language field knowledge --
+class FieldRef(BaseModel):
+    """One template-able field: the `{{path}}` and its plain-language label."""
+    path: str
+    label: str
+
+
+class EntityFields(BaseModel):
+    """A canonical entity's plain-language name + its `entity.*` fields."""
+    label: str  # "Lead", "Applicant", … (from the vertical seam)
+    fields: list[FieldRef] = []
+
+
+class FieldCatalog(BaseModel):
+    """Everything the builder needs to offer the RIGHT fields for the selected
+    trigger, in plain language. `payload_by_event` + `event_entity` let 11b filter to
+    the chosen trigger; `entities` keyed by type keeps a lead.created session from
+    seeing applicant columns."""
+    trigger_fields: list[FieldRef] = []  # 5 core trigger fields, static + labeled
+    payload_by_event: dict[str, list[FieldRef]] = {}  # observed payload keys per event type
+    entities: dict[str, EntityFields] = {}  # entity.* fields per entity type
+    event_entity: dict[str, str] = {}  # event type -> the entity a run on it is about
+
+
 class Vocabulary(BaseModel):
     """Everything the builder renders from — so new tools/functions/event types
     appear with zero frontend changes (the M9/M10 seam)."""
@@ -338,6 +440,10 @@ class Vocabulary(BaseModel):
     # Concrete `entity.*` / `trigger.*` dotted paths for the builder's field
     # autocomplete (WS2). Suggestions only — any path is still allowed.
     field_suggestions: list[str] = []
+    # Trigger-aware, plain-language field knowledge (Module 11) — the structured
+    # replacement 11b's token picker renders from. field_suggestions stays for the
+    # interim FieldCombobox until 11b upgrades it.
+    field_catalog: FieldCatalog = FieldCatalog()
 
 
 class DraftRequest(BaseModel):

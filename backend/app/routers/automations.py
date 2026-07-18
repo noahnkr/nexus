@@ -31,6 +31,9 @@ from ..schemas import (
     AutomationOut,
     AutomationPatch,
     DraftRequest,
+    EntityFields,
+    FieldCatalog,
+    FieldRef,
     LastRun,
     RunNow,
     RunOut,
@@ -49,7 +52,14 @@ from ..services.automations import (
     validate_recipe,
 )
 from ..services.automations.draft import DraftError, draft_recipe
-from ..services.automations.entities import entity_field_suggestions
+from ..services.automations.entities import (
+    ENTITY_TABLES,
+    EVENT_ENTITY_TYPES,
+    EVENT_PAYLOAD_FIELDS,
+    entity_catalog,
+    entity_field_suggestions,
+    humanize,
+)
 from ..services.automations.functions import all_functions
 from ..services.automations.recipe import OPERATORS
 from ..services.automations.scheduler import next_fire
@@ -61,6 +71,17 @@ from ..services.tools.labels import tool_label
 _KNOWN_EVENT_TYPES = [
     "lead.created", "lead.updated", "client.created", "client.updated",
     "schedule.created", "schedule.cancelled",
+    "applicant.created", "applicant.stage_changed",
+]
+
+# The five core trigger fields every event carries, with plain-language labels
+# (Module 11). Static — they're the shape of `_trigger_scope`, not observed data.
+_CORE_TRIGGER_FIELDS: list[tuple[str, str]] = [
+    ("trigger.event_type", "Event type"),
+    ("trigger.source_system", "Source system"),
+    ("trigger.entity_type", "Record type"),
+    ("trigger.entity_id", "Record id"),
+    ("trigger.created_at", "When it happened"),
 ]
 
 router = APIRouter(prefix="/api", tags=["automations"])
@@ -270,6 +291,76 @@ async def create_automation(
 # NOTE: these literal paths are registered BEFORE /automations/{automation_id} so
 # FastAPI doesn't capture "vocabulary"/"cron-preview"/"draft" as an id.
 # ---------------------------------------------------------------------------
+async def _build_field_catalog(conn, event_types: list[str]) -> FieldCatalog:
+    """The trigger-aware, plain-language field catalog (Module 11a). Lets the builder
+    offer the RIGHT fields for the selected trigger — payload fields grouped per
+    event type, entity fields per entity type, and an event→entity map — all in
+    plain language. Payload fields and the entity map are the union of the seam's
+    DECLARATIONS (EVENT_PAYLOAD_FIELDS / EVENT_ENTITY_TYPES — correct on a tenant
+    with no event history) and what's actually been observed; declared wins on
+    conflict (curated labels; stray test events can't mislabel a mapping). Every
+    event's writer sets payload.summary by convention, so `summary` is offered for
+    every event type. No caching; runs per vocabulary fetch (fine at this scale)."""
+    # Observed payload keys, grouped per event type (the pooled facet query + a
+    # group-by on event_type). Automation-sourced excluded, mirroring the facets.
+    observed_keys: dict[str, list[str]] = {}
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select event_type, jsonb_object_keys(payload) as k from public.events "
+            "where payload is not null and jsonb_typeof(payload) = 'object' "
+            "and source_system <> 'automation' group by 1, 2 order by 1, 2"
+        )
+        for event_type, key in await cur.fetchall():
+            observed_keys.setdefault(event_type, []).append(key)
+
+    payload_by_event: dict[str, list[FieldRef]] = {}
+    for event_type in set(event_types) | set(observed_keys) | set(EVENT_PAYLOAD_FIELDS):
+        refs: list[FieldRef] = [
+            FieldRef(path=f"trigger.payload.{key}", label=label)
+            for key, label in EVENT_PAYLOAD_FIELDS.get(event_type, [])
+        ]
+        seen = {r.path for r in refs}
+        for key in [*observed_keys.get(event_type, []), "summary"]:
+            path = f"trigger.payload.{key}"
+            if path not in seen:
+                seen.add(path)
+                refs.append(FieldRef(path=path, label=humanize(key)))
+        payload_by_event[event_type] = refs
+
+    # Entity fields per type (vertical seam supplies labels).
+    entities = {
+        etype: EntityFields(
+            label=info["label"],
+            fields=[FieldRef(**f) for f in info["fields"]],
+        )
+        for etype, info in (await entity_catalog(conn)).items()
+    }
+
+    # event -> entity: declared first, observed most-frequent fills unknowns, then
+    # the prefix heuristic (`lead.created` -> `lead`) covers anything left.
+    event_entity: dict[str, str] = dict(EVENT_ENTITY_TYPES)
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select event_type, entity_type from public.events "
+            "where entity_type is not null and source_system <> 'automation' "
+            "group by 1, 2 order by event_type, count(*) desc"
+        )
+        for event_type, ent_type in await cur.fetchall():
+            event_entity.setdefault(event_type, ent_type)  # first = most frequent
+    for event_type in event_types:
+        if event_type not in event_entity:
+            prefix = event_type.split(".")[0]
+            if prefix in ENTITY_TABLES:
+                event_entity[event_type] = prefix
+
+    return FieldCatalog(
+        trigger_fields=[FieldRef(path=p, label=lbl) for p, lbl in _CORE_TRIGGER_FIELDS],
+        payload_by_event=payload_by_event,
+        entities=entities,
+        event_entity=event_entity,
+    )
+
+
 async def _build_vocabulary(conn) -> Vocabulary:
     """Everything the builder renders from. Event types union a core-known list with
     what's actually been observed (automation-sourced excluded); tools/functions
@@ -286,7 +377,11 @@ async def _build_vocabulary(conn) -> Vocabulary:
         )
         sources = [r["source_system"] for r in await cur.fetchall()]
 
-    event_types = sorted(set(_KNOWN_EVENT_TYPES) | set(observed_types))
+    # Core-known ∪ seam-declared ∪ observed: a declared connector event (e.g.
+    # sms.received) is offerable as a trigger before one has ever arrived.
+    event_types = sorted(
+        set(_KNOWN_EVENT_TYPES) | set(EVENT_ENTITY_TYPES) | set(observed_types)
+    )
 
     # Field autocomplete suggestions (WS2): core trigger paths + observed
     # trigger.payload.* keys + the vertical's entity.<col> paths (from the seam).
@@ -321,6 +416,7 @@ async def _build_vocabulary(conn) -> Vocabulary:
         generate_models=["default", "fast"],
         field_roots=["trigger", "entity", "context"],
         field_suggestions=sorted(field_suggestions),
+        field_catalog=await _build_field_catalog(conn, event_types),
     )
 
 

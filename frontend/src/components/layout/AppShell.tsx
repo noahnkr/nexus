@@ -6,6 +6,7 @@ import {
   MessageSquare,
   ScrollText,
   Upload,
+  Users,
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -19,6 +20,7 @@ const nav = [
   { to: "/chat", label: "Chat", icon: MessageSquare, end: false },
   { to: "/tasks", label: "Tasks", icon: ListTodo, end: false },
   { to: "/leads", label: "Leads", icon: Filter, end: false },
+  { to: "/caregivers", label: "Caregivers", icon: Users, end: false },
   { to: "/automations", label: "Automations", icon: Zap, end: false },
   { to: "/ingestion", label: "Ingestion", icon: Upload, end: false },
   { to: "/events", label: "Event Log", icon: ScrollText, end: false },
@@ -29,8 +31,22 @@ export function AppShell() {
     <div className="flex h-screen w-full overflow-hidden bg-background">
       <aside className="flex w-60 shrink-0 flex-col border-r bg-muted/40">
         <div className="flex h-14 items-center gap-2.5 px-4">
-          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-sm">
-            <span className="h-2.5 w-2.5 rounded-[3px] bg-primary-foreground" />
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm">
+            {/* Nexus mark: a hub node linked to its satellites. */}
+            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+              <path
+                d="M12 12 L5 5.5 M12 12 L19 6 M12 12 L6 18.5 M12 12 L18.5 18"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                opacity="0.85"
+              />
+              <circle cx="12" cy="12" r="3" fill="currentColor" />
+              <circle cx="5" cy="5.5" r="1.7" fill="currentColor" />
+              <circle cx="19" cy="6" r="1.7" fill="currentColor" />
+              <circle cx="6" cy="18.5" r="1.7" fill="currentColor" />
+              <circle cx="18.5" cy="18" r="1.7" fill="currentColor" />
+            </svg>
           </span>
           <span className="flex flex-col leading-none">
             <span className="text-[15px] font-semibold tracking-tight">

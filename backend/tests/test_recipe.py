@@ -57,6 +57,44 @@ def test_all_step_types_roundtrip():
 
 
 # ---------------------------------------------------------------------------
+# Caregivers stage-sequence convention (Module 10b) — the recipe the constrained
+# builder assembles for a stage must validate, with the managed condition present.
+# ---------------------------------------------------------------------------
+def test_caregivers_rejected_sequence_convention():
+    # `rejected` stage: applicant.stage_changed + managed to=rejected, then a
+    # generate step feeding a gated send_email (the PRD's denied-email use case).
+    r = validate_recipe({
+        "trigger": {"type": "event", "event_type": "applicant.stage_changed"},
+        "conditions": [{"field": "trigger.payload.to", "op": "eq", "value": "rejected"}],
+        "steps": [
+            {"type": "generate", "prompt": "Write a kind rejection note to {{entity.name}}.",
+             "save_as": "msg", "model": "fast"},
+            {"type": "tool", "tool": "send_email",
+             "input": {"to": "{{entity.email}}", "subject": "Update on your application",
+                       "body": "{{context.msg}}"}, "save_as": "sent"},
+        ],
+    })
+    assert r.trigger.type == "event"
+    assert r.trigger.event_type == "applicant.stage_changed"
+    # the managed condition (payload.to = the stage) survives validation
+    assert r.conditions[0].field == "trigger.payload.to"
+    assert r.conditions[0].value == "rejected"
+    assert [s.type for s in r.steps] == ["generate", "tool"]
+
+
+def test_caregivers_applied_sequence_convention():
+    # `applied` stage IS creation -> applicant.created, no managed condition.
+    r = validate_recipe({
+        "trigger": {"type": "event", "event_type": "applicant.created"},
+        "steps": [{"type": "tool", "tool": "send_email",
+                   "input": {"to": "{{entity.email}}", "subject": "Thanks for applying", "body": "Hi"},
+                   "save_as": "sent"}],
+    })
+    assert r.trigger.event_type == "applicant.created"
+    assert r.conditions == []
+
+
+# ---------------------------------------------------------------------------
 # bad shapes -> plain-language RecipeError
 # ---------------------------------------------------------------------------
 def test_unknown_tool_rejected():

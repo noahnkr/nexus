@@ -77,7 +77,7 @@ See `PRD.md` for full scope, module breakdown, and success criteria. This file g
   - ✅ **Simple** — Single-pass executable, low risk
   - ⚠️ **Medium** — May need iteration, some complexity
   - 🔴 **Complex** — Break into sub-plans before executing
-- Modules involving the MCP tool layer, the approval-gate pattern, the automations framework, or the matching/decision harness (Modules 3, 5, 7, 11) should default to 🔴 Complex and be broken into sub-plans rather than attempted single-pass
+- Modules involving the MCP tool layer, the approval-gate pattern, or the automations framework (Modules 3, 5, 7, 8, 11) should default to 🔴 Complex and be broken into sub-plans rather than attempted single-pass (the matching/decision harness, formerly Module 11, is deferred to the future-plans backlog and keeps this default if revived)
 
 ## Development Flow
 

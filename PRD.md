@@ -50,7 +50,7 @@ The Leads and Caregivers views (interfaces #7–8) are the first *vertical* view
 - ✅ Custom automations framework (WHEN → IF → THEN): event-trigger listeners + cron-scheduled triggers, durable run state across delays/waits, steps executing MCP tools through the audited/gated seam, custom functions, LLM content generation
 - ✅ Automations Center interface (grid of active automations; recipe sentence builder; agent-built automations from a natural-language description)
 - ✅ Entity pipeline views (Leads, Caregivers): pre-defined stage funnels with per-stage outreach sequences, entity directories with event history and AI smart summaries, dashboard metrics
-- ✅ Deterministic multi-phase harness *pattern* (generic engine: phase → programmatic check → human review on ambiguous cases), implemented against this client's actual matching problem as the first reference case, but built as a reusable engine, not care-specific logic
+- ⏸ Deterministic multi-phase harness *pattern* (generic engine: phase → programmatic check → human review on ambiguous cases) — **deferred to the future-plans backlog (user decision 2026-07-17)** together with the scheduling surfaces it was bundled with; in the interim, deterministic scoring/derivation lives in the automations engine's function steps (`weighted_score` et al.)
 - ✅ LLM observability/tracing (LangSmith)
 - ✅ Prompt caching for repeated system prompt/tool-definition context
 
@@ -353,10 +353,38 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 ---
 
+## Module 11: Automation Field Tokens & Calculations
+
+**Goal**: make the automations/sequences builder genuinely usable by a non-technical office user — no more typing `{{trigger.payload.phone}}` by hand — and make deterministic scoring (applicant fit, lead value) buildable in plain language. This module took the Module 11 slot when the matching/decision harness + scheduling system was deferred (user decision 2026-07-17; see Deferred below).
+
+**Trigger-aware field catalog (backend)**:
+
+- The builder vocabulary grows a structured, plain-language field catalog: labeled core trigger fields, observed `trigger.payload.*` keys grouped *per event type*, entity fields *per entity type* with seam-supplied labels ("Lead", "Applicant", …), and an event-type → entity-type map — so the builder can show exactly the fields that exist for the trigger the user picked, and explain what "the entity" is (the record the run is about; empty on cron/manual runs)
+- Entity labels/fields come from the vertical seam (`services/automations/entities.py`) — the catalog re-templates with the entity schema, core only humanizes names
+- Condition *values* become template-rendered like `wait_until` conditions already were (an unresolvable reference makes the condition false, never a crash); the agent-drafting prompt is taught the catalog so drafted recipes reference real paths
+
+**Visual field tokens (builder)**:
+
+- Every template-accepting input (tool inputs, generate prompts, condition values) renders `{{path}}` references as atomic, labeled, deletable chips; insertion is cursor-positioned from a searchable picker grouped by "From the trigger event" / "The Lead …" / "Earlier step results", with a custom-path escape hatch
+- The stored recipe format is unchanged — chips are a view over the same `{{path}}` strings, so existing recipes, the draft agent, and the engine are untouched; read-mode surfaces (step cards, run timeline, recipe sentences) show labels instead of raw paths
+
+**Run a calculation (scoring)**:
+
+- The function step is presented as "Run a calculation", and `weighted_score` gets a dedicated field × weight row editor (no JSON, no dotted paths) with a live formula preview — applicant scoring and lead-value determination are this editor plus a condition/generate step on the saved result
+- Score results are **context-only** (user decision 2026-07-17): no score column, no score display surface; the recipe decides what becomes of the number
+- `days_until` joins the function registry (credential-expiry / upcoming-date automations); further calculation candidates (`count_events`, `calculate`, `tier`, `hours_between`) recorded to the backlog, not built
+
+**Infrastructure introduced**: none — no migrations, no new env vars; vitest arrives as the frontend's first test runner (covering the template tokenizer).
+
+**Deliverable for this module**: an office user builds "when a new applicant arrives, score them by weighted fields and, if the score clears a threshold, text them" entirely from labeled dropdowns and visual tokens — never typing a dotted path or JSON — and existing automations open and run identically. Plans: `.agent/plans/11.automation-field-tokens.md` (+ `11a.field-catalog-backend.md`, `11b.token-builder-frontend.md`)
+
+---
+
 ## Subsequent Modules (summary)
 
-11. **Deterministic Matching/Decision Harness** — generic phase-pipeline engine (check → check → human review on ambiguous cases), instantiated against this client's actual matching problem (e.g., can we serve this lead) using the Module 5 approval gate for ambiguous cases; the engine is core, the specific checks are per-client configuration. Applicant/lead scoring lands here (deferred from Module 10, user decision 2026-07-17)
 12. **Advanced RAG & Scale-Up** — hybrid search, reranking, multi-format ingestion (Docling), sub-agents, validated against this client's small corpus before applying to a larger future client
+
+**Deferred (future-plans backlog, user decision 2026-07-17)** — the former Module 11, the **Deterministic Matching/Decision Harness and Scheduling System**: generic phase-pipeline engine (check → check → human review on ambiguous cases) instantiated against this client's matching problem (e.g., can we serve this lead) using the Module 5 approval gate for ambiguous cases; the schedule board (week calendar, caregivers as rows, visits colored by state), the coverage/open-shift view, the caregiver–client matching tool (rank by qualifications, region, availability, continuity, overtime/conflict avoidance — exposed as an MCP tool like `find_available_caregivers`), and the call-out → replacement flow (call-out → ranked replacements → gated send_sms offer → owner approves in Tasks). Deterministic scoring interim home: automation function steps (Module 11 as built).
 
 *(The former "Custom Views / Plugin Apps" placeholder module is retired: the Leads and Caregivers views now carry that pattern in scope; anything beyond them stays out of scope per the Out of Scope list.)*
 
@@ -364,7 +392,7 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 ## Success Criteria
 
-- A new inbound lead (via webhook or manual entry) resolves to a canonical entity, and the agent can correctly answer "can we serve this lead?" by calling the matching/decision harness rather than reasoning freeform over documents
+- A new inbound lead (via webhook or manual entry) resolves to a canonical entity, and the agent can correctly answer "can we serve this lead?" by calling the matching/decision harness rather than reasoning freeform over documents *(deferred with the harness, 2026-07-17 — re-activates if/when the backlogged harness module is built)*
 - A client/care question in Chat correctly routes to structured tools, vector search, or both, and joins results by canonical entity ID when both apply
 - Every tool call — read, write, or gated — appears in both the Event Log (business-facing) and LangSmith (developer-facing trace)
 - Any tool marked as requiring approval never executes without a human clearing it in the Task queue first, verified by attempting to trigger one and confirming it stalls at `pending_actions` until approved

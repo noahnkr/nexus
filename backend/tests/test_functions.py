@@ -56,3 +56,36 @@ def test_unknown_function_rejected():
             "trigger": {"type": "manual"},
             "steps": [{"type": "function", "function": "no_such_fn", "args": {}}],
         })
+
+
+# --- days_until (Module 11a) — mirror of days_since -----------------------------
+def _days_until(args):
+    fn = get_function("days_until")
+    assert fn is not None
+    return asyncio.run(fn.handler(None, args))
+
+
+def test_days_until_future():
+    from datetime import datetime, timedelta, timezone
+
+    future = (datetime.now(timezone.utc) + timedelta(days=10)).isoformat()
+    # whole-day floor: 9 or 10 depending on sub-day remainder (mirror days_since tolerance)
+    assert _days_until({"date": future}) in (9, 10)
+
+
+def test_days_until_past_is_negative():
+    from datetime import datetime, timedelta, timezone
+
+    past = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
+    assert _days_until({"date": past}) < 0
+
+
+def test_days_until_unparseable_errors():
+    with pytest.raises(ValueError):
+        _days_until({"date": "not-a-date"})
+
+
+def test_days_until_registered():
+    from app.services.automations.functions import all_functions
+
+    assert "days_until" in {f.name for f in all_functions()}

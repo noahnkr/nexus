@@ -1,46 +1,42 @@
 import { Filter, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { FieldCombobox } from "./FieldCombobox";
+import { TokenField, type FieldContext } from "./FieldPicker";
 import {
   describeCondition,
   OPERATORS,
   type Condition,
   type Operator,
 } from "@/lib/recipe";
-import type { Vocabulary } from "@/lib/api";
+import type { FieldCatalog } from "@/lib/api";
 
 const selectClass =
   "h-8 rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 const NO_VALUE_OPS = new Set(["exists", "not_exists"]);
 
-// The IF line. Read-mode renders the AND-list as chips; pass `onChange` to edit
-// (field / operator / value rows). `label` toggles the leading "If" chip so the
-// same component serves both the entry conditions and a step's nested conditions.
+// The IF line. Read-mode renders the AND-list as chips; pass `onChange` + `ctx` to
+// edit (field / operator / value rows). The field side is a catalog-grouped combobox
+// (a path); the value side is a token input (Module 11a made condition values
+// render templates). `label` toggles the leading chip so the same component serves
+// both the entry conditions and a step's nested conditions.
 export function ConditionChips({
   conditions,
   onChange,
-  vocabulary,
-  contextKeys = [],
+  ctx,
+  catalog: catalogProp,
   label = "If",
   addLabel = "Add condition",
 }: {
   conditions: Condition[];
   onChange?: (c: Condition[]) => void;
-  vocabulary?: Vocabulary;
-  contextKeys?: string[]; // save_as names from earlier steps -> context.<name>
+  ctx?: FieldContext;
+  catalog?: FieldCatalog; // read-mode label source when no ctx is threaded
   label?: string;
   addLabel?: string;
 }) {
-  const operators = (vocabulary?.operators as Operator[]) ?? OPERATORS;
-  const roots = vocabulary?.field_roots ?? ["trigger", "entity", "context"];
-  // Autocomplete suggestions: concrete server paths + this run's context keys.
-  const suggestions = [
-    ...roots.map((r) => `${r}.`),
-    ...(vocabulary?.field_suggestions ?? []),
-    ...contextKeys.map((k) => `context.${k}`),
-  ];
+  const catalog = catalogProp ?? ctx?.vocabulary?.field_catalog;
+  const operators = (ctx?.vocabulary?.operators as Operator[]) ?? OPERATORS;
 
   if (!onChange) {
     if (!conditions || conditions.length === 0) return null;
@@ -49,7 +45,7 @@ export function ConditionChips({
         <IfChip label={label} />
         {conditions.map((c, i) => (
           <span key={i} className="rounded-md border bg-card px-2 py-1 text-xs text-foreground">
-            {describeCondition(c)}
+            {describeCondition(c, catalog)}
           </span>
         ))}
       </div>
@@ -59,22 +55,20 @@ export function ConditionChips({
   const update = (i: number, patch: Partial<Condition>) =>
     onChange(conditions.map((c, j) => (j === i ? { ...c, ...patch } : c)));
   const remove = (i: number) => onChange(conditions.filter((_, j) => j !== i));
-  const add = () => onChange([...conditions, { field: `${roots[0]}.`, op: "eq", value: "" }]);
+  const add = () => onChange([...conditions, { field: "", op: "eq", value: "" }]);
 
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
         <IfChip label={label} />
-        <span className="text-xs text-muted-foreground">
-          all of these must be true
-        </span>
+        <span className="text-xs text-muted-foreground">all of these must be true</span>
       </div>
       {conditions.map((c, i) => (
         <div key={i} className="flex flex-wrap items-center gap-1.5">
           <FieldCombobox
             value={c.field}
             onChange={(field) => update(i, { field })}
-            suggestions={suggestions}
+            ctx={ctx ?? { vocabulary: null, trigger: { type: "manual" }, contextKeys: [] }}
           />
           <select
             className={selectClass}
@@ -88,12 +82,14 @@ export function ConditionChips({
             ))}
           </select>
           {!NO_VALUE_OPS.has(c.op) && (
-            <Input
-              value={String(c.value ?? "")}
-              onChange={(e) => update(i, { value: e.target.value })}
-              placeholder="value"
-              className="h-8 w-40 text-xs"
-            />
+            <div className="w-52">
+              <TokenField
+                value={String(c.value ?? "")}
+                onChange={(v) => update(i, { value: v })}
+                ctx={ctx ?? { vocabulary: null, trigger: { type: "manual" }, contextKeys: [] }}
+                placeholder="value or a field"
+              />
+            </div>
           )}
           <button
             type="button"

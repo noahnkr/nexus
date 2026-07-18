@@ -12,6 +12,8 @@ TOOL_LABELS: dict[str, str] = {
     "get_client": "Looking up a client",
     "list_resources": "Looking up caregivers",
     "get_resource_availability": "Checking caregiver availability",
+    "list_applicants": "Looking up applicants",
+    "get_applicant": "Looking up an applicant",
     "list_schedules": "Looking up schedules",
     "run_report": "Running a report",
     "update_lead_status": "Updating a lead",

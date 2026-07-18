@@ -98,6 +98,18 @@ async def _days_since(conn, args: dict) -> int:
     return (now - then).days
 
 
+async def _days_until(conn, args: dict) -> int:
+    """Whole days from now until a given date/date-time (negative if the date has
+    already passed) — the mirror of days_since. Raises ValueError on an unparseable
+    date. Powers credential-expiry / upcoming-date automations."""
+    raw = args.get("date")
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        raise ValueError("days_until needs a 'date'.")
+    then = _parse_dt(raw)
+    now = datetime.now(timezone.utc)
+    return (then - now).days
+
+
 register_function(FunctionDef(
     name="now",
     description="The current date and time as an ISO-8601 UTC timestamp.",
@@ -148,4 +160,21 @@ register_function(FunctionDef(
         "required": ["date"],
     },
     handler=_days_since,
+))
+
+register_function(FunctionDef(
+    name="days_until",
+    description=(
+        "How many days from now until a date (ISO-8601) — negative if it's already "
+        "past. Use it for upcoming-date automations, e.g. a credential expiry: "
+        "'when a caregiver's certification is within 30 days of expiring…'."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "date": {"type": "string", "description": "An ISO-8601 date or date-time."},
+        },
+        "required": ["date"],
+    },
+    handler=_days_until,
 ))

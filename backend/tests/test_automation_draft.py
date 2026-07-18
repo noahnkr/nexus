@@ -108,6 +108,33 @@ def test_twice_invalid_raises(monkeypatch):
     assert len(captured) == 2  # initial + one retry, then give up
 
 
+def test_prompt_includes_field_catalog(monkeypatch):
+    """Module 11a: the draft system prompt teaches the agent the catalog so drafted
+    recipes reference paths that actually resolve — per-event payload paths, per-entity
+    fields, and the event→entity mapping."""
+    from app.schemas import EntityFields, FieldCatalog, FieldRef
+
+    captured: list = []
+    _install(monkeypatch, [_VALID], captured)
+    vocab = Vocabulary(
+        triggers=VocabTriggers(event_types=["lead.created"], source_systems=["welcomehome"]),
+        tools=[], functions=[], operators=list(OPERATORS),
+        generate_models=["default", "fast"], field_roots=["trigger", "entity", "context"],
+        field_catalog=FieldCatalog(
+            payload_by_event={"lead.created": [
+                FieldRef(path="trigger.payload.hours_per_week", label="Hours per week")]},
+            entities={"lead": EntityFields(label="Lead", fields=[
+                FieldRef(path="entity.status", label="Status")])},
+            event_entity={"lead.created": "lead"},
+        ),
+    )
+    asyncio.run(draft_recipe("welcome new leads", vocab))
+    system = captured[0]["system"]
+    assert "trigger.payload.hours_per_week" in system  # payload path under its event
+    assert "entity.status" in system  # entity field for the mapped entity
+    assert "lead.created -> Lead" in system  # the event -> entity note
+
+
 # ---------------------------------------------------------------------------
 # gated live case — real model drafts a valid recipe
 # ---------------------------------------------------------------------------
