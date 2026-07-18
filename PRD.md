@@ -353,7 +353,7 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 ---
 
-## Module 11: Automation Field Tokens & Calculations
+## Module 11: Automation Field Tokens
 
 **Goal**: make the automations/sequences builder genuinely usable by a non-technical office user — no more typing `{{trigger.payload.phone}}` by hand — and make deterministic scoring (applicant fit, lead value) buildable in plain language. This module took the Module 11 slot when the matching/decision harness + scheduling system was deferred (user decision 2026-07-17; see Deferred below).
 
@@ -368,33 +368,38 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 - Every template-accepting input (tool inputs, generate prompts, condition values) renders `{{path}}` references as atomic, labeled, deletable chips; insertion is cursor-positioned from a searchable picker grouped by "From the trigger event" / "The Lead …" / "Earlier step results", with a custom-path escape hatch
 - The stored recipe format is unchanged — chips are a view over the same `{{path}}` strings, so existing recipes, the draft agent, and the engine are untouched; read-mode surfaces (step cards, run timeline, recipe sentences) show labels instead of raw paths
 
-**Run a calculation (scoring)**:
-
-- The function step is presented as "Run a calculation", and `weighted_score` gets a dedicated field × weight row editor (no JSON, no dotted paths) with a live formula preview — applicant scoring and lead-value determination are this editor plus a condition/generate step on the saved result
-- Score results are **context-only** (user decision 2026-07-17): no score column, no score display surface; the recipe decides what becomes of the number
-- `days_until` joins the function registry (credential-expiry / upcoming-date automations); further calculation candidates (`count_events`, `calculate`, `tier`, `hours_between`) recorded to the backlog, not built
-
-**Infrastructure introduced**: none — no migrations, no new env vars; vitest arrives as the frontend's first test runner (covering the template tokenizer).
-
 **Deliverable for this module**: an office user builds "when a new applicant arrives, score them by weighted fields and, if the score clears a threshold, text them" entirely from labeled dropdowns and visual tokens — never typing a dotted path or JSON — and existing automations open and run identically. Plans: `.agent/plans/11.automation-field-tokens.md` (+ `11a.field-catalog-backend.md`, `11b.token-builder-frontend.md`)
 
 ---
 
 ## Subsequent Modules (summary)
 
-12. **Advanced RAG & Scale-Up** — hybrid search, reranking, multi-format ingestion (Docling), sub-agents, validated against this client's small corpus before applying to a larger future client
+12. **Smart Staffing and Scheduling** — Algorithmic Caregiver Matching: Automatically analyzes patient needs, geographic locations, caregiver skill sets, and cultural compatibility to suggest the most optimal caregiver. This drastically cuts down commute times ("windshield time") and maximizes continuity of care.Automated Call-Outs: When a caregiver calls out sick, the scheduling software’s AI automatically scans the roster, identifies qualified and available replacements, and dispatches SMS alerts or app notifications to fill the shift
+
+13. **Advanced RAG & Scale-Up** — hybrid search, reranking, multi-format ingestion (Docling), sub-agents, validated against this client's small corpus before applying to a larger future client
 
 **Deferred (future-plans backlog, user decision 2026-07-17)** — the former Module 11, the **Deterministic Matching/Decision Harness and Scheduling System**: generic phase-pipeline engine (check → check → human review on ambiguous cases) instantiated against this client's matching problem (e.g., can we serve this lead) using the Module 5 approval gate for ambiguous cases; the schedule board (week calendar, caregivers as rows, visits colored by state), the coverage/open-shift view, the caregiver–client matching tool (rank by qualifications, region, availability, continuity, overtime/conflict avoidance — exposed as an MCP tool like `find_available_caregivers`), and the call-out → replacement flow (call-out → ranked replacements → gated send_sms offer → owner approves in Tasks). Deterministic scoring interim home: automation function steps (Module 11 as built).
 
 *(The former "Custom Views / Plugin Apps" placeholder module is retired: the Leads and Caregivers views now carry that pattern in scope; anything beyond them stays out of scope per the Out of Scope list.)*
 
----
-
-## Success Criteria
-
-- A new inbound lead (via webhook or manual entry) resolves to a canonical entity, and the agent can correctly answer "can we serve this lead?" by calling the matching/decision harness rather than reasoning freeform over documents *(deferred with the harness, 2026-07-17 — re-activates if/when the backlogged harness module is built)*
-- A client/care question in Chat correctly routes to structured tools, vector search, or both, and joins results by canonical entity ID when both apply
-- Every tool call — read, write, or gated — appears in both the Event Log (business-facing) and LangSmith (developer-facing trace)
-- Any tool marked as requiring approval never executes without a human clearing it in the Task queue first, verified by attempting to trigger one and confirming it stalls at `pending_actions` until approved
-- The system runs correctly against this client's actual document/data volume without hybrid search or reranking tuning that was optimized for a scale this client doesn't have
-- The MCP tool layer, event/task system, automations engine, and interface shell are documented well enough that standing up a second tenant business — in a *different* vertical — requires no changes to the core code, only a new entity schema (Module 0 equivalent), new connector adapters, new pipeline-view content (stages, sequences, scoring), and per-client harness configuration
+### Future Plans
+* Fix automation recipe builder field scope.
+* Additional automation calculation functions (brainstormed at M11 planning, not built): `count_events` (entity engagement counts), `calculate` (binary arithmetic), `tier` (threshold → label bucketing), `hours_between`.
+* Score persistence/display (M11 kept scores context-only by user decision): score column + profile/directory badges if a real need appears.
+* Settings View
+* Content generation and output files e.g., formatted dynamic care plan
+* Stop / cancel streaming. Abort chat strea mid rresponse. Also fix send button positioning and text box. Button height does not match text input and text input not centered.
+* Sidebar collapse to icons
+* Home page dashboard with census, billable hours week-over-week, new starts, caregiver headcount, coverage rate (% of visits filled), AR/unbilled, and the top open alerts.
+* Referral-source dashboard — which partners (hospitals, senior-living, discharge planners) send leads that actually convert. Referral ROI drives where the owner spends relationship time; this is the highest-value net-new growth view not already on the roadmap.
+* Run manually button for manual triggered automations. Also able to be triggered via chat. 
+* Field value tokens inside text input fields instead of double curly braces.
+* Client & care oversight: 
+    * Active census — count of active clients, by region/payer, plus authorized hours vs scheduled vs delivered. The gap between authorized and delivered is direct revenue leakage — owners obsess over it.
+    * Per-client care overview — care plan, assigned caregivers, schedule, family contacts, status (active / hospital-hold / discharged). Care plans and visit notes flow through your ingestion + RAG so they're searchable in chat.
+    * Visit verification (EVV) — worth flagging even if you hadn't considered it: Electronic Visit Verification (clock-in/out, missed/late visits) is legally mandated for Medicaid-funded home care in most states. It's connector-shaped and you already have telephony/EHR placeholder adapters (GoTo Connect, WellSky) to hang it on.
+* Workforce & Compliance 
+    * Caregiver roster / utilization — headcount, active vs inactive, hours-this-week, utilization %, availability. Overlaps M10.
+    * Credential expiry tracker — CPR, TB test, background check, license, all with expiry dates on qualifications. This is a killer automations use case: WHEN a credential is within 30/60 days of expiry, THEN queue a task + notify. In this industry an expired credential can mean a caregiver legally can't work a shift — surfacing it before it bites is high-value and cheap given the engine exists.
+    * Retention / at-risk view — turnover in home care runs 70–80%/yr; a view flagging declining hours, missed shifts, or short tenure lets the owner intervene before someone quits.
+    The scheduling system (your example, built out)

@@ -192,28 +192,8 @@ Module-by-module build status for the Nexus Control Center. Claude Code reads th
 - `[x]` Task 4 — "Run a calculation": `CalculationEditor` for `weighted_score` (field × weight rows, auto-slugged keys, live formula, `isSimpleWeightedScore` raw-JSON fallback), add-menu relabel + `FUNCTION_LABELS`; build clean
 - `[x]` Task 5 — Read-mode token labels (`describeStep`/`describeCondition`/`readDetail` labelized via the catalog on the detail page) + README `npm run test` note; vitest/build/pytest green *(live draft→builder→run regression walk pending running stack)*
 
-### Module 12: Advanced RAG & Scale-Up
-`[ ]` Not started. (Formerly numbered 10, then 13 in an earlier renumbering; confirmed as Module 12 on 2026-07-17. The former "Custom Views / Plugin Apps" placeholder is retired — Modules 9–10 now carry the vertical-view pattern in scope; anything beyond them stays out of scope.)
+### Module 12: Smart Staffing and Scheduling
+`[ ]` Not started.
 
-### Future Plans
-
-* Deterministic matching/decision harness + scheduling system (deferred from the Module 11 slot, 2026-07-17): generic phase-pipeline engine (check → check → human review on ambiguous, via the M5 approval gate), schedule board (week calendar, caregivers as rows), coverage/open-shift view, caregiver–client matching tool (`find_available_caregivers` MCP tool), call-out → replacement flow. Note: representing open shifts needs schema work (`schedules.resource_id` is NOT NULL; status lacks unfilled/call-out).
-* Additional automation calculation functions (brainstormed at M11 planning, not built): `count_events` (entity engagement counts), `calculate` (binary arithmetic), `tier` (threshold → label bucketing), `hours_between`.
-* Score persistence/display (M11 kept scores context-only by user decision): score column + profile/directory badges if a real need appears.
-* Settings View
-* Content generation and output files e.g., formatted dynamic care plan
-* Stop / cancel streaming. Abort chat strea mid rresponse. Also fix send button positioning and text box. Button height does not match text input and text input not centered.
-* Sidebarr collapse to icons
-* Home page dashboard with census, billable hours week-over-week, new starts, caregiver headcount, coverage rate (% of visits filled), AR/unbilled, and the top open alerts.
-* Referral-source dashboard — which partners (hospitals, senior-living, discharge planners) send leads that actually convert. Referral ROI drives where the owner spends relationship time; this is the highest-value net-new growth view not already on the roadmap.
-* Run manually button for manual triggered automations. Also able to be triggered via chat. 
-* Field value tokens inside text input fields instead of double curly braces.
-* Client & care oversight: 
-    * Active census — count of active clients, by region/payer, plus authorized hours vs scheduled vs delivered. The gap between authorized and delivered is direct revenue leakage — owners obsess over it.
-    * Per-client care overview — care plan, assigned caregivers, schedule, family contacts, status (active / hospital-hold / discharged). Care plans and visit notes flow through your ingestion + RAG so they're searchable in chat.
-    * Visit verification (EVV) — worth flagging even if you hadn't considered it: Electronic Visit Verification (clock-in/out, missed/late visits) is legally mandated for Medicaid-funded home care in most states. It's connector-shaped and you already have telephony/EHR placeholder adapters (GoTo Connect, WellSky) to hang it on.
-* Workforce & Compliance 
-    * Caregiver roster / utilization — headcount, active vs inactive, hours-this-week, utilization %, availability. Overlaps M10.
-    * Credential expiry tracker — CPR, TB test, background check, license, all with expiry dates on qualifications. This is a killer automations use case: WHEN a credential is within 30/60 days of expiry, THEN queue a task + notify. In this industry an expired credential can mean a caregiver legally can't work a shift — surfacing it before it bites is high-value and cheap given the engine exists.
-    * Retention / at-risk view — turnover in home care runs 70–80%/yr; a view flagging declining hours, missed shifts, or short tenure lets the owner intervene before someone quits.
-    The scheduling system (your example, built out)
+### Module 13: Advanced RAG & Scale-Up
+`[ ]` Not started.
