@@ -263,6 +263,107 @@ def test_entry_conditions_filter_silently():
 
 
 # ---------------------------------------------------------------------------
+# 3b. condition VALUES render templates (Module 11a): a templated value is
+# compared as its resolved value; an unresolvable value -> condition FALSE
+# (never a run failure). A plain literal is unchanged (regression).
+# ---------------------------------------------------------------------------
+MARGARET_LEAD = "33333333-0000-0000-0000-000000000001"  # region North County
+
+
+async def _templated_condition_scenario(payload):
+    from app import db
+    from app.services.automations import advance_run, get_run, start_run
+    from app.services.tools import ToolResult
+
+    tool = f"t_tpl_{uuid.uuid4().hex[:8]}"
+    state = {"ran": 0}
+
+    async def after(conn, args):
+        state["ran"] += 1
+        return ToolResult("ran", {})
+
+    _register_tool(tool, after, safe=True)
+    recipe = {
+        "trigger": {"type": "event", "event_type": "lead.created"},
+        "steps": [
+            {"type": "condition", "conditions": [
+                {"field": "entity.region_id", "op": "eq",
+                 "value": "{{trigger.payload.region_id}}"}]},
+            {"type": "tool", "tool": tool, "input": {}},
+        ],
+    }
+    await db.open_pool()
+    try:
+        async with db.tenant_tx(DEMO_TENANT) as conn:
+            automation = await _insert_automation(conn, recipe)
+            ev = await _make_event(conn, "lead.created", payload,
+                                   entity_type="lead", entity_id=MARGARET_LEAD)
+            run_id = await start_run(conn, DEMO_TENANT, automation, trigger_event=ev)
+        await advance_run(DEMO_TENANT, run_id)
+        async with db.tenant_tx(DEMO_TENANT) as conn:
+            run = await get_run(conn, run_id)
+            await _cleanup(conn, automation["id"])
+        return run, state
+    finally:
+        _unregister(tool)
+        await db.close_pool()
+
+
+def test_condition_value_template_matches():
+    # {{trigger.payload.region_id}} resolves to North County == entity.region_id ->
+    # condition true -> the tool after it runs, run completes.
+    run, state = asyncio.run(_templated_condition_scenario(
+        {"region_id": "11111111-0000-0000-0000-000000000001"}))
+    assert run["status"] == "completed"
+    assert state["ran"] == 1
+
+
+def test_condition_value_template_unresolvable_is_false():
+    # payload has no region_id -> the value can't resolve -> condition FALSE, the run
+    # stops early (completed, NOT failed), and the tool never runs.
+    run, state = asyncio.run(_templated_condition_scenario({}))
+    assert run["status"] == "completed"
+    assert state["ran"] == 0
+
+
+async def _entry_context_value_scenario():
+    from app import db
+    from app.services.automations import start_run
+
+    recipe = {
+        "trigger": {"type": "event", "event_type": "lead.created"},
+        # VALUE references context, which is empty at entry -> unresolvable -> false
+        "conditions": [{"field": "trigger.payload.status", "op": "eq",
+                        "value": "{{context.threshold}}"}],
+        "steps": [{"type": "function", "function": "now", "save_as": "ts"}],
+    }
+    await db.open_pool()
+    try:
+        async with db.tenant_tx(DEMO_TENANT) as conn:
+            automation = await _insert_automation(conn, recipe)
+            ev = await _make_event(conn, "lead.created", {"status": "hot"})
+            run_id = await start_run(conn, DEMO_TENANT, automation, trigger_event=ev)
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "select count(*) from public.automation_runs where automation_id=%s",
+                    (automation["id"],),
+                )
+                run_count = (await cur.fetchone())[0]
+            await _cleanup(conn, automation["id"])
+        return run_id, run_count
+    finally:
+        await db.close_pool()
+
+
+def test_entry_condition_context_value_skips_without_crash():
+    # An entry condition whose VALUE references context (empty at entry) resolves
+    # false and silently skips the automation — no dispatcher crash, no run row.
+    run_id, run_count = asyncio.run(_entry_context_value_scenario())
+    assert run_id is None
+    assert run_count == 0
+
+
+# ---------------------------------------------------------------------------
 # 4. delay -> waiting + future wake_at; simulate wake -> completes
 # ---------------------------------------------------------------------------
 async def _delay_scenario():

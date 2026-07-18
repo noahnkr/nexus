@@ -63,6 +63,35 @@ def _emit_tool_schema() -> dict:
     }
 
 
+def _catalog_prompt(fc) -> str:
+    """Compact, paths-only rendering of the field catalog (Module 11a) so the agent
+    references paths that actually resolve — per-entity `entity.*` fields, which
+    record each trigger is about, and observed `trigger.payload.*` keys per event
+    type. No labels: the agent needs the paths, not the plain-language names."""
+    lines: list[str] = []
+    if fc.entities:
+        lines.append("RECORD TYPES AND THEIR FIELDS (entity.*):")
+        for ent in fc.entities.values():
+            lines.append(f"- {ent.label}: {', '.join(f.path for f in ent.fields)}")
+    if fc.event_entity:
+        by_entity: dict[str, list[str]] = {}
+        for ev, et in fc.event_entity.items():
+            by_entity.setdefault(et, []).append(ev)
+        lines.append("WHICH RECORD EACH TRIGGER IS ABOUT:")
+        for et, evs in by_entity.items():
+            label = fc.entities[et].label if et in fc.entities else et
+            lines.append(f"- {', '.join(sorted(evs))} -> {label}")
+        lines.append(
+            "(cron and manual triggers are NOT about a record — do not use entity.* there)"
+        )
+    if fc.payload_by_event:
+        lines.append("PAYLOAD FIELDS SEEN PER EVENT (trigger.payload.*):")
+        for ev in sorted(fc.payload_by_event):
+            paths = ", ".join(f.path for f in fc.payload_by_event[ev])
+            lines.append(f"- {ev}: {paths}")
+    return "\n".join(lines)
+
+
 def _system_prompt(vocab: Vocabulary) -> str:
     tools = [
         {"name": t.name, "label": t.label, "description": t.description,
@@ -73,6 +102,7 @@ def _system_prompt(vocab: Vocabulary) -> str:
         {"name": f.name, "description": f.description, "input_schema": f.input_schema}
         for f in vocab.functions
     ]
+    catalog = _catalog_prompt(vocab.field_catalog)
     return (
         "You draft business automations as declarative WHEN/IF/THEN recipes. You "
         "will call the `emit_recipe` tool exactly once with a complete recipe.\n\n"
@@ -93,7 +123,9 @@ def _system_prompt(vocab: Vocabulary) -> str:
         '  {\"type\":\"generate\",\"prompt\":\"<text>\",\"save_as\":\"<key>\",\"model\":\"default|fast\"?}\n\n'
         "TEMPLATING: any string in a tool input, function args, or generate prompt "
         "may contain {{path}} references resolved from trigger/entity/context, e.g. "
-        "{{trigger.payload.name}}, {{entity.phone}}, {{context.<save_as>}}.\n\n"
+        "{{trigger.payload.name}}, {{entity.phone}}, {{context.<save_as>}}. Use ONLY "
+        "paths that exist for the trigger you choose (see AVAILABLE FIELDS).\n\n"
+        f"AVAILABLE FIELDS:\n{catalog}\n\n"
         "RULES:\n"
         "- Use ONLY these event types: "
         f"{', '.join(vocab.triggers.event_types) or '(none observed yet)'}.\n"

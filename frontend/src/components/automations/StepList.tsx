@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import type { ComponentType } from "react";
 import { Button } from "@/components/ui/button";
-import { type Step, type StepType } from "@/lib/recipe";
+import { type Step, type StepType, type Trigger } from "@/lib/recipe";
 import type { Vocabulary } from "@/lib/api";
 import { StepCard } from "./StepCard";
 
@@ -40,10 +40,12 @@ export function StepList({
   steps,
   onChange,
   vocabulary,
+  trigger,
 }: {
   steps: Step[];
   onChange: (steps: Step[]) => void;
   vocabulary: Vocabulary;
+  trigger: Trigger; // the selected trigger, so each field picker offers its fields
 }) {
   const gatedTools = new Set(
     vocabulary.tools.filter((t) => !t.safe).map((t) => t.name),
@@ -83,7 +85,7 @@ export function StepList({
             isFirst: i === 0,
             isLast: i === steps.length - 1,
             vocabulary,
-            contextKeys: priorKeys(i),
+            ctx: { vocabulary, trigger, contextKeys: priorKeys(i) },
           }}
         />
       ))}

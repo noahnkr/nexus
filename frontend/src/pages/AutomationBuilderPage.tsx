@@ -249,7 +249,7 @@ export function AutomationBuilderPage() {
             />
             <ConditionChips
               conditions={conditions}
-              vocabulary={vocab}
+              ctx={{ vocabulary: vocab, trigger, contextKeys: [] }}
               onChange={(c) => { setConditions(c); mark(); }}
             />
           </div>
@@ -259,7 +259,7 @@ export function AutomationBuilderPage() {
             <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               <Zap className="h-3.5 w-3.5" /> Then, do this
             </h2>
-            <StepList steps={steps} onChange={(s) => { setSteps(s); mark(); }} vocabulary={vocab} />
+            <StepList steps={steps} onChange={(s) => { setSteps(s); mark(); }} vocabulary={vocab} trigger={trigger} />
           </div>
         </div>
       </div>

@@ -312,7 +312,7 @@ export function StageSequencePage({ view }: { view: string }) {
           <div className="rounded-xl border bg-card p-4 shadow-sm">
             <ConditionChips
               conditions={conditions}
-              vocabulary={scopedVocab}
+              ctx={{ vocabulary: scopedVocab, trigger: convention!.trigger, contextKeys: [] }}
               onChange={setConditions}
               label="And only if"
               addLabel="Add condition"
@@ -324,7 +324,7 @@ export function StageSequencePage({ view }: { view: string }) {
             <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               <Zap className="h-3.5 w-3.5" /> Then, do this
             </h2>
-            <StepList steps={steps} onChange={setSteps} vocabulary={scopedVocab} />
+            <StepList steps={steps} onChange={setSteps} vocabulary={scopedVocab} trigger={convention!.trigger} />
           </div>
 
           {existing && (

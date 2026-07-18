@@ -12,7 +12,7 @@ import {
   Zap,
 } from "lucide-react";
 import { GitBranch } from "lucide-react";
-import { api, type Automation, type Run } from "@/lib/api";
+import { api, type Automation, type FieldCatalog, type Run } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import { bindingEditRoute, describeBinding } from "@/lib/pipeline";
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +35,12 @@ export function AutomationDetailPage() {
   const [selected, setSelected] = useState<Run | null>(null);
   const [showJson, setShowJson] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // The field catalog powers read-mode labels ("…to Phone", not "{{...}}").
+  const [catalog, setCatalog] = useState<FieldCatalog | undefined>(undefined);
+
+  useEffect(() => {
+    api.getVocabulary().then((v) => setCatalog(v.field_catalog)).catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     const [a, r] = await Promise.all([api.getAutomation(id), api.listRuns(id)]);
@@ -198,10 +204,10 @@ export function AutomationDetailPage() {
           <section className="space-y-3 rounded-xl border bg-card p-4 shadow-sm">
             <h2 className="text-[13px] font-semibold text-muted-foreground">Recipe</h2>
             <TriggerSentence trigger={automation.trigger} />
-            <ConditionChips conditions={automation.conditions} />
+            <ConditionChips conditions={automation.conditions} catalog={catalog} />
             <div className="space-y-2">
               {automation.steps.map((step, i) => (
-                <StepCard key={i} step={step} index={i} />
+                <StepCard key={i} step={step} index={i} catalog={catalog} />
               ))}
             </div>
             <button

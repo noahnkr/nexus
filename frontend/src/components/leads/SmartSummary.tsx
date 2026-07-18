@@ -1,46 +1,63 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw, Sparkles } from "lucide-react";
-import { api } from "@/lib/api";
 import { parseApiError, relativeTime } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 
-// AI smart summary — cached (WS7): the first open generates + persists it; later
-// opens load the cached row instantly. The Regenerate button forces a refresh. A
-// 503 (no Anthropic key, nothing cached) shows a quiet inline notice and never
-// blocks the page.
-export function SmartSummary({ leadId }: { leadId: string }) {
+interface SummaryResult {
+  summary: string;
+  generated_at: string;
+}
+
+// AI smart summary — cached server-side (WS7): the first open generates + persists
+// it; later opens load the cached row instantly. The Regenerate button forces a
+// refresh. A 503 (no Anthropic key, nothing cached) shows a quiet inline notice and
+// never blocks the page.
+//
+// Generic on purpose (Module 10): the caller supplies `getSummary`/`regenerateSummary`
+// closures over its own entity, so Leads and Caregivers both reuse it verbatim.
+// `entityId` is the stable identity that drives the initial fetch — the closures may
+// be fresh each render without re-triggering.
+export function SmartSummary({
+  entityId,
+  getSummary,
+  regenerateSummary,
+}: {
+  entityId: string;
+  getSummary: () => Promise<SummaryResult>;
+  regenerateSummary: () => Promise<SummaryResult>;
+}) {
+  const fns = useRef({ getSummary, regenerateSummary });
+  fns.current = { getSummary, regenerateSummary };
+
   const [summary, setSummary] = useState<string | null>(null);
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(
-    async (refresh: boolean) => {
-      setLoading(true);
-      setError(null);
-      setUnavailable(false);
-      try {
-        const res = refresh
-          ? await api.regenerateLeadSummary(leadId)
-          : await api.getLeadSummary(leadId);
-        setSummary(res.summary);
-        setGeneratedAt(res.generated_at);
-      } catch (e) {
-        const { status } = parseApiError(e);
-        if (status === 503) setUnavailable(true);
-        else setError("Couldn't generate a summary right now.");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [leadId],
-  );
+  const load = useCallback(async (refresh: boolean) => {
+    setLoading(true);
+    setError(null);
+    setUnavailable(false);
+    try {
+      const res = refresh
+        ? await fns.current.regenerateSummary()
+        : await fns.current.getSummary();
+      setSummary(res.summary);
+      setGeneratedAt(res.generated_at);
+    } catch (e) {
+      const { status } = parseApiError(e);
+      if (status === 503) setUnavailable(true);
+      else setError("Couldn't generate a summary right now.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     void load(false); // cached when available, generates once on first open
-  }, [load]);
+  }, [entityId, load]);
 
   return (
     <Card className="border-primary/20 bg-primary/[0.03]">

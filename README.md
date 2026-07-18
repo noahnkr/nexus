@@ -167,6 +167,8 @@ cd frontend
 cp .env.example .env          # fill VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY
 npm install
 npm run dev                   # -> http://localhost:5173  (proxies /api -> :8000)
+npm run build                 # type-check + production build
+npm run test                  # vitest unit tests (the template tokenizer, Module 11)
 ```
 
 Home (default route `/`) is a light landing page — greeting, at-a-glance counts,
@@ -445,6 +447,26 @@ POST /api/automations/draft {description}
 (`active`, `runs_today`, `failed_today`) driving a Home StatCard. Drafting needs
 `ANTHROPIC_API_KEY`; no other new env vars.
 
+#### Field tokens & calculations (Module 11)
+
+The builder's field surface is trigger-aware and plain-language. `GET
+/api/automations/vocabulary` also returns a **`field_catalog`**: the five core
+trigger fields (labeled), observed `trigger.payload.*` keys **grouped per event
+type**, `entity.*` fields **per entity type** (with a seam-supplied record label —
+"Lead", "Applicant"), and an event→entity map. From it, every template-accepting
+input renders `{{path}}` references as **atomic, labeled chips** (a field picker
+grouped by *the selected trigger's* actual fields inserts them at the caret — the
+user never types a dotted path), and read-mode surfaces show "…to Phone" instead of
+`{{trigger.payload.phone}}`. The stored recipe format is unchanged — chips are a
+view over the same `{{path}}` strings, so existing recipes and the draft agent are
+untouched. The `function` step is presented as **"Run a calculation"**, and
+`weighted_score` gets a *field × weight* editor (with a live formula line) that
+writes its `{weights, inputs}` args without the user seeing JSON. New function:
+**`days_until`** (credential-expiry / upcoming-date automations). Condition *values*
+are now template-rendered by the engine (an unresolvable value makes the condition
+false, never a run failure). Frontend adds a `vitest` unit suite for the tokenizer
+(`npm run test`); no new backend env vars or migrations.
+
 ### Leads View (Module 9)
 
 The first vertical dashboard view — nav → **Leads**. The *pattern* (entity
@@ -507,6 +529,69 @@ GET   /api/automations?view=leads       bound sequences for a view; AutomationOu
 ```
 
 No new frontend deps or env vars. Smart summaries need `ANTHROPIC_API_KEY`.
+
+### Caregivers View (Module 10)
+
+The second and final sanctioned vertical view — nav → **Caregivers** — the
+caregiver-recruiting pipeline. It re-instantiates the Module 9 pattern (directory +
+profile + funnel strip + per-stage sequences + metrics) for a **new entity type**,
+proving the pattern is core while content is seam. The structural difference from
+Leads: applicants don't exist in the base schema at all, so M10 adds the
+`applicants` entity end-to-end plus an **atomic hire-promotion** onto the caregiver
+roster (`resources`). Seam files: `services/views/caregivers.py`,
+`routers/applicants.py`, `frontend/src/lib/caregivers.ts`, the caregivers
+pages/components, and the `applicants` entity migration.
+
+- **Directory** (`/caregivers`) — a clickable **funnel strip** (six stages, each
+  with a sequence chip) filtering the table, hiring **metrics** widgets (in
+  pipeline, hire rate, new this week, avg days-to-hire, top sources), a source
+  filter and search, and a **New applicant** dialog with qualification/region
+  multi-selects. Live via Realtime on `applicants`.
+- **Profile** (`/caregivers/{id}`) — a **cached AI hiring summary**, an
+  inline-editable info card (contact/source + quals/regions chips + notes) with a
+  **stage selector**, availability behind a technical expander, an **entity
+  timeline**, and — after a hire — a success banner naming the created caregiver.
+- **Stages**: `applied → screening → interview → offer → hired`, terminal
+  `rejected`. **Moving an applicant to `hired` atomically creates a `resources`
+  (caregiver) row** — copying name/contact/qualifications/regions/availability,
+  stamping `resources.applicant_id` provenance, and emitting `resource.created` —
+  in the same transaction as the stage move (the leads→clients precedent). Re-hiring
+  never duplicates the caregiver. Both the human REST route and the gated
+  `update_applicant_stage` tool go through the single `move_stage()` path, so a
+  chat/MCP-approved move and a UI move are indistinguishable in the timeline.
+- **Per-stage sequences** (`/caregivers/stages/{stage}/sequence`) — the *same*
+  shared stage-sequence builder as Leads, driven by the caregivers view config.
+  **Every stage — including `rejected` — carries a sequence chip** (the deliberate
+  divergence from leads' chip-less `lost`): the PRD's automated accepted/denied
+  emails are the marquee use case. Sequences are ordinary bound automations
+  (`{"view":"caregivers","stage":…}`), so the engine, approval gate, and Center
+  apply unchanged.
+
+Applicant writes are human REST writes (`source_system='user'`) — create + stage
+moves + basic/quals/regions/notes edits; every stage move emits
+`applicant.stage_changed`. **No delete** by design. Scoring is deferred to Module 11
+(no score column/function/UI this module).
+
+Backend additions (all tenant-scoped via RLS):
+
+```
+GET   /api/applicants?stage=&source=&q=&limit=&offset=  directory list + total
+GET   /api/applicants/facets            distinct sources + regions + qualifications
+GET   /api/applicants/metrics           hiring metrics (all six stages, hire rate,
+        new-this-week, avg-days-to-hire, top sources)
+POST  /api/applicants {name,phone?,email?,source?,qualification_ids?,region_ids?}
+        create (stage always 'applied'); emits applicant.created; 422 on missing name / bad ref
+GET   /api/applicants/{id}              full row + resolved qualification/region names
+PATCH /api/applicants/{id}              partial edit; a stage change routes through
+        move_stage() (emits applicant.stage_changed + hired-promotion), other fields emit
+        one applicant.updated; no-op emits nothing; NO delete route
+GET   /api/applicants/{id}/summary      cached AI hiring summary; 503 without cache and no key
+POST  /api/applicants/{id}/summary/regenerate   force a fresh summary
+```
+
+New agent tools: `list_applicants`, `get_applicant` (read), and gated
+`update_applicant_stage` (delegates to `move_stage()`). No new frontend deps or env
+vars. Smart summaries need `ANTHROPIC_API_KEY`.
 
 ## Notes on Templating
 

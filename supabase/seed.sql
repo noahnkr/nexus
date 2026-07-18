@@ -118,6 +118,23 @@ insert into public.pending_actions (id, tenant_id, task_id, tool_name, tool_inpu
      '{"to": "+16195550105", "body": "Hi Estelle, we noticed today''s visit was missed. Can we reschedule for tomorrow morning?"}', 'pending')
 on conflict do nothing;
 
+-- Applicants (caregiver-recruiting pipeline, Module 10) — spread across stages so
+-- the funnel/metrics have shape. quals/regions reuse the seeded reference ids;
+-- one carries availability (copied verbatim on hire). Idempotent update-in-place
+-- so re-seeds refresh stage/fields without duplicating.
+insert into public.applicants (id, tenant_id, name, phone, email, source, stage, qualification_ids, region_ids, availability, notes) values
+  ('dddddddd-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 'Nadia Owens',     '+16195550301', 'nadia.o@example.com',  'indeed',    'applied',    '{22222222-0000-0000-0000-000000000002}', '{11111111-0000-0000-0000-000000000001}', '{}', 'Applied via Indeed; HHA certified.'),
+  ('dddddddd-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'Marcus Bell',     '+16195550302', 'marcus.b@example.com', 'referral',  'screening',  '{22222222-0000-0000-0000-000000000001,22222222-0000-0000-0000-000000000005}', '{11111111-0000-0000-0000-000000000002}', '{}', 'Referred by Brian Okafor.'),
+  ('dddddddd-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'Priya Raman',     '+16195550303', 'priya.r@example.com',  'website',   'interview',  '{22222222-0000-0000-0000-000000000001,22222222-0000-0000-0000-000000000003}', '{11111111-0000-0000-0000-000000000001,11111111-0000-0000-0000-000000000003}', '{"mon":["08:00-16:00"],"wed":["08:00-16:00"]}', 'Strong dementia-care background.'),
+  ('dddddddd-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000001', 'Terrence Wolfe',  '+16195550304', 'terrence.w@example.com', 'indeed',  'offer',      '{22222222-0000-0000-0000-000000000002,22222222-0000-0000-0000-000000000004}', '{11111111-0000-0000-0000-000000000003}', '{"tue":["07:00-15:00"],"thu":["07:00-15:00"]}', 'Offer extended; awaiting response.'),
+  ('dddddddd-0000-0000-0000-000000000005', '00000000-0000-0000-0000-000000000001', 'Grace Lin',       '+16195550305', 'grace.l@example.com',  'referral',  'rejected',   '{22222222-0000-0000-0000-000000000002}', '{11111111-0000-0000-0000-000000000002}', '{}', 'Not enough availability for our needs.')
+on conflict (id) do update set
+  stage             = excluded.stage,
+  qualification_ids = excluded.qualification_ids,
+  region_ids        = excluded.region_ids,
+  availability      = excluded.availability,
+  notes             = excluded.notes;
+
 -- ===========================================================================
 -- Probe tenant (00000000-…-0002) — minimal, for cross-tenant RLS tests
 -- ===========================================================================

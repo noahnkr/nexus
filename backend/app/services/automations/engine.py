@@ -109,7 +109,7 @@ def _compare(op: str, val: Any, target: Any) -> bool:
 
 
 def _eval_condition(cond: dict, scope: dict) -> bool:
-    field = cond.get("field", "")
+    field = cond.get("field", "")  # a path, never rendered — it stays literal
     op = cond.get("op")
     found, val = _get_path(scope, field)
     if op == "exists":
@@ -118,7 +118,33 @@ def _eval_condition(cond: dict, scope: dict) -> bool:
         return (not found) or val is None
     if not found:
         return False
-    return _compare(op, val, cond.get("value"))
+    # The comparison VALUE is template-rendered (Module 11a): value="{{context.score}}"
+    # compares against the real number, not the literal string. An unresolvable path
+    # makes the condition FALSE (never a run failure) — one rule for entry conditions
+    # (no run exists yet to fail) and step conditions: "a comparison against a value
+    # that isn't there is simply not true". A plain literal renders to itself.
+    try:
+        target = render(cond.get("value"), scope)
+    except TemplateError:
+        return False
+    return _compare(op, val, target)
+
+
+def _freeze_conditions(conditions: list, scope: dict) -> list:
+    """Freeze a wait_until's condition VALUES against the current scope (fields stay
+    literal, to match the future event). An unresolvable value is left as its raw
+    template so resume-time evaluation applies the same false-on-missing rule
+    (`_eval_condition`) rather than failing the wait — the Module 11a alignment."""
+    frozen: list = []
+    for c in conditions:
+        c2 = dict(c)
+        if "value" in c2:
+            try:
+                c2["value"] = render(c2["value"], scope)
+            except TemplateError:
+                pass  # keep raw; re-rendered (false on miss) at resume
+        frozen.append(c2)
+    return frozen
 
 
 def _eval_all(conditions: list, scope: dict) -> bool:
@@ -531,7 +557,7 @@ async def _step_wait_until(conn, tenant_id, run, automation, idx, step, scope) -
     now; field paths stay literal to evaluate against the future event at resume.
     step_index is bumped so resume continues at the NEXT step."""
     event_type = step["event_type"]
-    conditions = render(step.get("conditions") or [], scope)
+    conditions = _freeze_conditions(step.get("conditions") or [], scope)
     awaiting = {"event_type": event_type, "conditions": conditions}
     timeout = step.get("timeout_minutes")
     log = _append_log(run, idx, "wait_until", f"waiting for {event_type}", "waiting")

@@ -159,58 +159,59 @@ Module-by-module build status for the Nexus Control Center. Claude Code reads th
 - `[x]` Task 4 — `/leads/stages/{stage}/sequence` constrained builder (fixed stage trigger convention, restricted tool palette, saves via standard API with binding, starts paused) + Center binding chips/edit rerouting (`lib/pipeline.ts` view-config map); convention validated by `test_automation_binding` recipe *(browser check pending running stack)*
 - `[x]` Task 5 — Wrap-up + README; full pytest (195) + build green *(live end-to-end walk pending running stack)*
 
-**Post-M9 automations/pipeline refinements** (2026-07-17, `~/.claude/plans/rustling-juggling-squirrel.md`) — seven user-raised items:
-- `[x]` #1 Sequence supersede — advancing a lead's stage cancels the prior stage's in-flight sequence run (generic binding-driven `supersede_sequence_runs`; waiting_approval runs rejected via the approvals seam). `test_sequence_supersede.py` green.
-- `[x]` #2 Field-path autocomplete — themed `FieldCombobox` replaces the native datalist in condition editors; vocabulary gains `field_suggestions` (entity columns via the seam + trigger.* + observed payload keys).
-- `[x]` #3 `weighted_score` — generic builder-configurable scoring function (weights + inputs as data). `test_functions.py` green.
-- `[x]` #4 Schedule builder — dropdowns (frequency/day/time → cron) replace the raw cron string + next-dates preview; `cron-preview` endpoint/api/test removed.
-- `[x]` #5 `wait_until` step (+ timeout) — new engine step + `waiting_event` run state; dispatcher resumes on a matching event, waker times out. Migration `20260722000000_wait_until.sql`. Approval steps already gate a run (documented, no change). `test_wait_until` green.
-- `[x]` #6 Themed date-time picker — dependency-free `DateTimePicker` replaces the native inputs in the Event Log; `color-scheme` per theme.
-- `[x]` #7 Summary caching — first open generates + caches (`entity_summaries` core table, migration `20260722000001`), later opens serve cache, manual Regenerate refreshes. Reverses the M9 no-persistence lock (user-requested). `test_lead_summary.py` updated.
-- Verification: full `pytest backend/tests` + `npm run build` green *(browser/live walks pending running stack)*.
-
 ### Module 10: Caregivers View & Hiring Process
-`[-]` Planned (2026-07-17) — 🔴 Complex, split per the planning rule into two sub-plans. Parent: `.agent/plans/10.caregivers-view.md`. Build order 10a → 10b. User-locked: new `applicants` table + promotion to `resources` on hire (leads→clients precedent); stages `applied → screening → interview → offer → hired` + terminal `rejected`; promotion is automatic and atomic on the hired stage move (emits `resource.created`); **scoring deferred to Module 11** (no scoring function/column/UI this module). Requires Module 9 built (generic pipeline components + binding; plans 9a/9b amended at M10 planning time to build those pieces generic: `services/views/summary.py`, `components/pipeline/FunnelStrip`, view-config-driven `StageSequencePage` + `lib/pipeline.ts`).
+`[x]` Built (2026-07-17) — 🔴 Complex, split per the planning rule into two sub-plans. Parent: `.agent/plans/10.caregivers-view.md`. Build order 10a → 10b. User-locked: new `applicants` table + promotion to `resources` on hire (leads→clients precedent); stages `applied → screening → interview → offer → hired` + terminal `rejected`; promotion is automatic and atomic on the hired stage move (emits `resource.created`); **scoring deferred to Module 11**. Requires Module 9 built (generic pipeline components + binding). Backend fully test-covered (new `test_applicants_api.py` incl. metrics, `test_applicant_summary.py`, caregivers-convention cases in `test_recipe.py`); frontend builds clean. Browser/live-walk validations (10a T4–5, 10b T2–4) need the running stack + Module 6 office user — no browser MCP in this environment.
 
 **10a — Applicants model, API, directory & profiles** (`.agent/plans/10a.applicants-api-directory.md`):
-- `[ ]` Task 1 — Migration (`applicants` table + RLS + Realtime, `resources.applicant_id`) + seeds + seams (`ENTITY_TABLES`, `list_applicants`/`get_applicant`, gated `update_applicant_stage`, `SQL_SCHEMA_DOC`, labels, `_KNOWN_EVENT_TYPES`); gated schema/tool tests green
-- `[ ]` Task 2 — `routers/applicants.py` (list/facets/create/patch/detail, no delete) + `views/caregivers.py` `move_stage()` (single event/promotion path; hired → atomic caregiver auto-create + `resource.created`, idempotent re-hire); gated `test_applicants_api.py` green
-- `[ ]` Task 3 — Hiring smart summary (`GET /api/applicants/{id}/summary` via shared `views/summary.py`, `applicant_summary` span, 503 without key); `test_applicant_summary.py` green
-- `[ ]` Task 4 — `/caregivers` directory page: table + stage-chip/source/search filters ↔ URL, create dialog w/ qualification/region multi-selects, Realtime, nav entry (Caregivers, Users icon); browser check + build clean
-- `[ ]` Task 5 — `/caregivers/{id}` profile: SmartSummary, editable info + quals/regions, notes, StageSelect w/ hire-confirm dialog + hired banner, `EntityTimeline`; browser check (hire trail on timeline)
-- `[ ]` Task 6 — Wrap-up: README Caregivers section; full pytest green; build clean; live `applicant_summary` LangSmith span
+- `[x]` Task 1 — Migration (`20260719000000_entities_applicants.sql`: `applicants` table + RLS + Realtime, `resources.applicant_id`) pushed live; seeds (5 applicants across stages); seams (`ENTITY_TABLES["applicant"]`, `list_applicants`/`get_applicant`, gated `update_applicant_stage`, `SQL_SCHEMA_DOC`, labels, `_KNOWN_EVENT_TYPES`). Gated tool tests green (`test_applicant_tools`)
+- `[x]` Task 2 — `routers/applicants.py` (list/facets/create/patch/detail, no delete) + `views/caregivers.py` `move_stage()` (single event/promotion path; hired → atomic caregiver auto-create + `resource.created`, idempotent re-hire; supersedes in-flight sequences). Gated `test_applicants_api.py` green incl. hire-promotion, idempotent re-hire, and the shared approved-execution path (`test_update_applicant_stage_approved`)
+- `[x]` Task 3 — Hiring smart summary (`GET /api/applicants/{id}/summary` via shared `views/summary.py`, `applicant_summary` span, 503 without key); `test_applicant_summary.py` green (offline + gated-live)
+- `[x]` Task 4 — `/caregivers` directory page: table + stage-chip/source/search filters ↔ URL, create dialog w/ qualification/region multi-selects, Realtime, nav entry (Caregivers, Users icon); build clean *(browser check pending running stack)*
+- `[x]` Task 5 — `/caregivers/{id}` profile: generalized `SmartSummary` (now view-agnostic), editable `ApplicantInfoCard` (contact/quals/regions/notes) + availability expander, stage select w/ hire-confirm dialog + hired banner, `EntityTimeline` (`entityType="applicant"`); build clean *(browser check pending running stack)*
+- `[x]` Task 6 — Wrap-up: README Caregivers section; full pytest + build green *(live `applicant_summary` LangSmith span verified via gated-live test)*
 
 **10b — Hiring funnel, metrics & per-stage sequences** (`.agent/plans/10b.hiring-funnel-and-sequences.md`):
-- `[ ]` Task 1 — `GET /api/applicants/metrics` (six stage counts, hire rate, new-last-7-days, avg days to hire, top sources); gated metrics tests green
-- `[ ]` Task 2 — Generic `FunnelStrip` + `HiringMetrics` StatCards on `/caregivers` (rejected carries a sequence chip — per-view config); browser check + build clean
-- `[ ]` Task 3 — Caregivers `PipelineViewConfig` (`lib/caregivers.ts`) feeding the shared `StageSequencePage` route `/caregivers/stages/{stage}/sequence` + Center binding chips/edit rerouting via the view-config map; browser + gated convention test
-- `[ ]` Task 4 — Wrap-up + live walk: applicant → Rejected → denial sequence (generate + gated `send_email`) parks → approve → completes; applicant → Hired → caregiver row + `resource.created`; trails on timeline/Event Log/LangSmith; README; full pytest + build green
+- `[x]` Task 1 — `GET /api/applicants/metrics` (`views/caregivers.hiring_metrics`: six stage counts, hire rate, new-last-7-days, avg days to hire, top sources); gated `test_applicant_metrics` green (incl. empty-tenant zeroes/nulls)
+- `[x]` Task 2 — Generic `FunnelStrip` + `HiringMetrics` StatCards on `/caregivers` (chip row replaced; rejected carries a sequence chip — per-view config); build clean *(browser check pending running stack)*
+- `[x]` Task 3 — Caregivers `PipelineViewConfig` (`lib/caregivers.ts`, `sequenceStages` = all six) feeding the shared `StageSequencePage` route `/caregivers/stages/{stage}/sequence`; Center binding chips/Edit rerouting work via the view-config registry (no core changes). Convention validated by `test_recipe.py` caregivers cases
+- `[x]` Task 4 — Wrap-up + README hiring funnel/sequences section; full pytest + build green *(live end-to-end walk — denial sequence park→approve, hire→caregiver — pending running stack + M6 office user)*
 
-### Module 11: Deterministic Matching/Decision Harness
-`[ ]` Not started. Default 🔴 Complex — break into sub-plans. (Formerly Module 8.)
+### Module 11: Automation Field Tokens & Calculations
+`[x]` Built (2026-07-18) — 🔴 Complex (touches the automations framework), split per the planning rule into two sub-plans. Parent: `.agent/plans/11.automation-field-tokens.md`. Build order 11a → 11b. Replaces the formerly planned matching/decision harness + scheduling system in this slot (deferred to Future Plans, user decision 2026-07-17). User-locked: score results context-only (no score column/display/tool); `days_until` is the only new calculation function; recipe JSON format unchanged (tokens are a view over the same `{{path}}` strings). Backend fully test-covered (`pytest backend/tests` = 220 passed, +8); frontend builds clean and adds a `vitest` tokenizer suite (13 tests green). Browser/live-walk validations (11b T2–5) need the running stack + Module 6 office user — no browser MCP in this environment.
+
+**11a — Field catalog & calculation backend** (`.agent/plans/11a.field-catalog-backend.md`):
+- `[x]` Task 1 — Entity-catalog seam (`ENTITY_LABELS` + `entity_catalog()`, shared `humanize`/`_entity_columns`, `entity_field_suggestions` re-derived — no drift) + trigger-aware `field_catalog` on the vocabulary endpoint (5 labeled trigger fields, per-event payload keys grouped, per-entity fields, observed∪prefix-heuristic event→entity map); gated `test_automations_center_api.py` cases green
+- `[x]` Task 2 — `days_until` function (mirror of `days_since`); offline `test_functions.py` cases green
+- `[x]` Task 3 — Condition-value template rendering (`_eval_condition` renders `value`, unresolvable → condition false, never a crash; `wait_until` frozen via `_freeze_conditions`); gated `test_automation_engine.py` cases green (match / unresolvable-false / entry-context-value-skips)
+- `[x]` Task 4 — Draft prompt teaches the catalog (`_catalog_prompt`); `test_automation_draft.py` prompt-includes-catalog case; full pytest (220) + build green
+
+**11b — Token inputs & builder UX** (`.agent/plans/11b.token-builder-frontend.md`):
+- `[x]` Task 1 — `lib/template.ts` pure tokenizer (parse/serialize/labelForPath/labelizeTemplate) + vitest wiring; `npm run test` green (13 tests)
+- `[x]` Task 2 — `TokenText` chip input (controlled contenteditable, atomic contentEditable=false chips, caret insertion via ref, paste-reparse; single + multiline); build clean *(browser check pending running stack)*
+- `[x]` Task 3 — `FieldPicker` + `TokenField` wrapper (grouped/labeled/searchable, entity group named for the trigger's record, cron/manual hint, custom-path escape hatch) + integration sweep (SchemaForm/StepCard/ConditionChips/FieldCombobox via one `FieldContext` prop; `TemplateInsert` deleted); build clean
+- `[x]` Task 4 — "Run a calculation": `CalculationEditor` for `weighted_score` (field × weight rows, auto-slugged keys, live formula, `isSimpleWeightedScore` raw-JSON fallback), add-menu relabel + `FUNCTION_LABELS`; build clean
+- `[x]` Task 5 — Read-mode token labels (`describeStep`/`describeCondition`/`readDetail` labelized via the catalog on the detail page) + README `npm run test` note; vitest/build/pytest green *(live draft→builder→run regression walk pending running stack)*
 
 ### Module 12: Advanced RAG & Scale-Up
-`[ ]` Not started. (Formerly Module 10. The former Module 9 "Custom Views / Plugin Apps" placeholder is retired — Modules 9–10 now carry the vertical-view pattern in scope; anything beyond them stays out of scope.)
+`[ ]` Not started. (Formerly numbered 10, then 13 in an earlier renumbering; confirmed as Module 12 on 2026-07-17. The former "Custom Views / Plugin Apps" placeholder is retired — Modules 9–10 now carry the vertical-view pattern in scope; anything beyond them stays out of scope.)
 
 ### Future Plans
 
+* Deterministic matching/decision harness + scheduling system (deferred from the Module 11 slot, 2026-07-17): generic phase-pipeline engine (check → check → human review on ambiguous, via the M5 approval gate), schedule board (week calendar, caregivers as rows), coverage/open-shift view, caregiver–client matching tool (`find_available_caregivers` MCP tool), call-out → replacement flow. Note: representing open shifts needs schema work (`schedules.resource_id` is NOT NULL; status lacks unfilled/call-out).
+* Additional automation calculation functions (brainstormed at M11 planning, not built): `count_events` (entity engagement counts), `calculate` (binary arithmetic), `tier` (threshold → label bucketing), `hours_between`.
+* Score persistence/display (M11 kept scores context-only by user decision): score column + profile/directory badges if a real need appears.
 * Settings View
 * Content generation and output files e.g., formatted dynamic care plan
 * Stop / cancel streaming. Abort chat strea mid rresponse. Also fix send button positioning and text box. Button height does not match text input and text input not centered.
 * Sidebarr collapse to icons
-* Calender date input improvement that matches theme. Current one is ugly.
 * Home page dashboard with census, billable hours week-over-week, new starts, caregiver headcount, coverage rate (% of visits filled), AR/unbilled, and the top open alerts.
 * Referral-source dashboard — which partners (hospitals, senior-living, discharge planners) send leads that actually convert. Referral ROI drives where the owner spends relationship time; this is the highest-value net-new growth view not already on the roadmap.
 * Run manually button for manual triggered automations. Also able to be triggered via chat. 
+* Field value tokens inside text input fields instead of double curly braces.
 * Client & care oversight: 
     * Active census — count of active clients, by region/payer, plus authorized hours vs scheduled vs delivered. The gap between authorized and delivered is direct revenue leakage — owners obsess over it.
     * Per-client care overview — care plan, assigned caregivers, schedule, family contacts, status (active / hospital-hold / discharged). Care plans and visit notes flow through your ingestion + RAG so they're searchable in chat.
     * Visit verification (EVV) — worth flagging even if you hadn't considered it: Electronic Visit Verification (clock-in/out, missed/late visits) is legally mandated for Medicaid-funded home care in most states. It's connector-shaped and you already have telephony/EHR placeholder adapters (GoTo Connect, WellSky) to hang it on.
-* Scheduling system:  the daily fire in home care, so it's the flagship. Three linked pieces:
-    * Schedule board — a week calendar, caregivers as rows and visits as blocks (or flip to client-rows). Color by state: confirmed / unfilled / call-out / overtime-risk. This is a direct render of schedules joined to resources and clients.
-    * Coverage / open-shift view — the "who's not covered tomorrow" list. Unfilled or at-risk visits, sorted by how soon. This is the single view an owner opens first every morning.
-    * Caregiver–client matching tool — the smart part. Given an open shift, rank available caregivers by: qualification match (qualifications), region proximity (regions), availability, continuity (has this caregiver served this client before — owners care enormously about this), and overtime/conflict avoidance. This is almost exactly what the planned M11 matching harness is for, exposed as an MCP tool like find_available_caregivers so you can also just ask in chat: "who can cover Margaret's Tuesday 9am?"
-    * The call-out → replacement flow ties it together and shows off your existing plumbing: caregiver calls out → matching tool ranks replacements → gated send_sms offers the shift → owner approves in Tasks → creal event.
 * Workforce & Compliance 
     * Caregiver roster / utilization — headcount, active vs inactive, hours-this-week, utilization %, availability. Overlaps M10.
     * Credential expiry tracker — CPR, TB test, background check, license, all with expiry dates on qualifications. This is a killer automations use case: WHEN a credential is within 30/60 days of expiry, THEN queue a task + notify. In this industry an expired credential can mean a caregiver legally can't work a shift — surfacing it before it bites is high-value and cheap given the engine exists.

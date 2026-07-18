@@ -1,26 +1,26 @@
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { TemplateInsert } from "./TemplateInsert";
+import { TokenField, type FieldContext } from "./FieldPicker";
 import type { JSONSchema, JSONSchemaProp } from "@/lib/api";
 
 const selectClass =
   "h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 // Renders a JSON Schema's `properties` into form fields (string/number/boolean/
-// enum), with a {{template}} inserter on every text field. Unknown schema
-// constructs degrade to a raw-JSON textarea rather than blocking a save the server
-// would accept — the server 422 is the validator of record. Used for tool `input`
-// and function `args`.
+// enum). Every text field is a token input (chips + field picker) so references are
+// inserted, never typed. Unknown schema constructs degrade to a raw-JSON textarea
+// rather than blocking a save the server would accept — the server 422 is the
+// validator of record. Used for tool `input` and function `args`.
 export function SchemaForm({
   schema,
   value,
   onChange,
-  contextKeys,
+  ctx,
 }: {
   schema: JSONSchema;
   value: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
-  contextKeys: string[];
+  ctx: FieldContext;
 }) {
   const props = schema?.properties ?? {};
   const required = new Set(schema?.required ?? []);
@@ -42,7 +42,7 @@ export function SchemaForm({
           required={required.has(key)}
           value={value[key]}
           onChange={(v) => set(key, v)}
-          contextKeys={contextKeys}
+          ctx={ctx}
         />
       ))}
     </div>
@@ -55,14 +55,14 @@ function Field({
   required,
   value,
   onChange,
-  contextKeys,
+  ctx,
 }: {
   name: string;
   prop: JSONSchemaProp;
   required: boolean;
   value: unknown;
   onChange: (v: unknown) => void;
-  contextKeys: string[];
+  ctx: FieldContext;
 }) {
   const label = (
     <label className="mb-1 flex items-center gap-1 text-xs font-medium text-muted-foreground">
@@ -109,7 +109,8 @@ function Field({
     );
   }
 
-  // number/integer -> number input (kept as string when templated, so {{...}} works)
+  // number/integer -> native number input (kept when NOT templated, so a plain
+  // number stays a real number; a templated value switches to the token input).
   if ((prop.type === "integer" || prop.type === "number") && !isTemplate(value)) {
     return (
       <div>
@@ -126,22 +127,17 @@ function Field({
     );
   }
 
-  // string (or a templated number) -> text input with template inserter
+  // string (or a templated number) -> token input with a field picker
   if (!prop.type || prop.type === "string" || prop.type === "integer" || prop.type === "number") {
     return (
       <div>
         {label}
-        <div className="flex gap-1.5">
-          <Input
-            value={value === undefined || value === null ? "" : String(value)}
-            onChange={(e) => onChange(e.target.value || undefined)}
-            placeholder={prop.type === "string" ? "" : "value or {{template}}"}
-          />
-          <TemplateInsert
-            contextKeys={contextKeys}
-            onInsert={(t) => onChange(`${value ?? ""}${t}`)}
-          />
-        </div>
+        <TokenField
+          value={value === undefined || value === null ? "" : String(value)}
+          onChange={(v) => onChange(v || undefined)}
+          ctx={ctx}
+          placeholder={prop.type === "string" ? "" : "value or a field"}
+        />
       </div>
     );
   }

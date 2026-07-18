@@ -13,17 +13,18 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
   delayUnit,
   describeStep,
+  functionLabel,
   isGatedTool,
   toolLabel,
   type Step,
 } from "@/lib/recipe";
-import type { Vocabulary } from "@/lib/api";
+import type { FieldCatalog, Vocabulary } from "@/lib/api";
+import { labelizeTemplate } from "@/lib/template";
 import { SchemaForm } from "./SchemaForm";
-import { TemplateInsert } from "./TemplateInsert";
+import { TokenField, type FieldContext } from "./FieldPicker";
 import { ConditionChips } from "./ConditionChips";
 
 const STEP_ICONS: Record<Step["type"], ComponentType<{ className?: string }>> = {
@@ -46,7 +47,7 @@ export interface StepEdit {
   isFirst: boolean;
   isLast: boolean;
   vocabulary: Vocabulary;
-  contextKeys: string[]; // save_as keys from earlier steps
+  ctx: FieldContext; // vocabulary + selected trigger + this step's prior save_as keys
 }
 
 // One THEN step. Read-mode shows a plain title + detail + gated chip; pass `edit`
@@ -56,11 +57,13 @@ export function StepCard({
   step,
   index,
   gatedTools,
+  catalog,
   edit,
 }: {
   step: Step;
   index: number;
   gatedTools?: Set<string>;
+  catalog?: FieldCatalog; // read-mode: renders {{paths}} as plain-language labels
   edit?: StepEdit;
 }) {
   const Icon = STEP_ICONS[step.type] ?? Wrench;
@@ -100,7 +103,7 @@ export function StepCard({
         <div className="flex items-center gap-2">
           <Icon className="h-4 w-4 shrink-0 text-primary" />
           <span className="text-sm font-medium">
-            {step.type === "tool" ? toolLabel(step.tool) : describeStep(step)}
+            {step.type === "tool" ? toolLabel(step.tool) : describeStep(step, catalog)}
           </span>
           {gated && (
             <Badge variant="warning" className="gap-1">
@@ -124,28 +127,31 @@ export function StepCard({
             <StepEditor step={step} edit={edit} />
           </div>
         ) : (
-          <ReadDetail step={step} />
+          <ReadDetail step={step} catalog={catalog} />
         )}
       </div>
     </div>
   );
 }
 
-function ReadDetail({ step }: { step: Step }) {
-  const detail = readDetail(step);
+function ReadDetail({ step, catalog }: { step: Step; catalog?: FieldCatalog }) {
+  const detail = readDetail(step, catalog);
   if (!detail) return null;
   return <p className="mt-1 break-words text-xs text-muted-foreground">{detail}</p>;
 }
 
-function readDetail(step: Step): string | null {
+function readDetail(step: Step, catalog?: FieldCatalog): string | null {
+  const lbl = (s: string) => labelizeTemplate(s, catalog);
   switch (step.type) {
     case "tool": {
       const entries = Object.entries(step.input ?? {});
-      return entries.length ? entries.map(([k, v]) => `${k}: ${String(v)}`).join("  ·  ") : null;
+      return entries.length
+        ? entries.map(([k, v]) => `${k}: ${lbl(String(v))}`).join("  ·  ")
+        : null;
     }
     case "generate": {
       const bits = [
-        step.prompt ? `“${truncate(step.prompt, 90)}”` : null,
+        step.prompt ? `“${truncate(lbl(step.prompt), 90)}”` : null,
         step.save_as ? `saved as ${step.save_as}` : null,
         step.model === "fast" ? "fast model" : null,
       ].filter(Boolean);
@@ -169,7 +175,7 @@ function readDetail(step: Step): string | null {
 
 // --- editors ---------------------------------------------------------------
 function StepEditor({ step, edit }: { step: Step; edit: StepEdit }) {
-  const { onChange, vocabulary, contextKeys } = edit;
+  const { onChange, vocabulary, ctx } = edit;
 
   if (step.type === "tool") {
     const tool = vocabulary.tools.find((t) => t.name === step.tool);
@@ -197,7 +203,7 @@ function StepEditor({ step, edit }: { step: Step; edit: StepEdit }) {
             schema={tool.input_schema}
             value={(step.input as Record<string, unknown>) ?? {}}
             onChange={(input) => onChange({ ...step, input })}
-            contextKeys={contextKeys}
+            ctx={ctx}
           />
         )}
         <SaveAsField
@@ -243,8 +249,7 @@ function StepEditor({ step, edit }: { step: Step; edit: StepEdit }) {
         <ConditionChips
           conditions={step.conditions ?? []}
           onChange={(conditions) => onChange({ ...step, conditions, on_false: "stop" })}
-          vocabulary={vocabulary}
-          contextKeys={contextKeys}
+          ctx={ctx}
           label="Only if"
           addLabel="Add check"
         />
@@ -266,7 +271,7 @@ function StepEditor({ step, edit }: { step: Step; edit: StepEdit }) {
         >
           <option value="">select a computation…</option>
           {vocabulary.functions.map((f) => (
-            <option key={f.name} value={f.name}>{f.name} — {f.description}</option>
+            <option key={f.name} value={f.name}>{functionLabel(f.name)}</option>
           ))}
         </select>
         {fn && (
@@ -274,7 +279,7 @@ function StepEditor({ step, edit }: { step: Step; edit: StepEdit }) {
             schema={fn.input_schema}
             value={(step.args as Record<string, unknown>) ?? {}}
             onChange={(args) => onChange({ ...step, args })}
-            contextKeys={contextKeys}
+            ctx={ctx}
           />
         )}
         <SaveAsField value={step.save_as} onChange={(v) => onChange({ ...step, save_as: v })} />
@@ -307,8 +312,7 @@ function StepEditor({ step, edit }: { step: Step; edit: StepEdit }) {
           <ConditionChips
             conditions={step.conditions ?? []}
             onChange={(conditions) => onChange({ ...step, conditions })}
-            vocabulary={vocabulary}
-            contextKeys={contextKeys}
+            ctx={ctx}
             label="Where"
             addLabel="Add condition"
           />
@@ -340,17 +344,13 @@ function StepEditor({ step, edit }: { step: Step; edit: StepEdit }) {
     return (
       <div className="space-y-2.5">
         <div>
-          <div className="mb-1 flex items-center justify-between">
-            <label className="text-xs font-medium text-muted-foreground">Prompt</label>
-            <TemplateInsert
-              contextKeys={contextKeys}
-              onInsert={(t) => onChange({ ...step, prompt: `${step.prompt ?? ""}${t}` })}
-            />
-          </div>
-          <Textarea
+          <label className="mb-1 block text-xs font-medium text-muted-foreground">Prompt</label>
+          <TokenField
             value={step.prompt ?? ""}
-            onChange={(e) => onChange({ ...step, prompt: e.target.value })}
-            placeholder="Write a friendly welcome to {{entity.name}}…"
+            onChange={(prompt) => onChange({ ...step, prompt })}
+            ctx={ctx}
+            multiline
+            placeholder="Write a friendly welcome…"
           />
         </div>
         <div className="flex gap-3">
