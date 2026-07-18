@@ -15,6 +15,7 @@ from .engine import (
     get_run,
     resume_after_approval,
     start_run,
+    supersede_sequence_runs,
 )
 from .recipe import RecipeError, validate_recipe
 
@@ -30,4 +31,5 @@ __all__ = [
     "resume_after_approval",
     "cancel_after_rejection",
     "cancel_run",
+    "supersede_sequence_runs",
 ]

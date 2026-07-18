@@ -13,6 +13,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn, relativeTime } from "@/lib/utils";
 import { describeTrigger, RUN_STATUS_META } from "@/lib/recipe";
+import { bindingEditRoute, describeBinding } from "@/lib/pipeline";
+import { GitBranch } from "lucide-react";
 import type { Automation } from "@/lib/api";
 
 // One automation in the grid: name, status pill, plain-language trigger line, an
@@ -31,6 +33,12 @@ export function AutomationCard({
   const navigate = useNavigate();
   const active = automation.status === "active";
   const last = automation.last_run;
+  // A bound sequence (9b): show its "Leads · Contacted" chip and route Edit to the
+  // view's stage builder (one editing surface per recipe — the generic builder
+  // would let the trigger drift from the binding).
+  const bindingLabel = describeBinding(automation.binding);
+  const editRoute =
+    bindingEditRoute(automation.binding) ?? `/automations/${automation.id}/edit`;
 
   return (
     <div className="group flex flex-col gap-3 rounded-xl border bg-card p-4 shadow-sm transition-all hover:border-primary/40 hover:shadow-md">
@@ -47,7 +55,7 @@ export function AutomationCard({
           </Badge>
           <OverflowMenu
             onView={() => navigate(`/automations/${automation.id}`)}
-            onEdit={() => navigate(`/automations/${automation.id}/edit`)}
+            onEdit={() => navigate(editRoute)}
             onDelete={() => onDelete(automation)}
           />
         </div>
@@ -62,6 +70,11 @@ export function AutomationCard({
       </p>
 
       <div className="flex flex-wrap items-center gap-1.5">
+        {bindingLabel && (
+          <Badge variant="info" className="gap-1">
+            <GitBranch className="h-3 w-3" /> {bindingLabel}
+          </Badge>
+        )}
         {automation.requires_approval && (
           <Badge variant="warning" className="gap-1">
             <ShieldAlert className="h-3 w-3" /> Requires approval

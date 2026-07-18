@@ -524,6 +524,63 @@ async def _step_function(conn, tenant_id, run, automation, idx, step, scope) -> 
     return True
 
 
+async def _step_wait_until(conn, tenant_id, run, automation, idx, step, scope) -> bool:
+    """Park the run until a matching event arrives (WS5). The awaited pattern is
+    stored in `awaiting`; `wake_at` holds the optional timeout deadline (the waker
+    stops a timed-out wait). Condition VALUES are frozen against the current context
+    now; field paths stay literal to evaluate against the future event at resume.
+    step_index is bumped so resume continues at the NEXT step."""
+    event_type = step["event_type"]
+    conditions = render(step.get("conditions") or [], scope)
+    awaiting = {"event_type": event_type, "conditions": conditions}
+    timeout = step.get("timeout_minutes")
+    log = _append_log(run, idx, "wait_until", f"waiting for {event_type}", "waiting")
+    if timeout:
+        await conn.execute(
+            """update public.automation_runs
+                  set status='waiting_event', step_index=%s, step_log=%s, awaiting=%s,
+                      wake_at = now() + make_interval(mins => %s)
+                where id=%s""",
+            (idx + 1, Json(log), Json(awaiting), timeout, run["id"]),
+        )
+    else:
+        await conn.execute(
+            """update public.automation_runs
+                  set status='waiting_event', step_index=%s, step_log=%s, awaiting=%s,
+                      wake_at = null
+                where id=%s""",
+            (idx + 1, Json(log), Json(awaiting), run["id"]),
+        )
+    return False
+
+
+async def timeout_wait(conn, tenant_id: str, run_id: str) -> bool:
+    """Stop a `waiting_event` run whose timeout deadline passed without the event
+    (WS5, waker path). 'Stop' = complete with a plain note (not a failure — nothing
+    went wrong; the awaited event simply didn't arrive in time)."""
+    run = await _load_run_for_update(conn, run_id)
+    if run is None or run["status"] != "waiting_event":
+        return False
+    automation = await _load_automation(conn, str(run["automation_id"])) or {
+        "id": run["automation_id"], "name": "(deleted)",
+    }
+    log = _append_log(
+        run, run["step_index"], "wait_until",
+        "stopped — timed out waiting for the event", "stopped",
+    )
+    await conn.execute(
+        "update public.automation_runs set status='completed', step_log=%s, "
+        "awaiting=null, finished_at=now() where id=%s",
+        (Json(log), run_id),
+    )
+    run["step_log"] = log
+    await _log_run_event(
+        conn, tenant_id, run, automation, "automation.run_completed",
+        f"Automation '{automation['name']}' completed (timed out waiting for an event)",
+    )
+    return True
+
+
 async def _step_generate(conn, tenant_id, run, automation, idx, step, scope) -> bool:
     prompt = render(step["prompt"], scope)
     model = settings.fast_model if step.get("model") == "fast" else settings.chat_model
@@ -549,6 +606,7 @@ _STEP_HANDLERS = {
     "condition": _step_condition,
     "function": _step_function,
     "generate": _step_generate,
+    "wait_until": _step_wait_until,
 }
 
 
@@ -618,6 +676,66 @@ async def cancel_after_rejection(
         conn, tenant_id, run, automation, "automation.run_cancelled",
         f"Automation '{automation['name']}' cancelled — approval rejected{who}",
     )
+
+
+async def supersede_sequence_runs(
+    conn, tenant_id: str, entity_type: str | None, entity_id: str | None, *, view: str
+) -> int:
+    """Cancel every active run of a *bound* sequence (`binding->>'view' = view`) for
+    this entity — so advancing an entity's stage instantly ends the prior stage's
+    sequence and only the current stage's can be in flight. Returns how many were
+    cancelled.
+
+    Generic and binding-driven (reads only the core `binding` column, never a stage
+    name), so M10 reuses it verbatim with `view='caregivers'`. A `waiting_approval`
+    run holding a still-pending action is rejected through the approvals seam (the
+    same path the cancel-run endpoint uses, so no approval is orphaned); every other
+    active run is cancelled directly. The caller invokes this on a stage change,
+    before the dispatcher starts the new stage's run — so there is never a window
+    with two active sequence runs for the entity.
+    """
+    if entity_id is None:
+        return 0
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """select r.id, r.status
+                 from public.automation_runs r
+                 join public.automations a on a.id = r.automation_id
+                where r.entity_type = %s and r.entity_id = %s
+                  and r.status in ('running','waiting','waiting_approval','waiting_event')
+                  and a.binding->>'view' = %s""",
+            (entity_type, entity_id, view),
+        )
+        runs = await cur.fetchall()
+
+    cancelled = 0
+    for run in runs:
+        run_id = str(run["id"])
+        if run["status"] == "waiting_approval":
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    "select id from public.pending_actions "
+                    "where automation_run_id = %s and status = 'pending' limit 1",
+                    (run_id,),
+                )
+                pending = await cur.fetchone()
+            if pending is not None:
+                # Lazy import breaks the engine<->approvals cycle (approvals imports
+                # this package). reject_action -> cancel_after_rejection cancels the run.
+                from ..approvals import ActionAlreadyResolved, reject_action
+
+                try:
+                    await reject_action(
+                        conn, tenant_id, str(pending["id"]),
+                        note="Superseded — the record advanced to a new stage",
+                    )
+                    cancelled += 1
+                    continue
+                except ActionAlreadyResolved:
+                    pass  # raced to resolved — fall through to a direct cancel
+        if await cancel_run(conn, tenant_id, run_id):
+            cancelled += 1
+    return cancelled
 
 
 async def cancel_run(

@@ -204,6 +204,7 @@ export interface Automation {
   active_runs: number;
   last_run: LastRun | null;
   requires_approval: boolean;
+  binding: Record<string, unknown> | null; // generic view-binding (9b), null = unbound
   created_at: string;
   updated_at: string;
 }
@@ -214,6 +215,7 @@ export interface AutomationCreate {
   trigger: Trigger;
   conditions?: Condition[];
   steps?: Step[];
+  binding?: Record<string, unknown> | null;
 }
 
 export interface AutomationPatch {
@@ -223,6 +225,7 @@ export interface AutomationPatch {
   trigger?: Trigger;
   conditions?: Condition[];
   steps?: Step[];
+  binding?: Record<string, unknown> | null;
 }
 
 export interface StepLogEntry {
@@ -272,6 +275,7 @@ export interface Vocabulary {
   operators: string[];
   generate_models: string[];
   field_roots: string[];
+  field_suggestions: string[];
 }
 
 export interface JSONSchema {
@@ -288,10 +292,6 @@ export interface JSONSchemaProp {
   maximum?: number;
 }
 
-export interface CronPreview {
-  next: string[];
-}
-
 export interface AutomationDraft {
   name: string;
   description: string | null;
@@ -299,6 +299,93 @@ export interface AutomationDraft {
   conditions: Condition[];
   steps: Step[];
   explanation: string;
+}
+
+// --- Leads view (Module 9, vertical seam) ------------------------------------
+export type LeadStatus =
+  | "new"
+  | "contacted"
+  | "qualified"
+  | "converted"
+  | "lost";
+
+export interface RegionRef {
+  id: string;
+  name: string;
+}
+
+export interface Lead {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  source: string | null;
+  status: LeadStatus;
+  region_id: string | null;
+  region_name: string | null;
+  requirements: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LeadPage {
+  leads: Lead[];
+  total: number;
+}
+
+export interface LeadFacets {
+  sources: string[];
+  regions: RegionRef[];
+}
+
+export interface LeadSummary {
+  summary: string;
+  generated_at: string;
+}
+
+export interface StageCount {
+  stage: string;
+  count: number;
+}
+
+export interface SourceCount {
+  source: string;
+  count: number;
+}
+
+export interface LeadMetrics {
+  stages: StageCount[];
+  conversion_rate: number;
+  new_last_7_days: number;
+  avg_days_to_convert: number | null;
+  top_sources: SourceCount[];
+}
+
+export interface LeadCreate {
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  source?: string | null;
+  region_id?: string | null;
+}
+
+// Only the fields being changed are sent (the server writes just those and emits
+// the matching event). region_id may be null to clear the region.
+export interface LeadPatch {
+  name?: string;
+  phone?: string | null;
+  email?: string | null;
+  source?: string | null;
+  region_id?: string | null;
+  status?: LeadStatus;
+}
+
+export interface LeadQuery {
+  status?: string;
+  source?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
 }
 
 // --- Home summary ------------------------------------------------------------
@@ -403,10 +490,10 @@ export const api = {
     }).then(json<ActionResolution>),
 
   // Automations
-  listAutomations: (status?: "active" | "paused") =>
-    authFetch(`/api/automations${status ? `?status=${status}` : ""}`).then(
-      json<Automation[]>,
-    ),
+  listAutomations: (opts?: { status?: "active" | "paused"; view?: string }) =>
+    authFetch(
+      `/api/automations${queryString({ status: opts?.status, view: opts?.view })}`,
+    ).then(json<Automation[]>),
   getAutomation: (id: string) =>
     authFetch(`/api/automations/${id}`).then(json<Automation>),
   createAutomation: (body: AutomationCreate) =>
@@ -437,14 +524,37 @@ export const api = {
   cancelRun: (id: string) =>
     authFetch(`/api/automation-runs/${id}/cancel`, { method: "POST" }).then(json<Run>),
   getVocabulary: () => authFetch("/api/automations/vocabulary").then(json<Vocabulary>),
-  cronPreview: (expr: string) =>
-    authFetch(`/api/automations/cron-preview?expr=${encodeURIComponent(expr)}`).then(
-      json<CronPreview>,
-    ),
   draftAutomation: (description: string) =>
     authFetch("/api/automations/draft", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ description }),
     }).then(json<AutomationDraft>),
+
+  // Leads view (Module 9)
+  listLeads: (params: LeadQuery = {}) =>
+    authFetch(`/api/leads${queryString(params as Record<string, unknown>)}`).then(
+      json<LeadPage>,
+    ),
+  getLeadFacets: () => authFetch("/api/leads/facets").then(json<LeadFacets>),
+  createLead: (body: LeadCreate) =>
+    authFetch("/api/leads", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<Lead>),
+  getLead: (id: string) => authFetch(`/api/leads/${id}`).then(json<Lead>),
+  patchLead: (id: string, body: LeadPatch) =>
+    authFetch(`/api/leads/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<Lead>),
+  getLeadSummary: (id: string) =>
+    authFetch(`/api/leads/${id}/summary`).then(json<LeadSummary>),
+  regenerateLeadSummary: (id: string) =>
+    authFetch(`/api/leads/${id}/summary/regenerate`, { method: "POST" }).then(
+      json<LeadSummary>,
+    ),
+  getLeadMetrics: () => authFetch("/api/leads/metrics").then(json<LeadMetrics>),
 };

@@ -44,3 +44,21 @@ async def get_entity(conn, entity_type: str | None, entity_id: str | None) -> di
         await cur.execute(f"select * from public.{table} where id = %s", (eid,))
         row = await cur.fetchone()
     return _jsonable(dict(row)) if row else None
+
+
+async def entity_field_suggestions(conn) -> list[str]:
+    """`entity.<col>` field paths for the builder's autocomplete (WS2) — the columns
+    of this vertical's entity tables. Vertical (reads ENTITY_TABLES); core just
+    concatenates it into the vocabulary. Plumbing columns are dropped."""
+    skip = {"tenant_id"}
+    cols: set[str] = set()
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select column_name from information_schema.columns "
+            "where table_schema = 'public' and table_name = any(%s)",
+            (list(ENTITY_TABLES.values()),),
+        )
+        for (name,) in await cur.fetchall():
+            if name not in skip:
+                cols.add(name)
+    return sorted(f"entity.{c}" for c in cols)

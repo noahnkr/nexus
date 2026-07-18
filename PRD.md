@@ -312,13 +312,50 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 ---
 
+## Module 9: Leads View & Marketing Funnel
+
+**Goal**: PRD interface #7 — the first vertical dashboard view, and the proof that the entity-dashboard/pipeline *pattern* is core while its *content* is the re-templating seam. Office staff see the marketing funnel at a glance, work individual leads from a directory, and attach automated outreach to each stage — all running on the Module 7 engine and visible in the Module 8 Center. Built as two sub-plans per the complexity rule.
+
+**Leads API, directory & profiles**:
+
+- A vertical-seam leads REST API (list/search/facets, manual creation, basic-field edits, stage moves — human `source_system='user'` writes like the Tasks page; no delete, so funnel history stays honest) — every stage change emits a first-class `lead.stage_changed` event from whichever writer moved it (REST or the gated `update_lead_status` tool)
+- `/leads` directory: filterable/searchable table (stage, source, free text ↔ URL params), manual "New lead" dialog, live via Supabase Realtime; `/leads/{id}` profile: editable basic info, stage selector, the lead's entity event timeline (reusing the Event Log's entity drill-down), and an **AI smart summary** at the top — generated on demand (fast model over the lead row + recent event summaries), never persisted
+- New vertical seam: `services/views/` (stage config, metrics, summary generation) alongside a vertical `routers/leads.py` — M10 adds its caregiver twin without touching core
+
+**Funnel, metrics & per-stage sequences**:
+
+- A clickable funnel strip over the pre-defined stages (counts per stage, click filters the directory) with a per-stage sequence chip, plus conversion metrics widgets (in-pipeline count, conversion rate, new this week, average days to convert, top sources)
+- Per-stage outreach sequences are ordinary M7 automations tagged via a new **core** `automations.binding` jsonb (`{"view":"leads","stage":…}`, one sequence per stage by partial unique index) — the engine, approval gate, run history, and Automations Center apply unchanged, and M10 reuses the mechanism verbatim
+- A constrained sequence builder (`/leads/stages/{stage}/sequence`) — deliberately less flexible than M8's: the trigger is fixed by the stage (stage entry event + managed condition), while THEN composes 8b's step components with the tool palette restricted to SMS/email/call-task plus delays, conditionals, functions, and content generation
+
+**Deliverable for this module**: an office user opens `/leads`, sees the funnel with live counts and metrics, attaches a "Contacted" sequence (personalized message → gated SMS) from the funnel strip, then moves a lead to Contacted in its profile — the run fires, parks awaiting SMS approval, and completes after approval in Tasks, with the whole trail on the lead's timeline, in the Event Log, and in LangSmith. Plans: `.agent/plans/9.leads-view.md` (+ `9a.leads-api-directory.md`, `9b.funnel-and-stage-sequences.md`)
+
+---
+
+## Module 10: Caregivers View & Hiring Process
+
+**Goal**: PRD interface #8 — the second and final sanctioned vertical view, re-instantiating Module 9's pipeline pattern for caregiver recruiting and thereby proving the pattern is core while content is seam. The structural difference from leads: applicants don't exist in the schema (`resources` is the active caregiver roster, no stage column), so this module adds the applicants entity end-to-end plus a promotion path onto the roster, mirroring how clients record lead conversion. Built as two sub-plans per the complexity rule.
+
+**Applicants model, API, directory & profiles**:
+
+- New vertical `applicants` table (contact, source, hiring stage `applied → screening → interview → offer → hired` with terminal `rejected`, qualification/region/availability fields mirroring `resources`) with standard RLS and Realtime; `resources.applicant_id` records promotion provenance (the `clients.lead_id` precedent)
+- One stage-moving path — a `move_stage()` service emitting first-class `applicant.stage_changed` events — shared by the human REST PATCH and a new gated `update_applicant_stage` tool; moving an applicant to `hired` **atomically auto-creates the caregiver row** (copying contact/qualifications/regions/availability) and emits `resource.created`; the human moving the stage is the approver, and there is no delete
+- `/caregivers` directory (filter/search, manual applicant creation, live via Realtime) and applicant profiles: editable basic info + qualifications, hiring smart summary (on-demand fast-model generation through the shared view-agnostic summary helper), entity event timeline, and a hire-confirm dialog that links the created caregiver
+- The applicant entity threads through every vertical seam (entity map, read tools, SQL schema doc, event vocabulary) — the template for adding an entity type to a running deployment
+
+**Hiring funnel, metrics & per-stage sequences**:
+
+- The generic funnel strip instantiated with the hiring stages — including a sequence chip on `rejected` (the automated denied email is the marquee use case; chip-bearing stages are per-view config, not component logic) — plus hiring metrics widgets (in-pipeline count, hire rate, new this week, average days to hire, top sources)
+- Per-stage sequences (accepted/denied emails on gated `send_email`) as bound automations (`{"view":"caregivers","stage":…}`) built in the shared view-config-driven stage builder — no new pages, no engine or Center backend changes; the caregivers view registers a config, nothing more
+- Scoring is **deliberately absent** (user decision 2026-07-17): applicant/lead scoring lands in Module 11's matching/decision harness
+
+**Deliverable for this module**: a recruiter creates an applicant, watches it move through the hiring funnel, and on moving it to Rejected the denial sequence fires — a personalized email drafts, parks for approval, and sends on approval in Tasks — while moving another to Hired atomically creates the caregiver record; both trails readable on the applicant's timeline, in the Event Log, and in LangSmith. Plans: `.agent/plans/10.caregivers-view.md` (+ `10a.applicants-api-directory.md`, `10b.hiring-funnel-and-sequences.md`)
+
+---
+
 ## Subsequent Modules (summary)
 
-Modules 9–10 complete the automations platform on Modules 7–8: two pipeline dashboard views where the prescribed funnels live as per-stage action sequences.
-
-9. **Leads View & Marketing Funnel** — PRD interface #7, the first vertical dashboard view (the entity-dashboard/pipeline pattern is core; lead specifics are the re-templating seam): funnel visualization over the pre-defined lead stages (inline or separate tab); an interactive per-stage outreach builder — deliberately less flexible than a free-form workflow since stages are fixed — composing automatic SMS/email/call tasks with delays, waits, conditionals, custom functions, and content generation on the M7 framework; a lead directory with expanded profiles (basic info, entity event log, AI "smart summary" of current state at the top); funnel/conversion metrics widgets.
-10. **Caregivers View & Hiring Process** — PRD interface #8, the same dashboard pattern instantiated for caregiver recruiting: hiring-stage pipeline with automated accepted/denied emails and scoring functions, applicant directory with smart summaries and event history, hiring metrics.
-11. **Deterministic Matching/Decision Harness** — generic phase-pipeline engine (check → check → human review on ambiguous cases), instantiated against this client's actual matching problem (e.g., can we serve this lead) using the Module 5 approval gate for ambiguous cases; the engine is core, the specific checks are per-client configuration
+11. **Deterministic Matching/Decision Harness** — generic phase-pipeline engine (check → check → human review on ambiguous cases), instantiated against this client's actual matching problem (e.g., can we serve this lead) using the Module 5 approval gate for ambiguous cases; the engine is core, the specific checks are per-client configuration. Applicant/lead scoring lands here (deferred from Module 10, user decision 2026-07-17)
 12. **Advanced RAG & Scale-Up** — hybrid search, reranking, multi-format ingestion (Docling), sub-agents, validated against this client's small corpus before applying to a larger future client
 
 *(The former "Custom Views / Plugin Apps" placeholder module is retired: the Leads and Caregivers views now carry that pattern in scope; anything beyond them stays out of scope per the Out of Scope list.)*

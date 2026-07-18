@@ -5,6 +5,9 @@ import { HomePage } from "@/pages/HomePage";
 import { ChatPage } from "@/pages/ChatPage";
 import { IngestionPage } from "@/pages/IngestionPage";
 import { TasksPage } from "@/pages/TasksPage";
+import { LeadsPage } from "@/pages/LeadsPage";
+import { LeadProfilePage } from "@/pages/LeadProfilePage";
+import { StageSequencePage } from "@/pages/StageSequencePage";
 import { EventLogPage } from "@/pages/EventLogPage";
 import { AutomationsPage } from "@/pages/AutomationsPage";
 import { AutomationDetailPage } from "@/pages/AutomationDetailPage";
@@ -27,6 +30,9 @@ const router = createBrowserRouter([
       { path: "chat", element: <ChatPage /> },
       { path: "ingestion", element: <IngestionPage /> },
       { path: "tasks", element: <TasksPage /> },
+      { path: "leads", element: <LeadsPage /> },
+      { path: "leads/stages/:stage/sequence", element: <StageSequencePage view="leads" /> },
+      { path: "leads/:id", element: <LeadProfilePage /> },
       { path: "automations", element: <AutomationsPage /> },
       { path: "automations/new", element: <AutomationBuilderPage /> },
       { path: "automations/:id", element: <AutomationDetailPage /> },

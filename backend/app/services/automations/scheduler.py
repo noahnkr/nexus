@@ -29,7 +29,14 @@ from psycopg.types.json import Json
 from ...config import settings
 from ...db import tenant_tx
 from ...deps import get_machine_tenant_id
-from .engine import advance_run, start_run
+from .engine import (
+    _eval_all,
+    _trigger_scope,
+    advance_run,
+    start_run,
+    timeout_wait,
+)
+from .entities import get_entity
 
 logger = logging.getLogger("nexus.automations")
 
@@ -78,6 +85,48 @@ def _matches(automation: dict, event: dict) -> bool:
     return want_source is None or want_source == event["source_system"]
 
 
+async def _resume_waiting_for_event(conn, tenant_id: str, ev: dict) -> list[str]:
+    """Resume any `waiting_event` run (WS5) whose awaited pattern this event matches:
+    same entity, `awaiting.event_type == ev.event_type`, and `awaiting.conditions`
+    true against the event scope. Flips matched runs to `running` and returns their
+    ids (the caller advances them after the batch commits). Entity-scoped — a run
+    waits for the next event on ITS OWN record."""
+    entity_id = ev.get("entity_id")
+    if entity_id is None:
+        return []
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """select id, entity_type, entity_id, context, awaiting
+                 from public.automation_runs
+                where status = 'waiting_event'
+                  and entity_type = %s and entity_id = %s
+                  and awaiting->>'event_type' = %s
+                for update skip locked""",
+            (ev.get("entity_type"), entity_id, ev["event_type"]),
+        )
+        rows = await cur.fetchall()
+
+    resumed: list[str] = []
+    for run in rows:
+        awaiting = run["awaiting"] or {}
+        scope = {
+            "trigger": _trigger_scope(ev),
+            "entity": await get_entity(
+                conn, run["entity_type"],
+                str(run["entity_id"]) if run["entity_id"] else None,
+            ) or {},
+            "context": run["context"] or {},
+        }
+        if _eval_all(awaiting.get("conditions") or [], scope):
+            await conn.execute(
+                "update public.automation_runs set status='running', awaiting=null "
+                "where id=%s",
+                (run["id"],),
+            )
+            resumed.append(str(run["id"]))
+    return resumed
+
+
 # ---------------------------------------------------------------------------
 # phase 1 — event dispatcher
 # ---------------------------------------------------------------------------
@@ -85,6 +134,7 @@ def _matches(automation: dict, event: dict) -> bool:
 # keyset — the Module 4 pagination pattern — stored as both values in connector_state.
 async def dispatch_once(tenant_id: str) -> int:
     started: list[str] = []
+    resumed: list[str] = []
     async with tenant_tx(tenant_id) as conn:
         cursor = await _read_cursor(conn)
 
@@ -135,15 +185,19 @@ async def dispatch_once(tenant_id: str) -> int:
                     run_id = await start_run(conn, tenant_id, auto, trigger_event=ev)
                     if run_id:
                         started.append(run_id)
+            # WS5: an event can also resume runs parked on a wait_until step.
+            resumed.extend(await _resume_waiting_for_event(conn, tenant_id, ev))
 
         # Cursor advances only after the whole batch is processed in this tx.
         last = events[-1]
         await _write_cursor(conn, tenant_id, last["created_at"], last["id"])
 
-    # start_run rows are committed; drive each new run forward.
+    # start_run + resume rows are committed; drive each forward.
     for run_id in started:
         await advance_run(tenant_id, run_id)
-    return len(started)
+    for run_id in resumed:
+        await advance_run(tenant_id, run_id)
+    return len(started) + len(resumed)
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +253,9 @@ async def tick_cron_once(tenant_id: str) -> int:
 # ---------------------------------------------------------------------------
 async def wake_due_once(tenant_id: str) -> int:
     claimed: list[str] = []
+    timed_out = 0
     async with tenant_tx(tenant_id) as conn:
+        # Delay waits: resume + advance.
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 """select id from public.automation_runs
@@ -217,9 +273,26 @@ async def wake_due_once(tenant_id: str) -> int:
             )
             claimed.append(str(row["id"]))
 
+        # Event waits past their timeout deadline: stop (WS5) — the awaited event
+        # never arrived. `timeout_wait` completes the run with a plain note.
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """select id from public.automation_runs
+                    where status = 'waiting_event'
+                      and wake_at is not null and wake_at <= now()
+                    order by wake_at asc
+                    limit %s
+                    for update skip locked""",
+                (_WAKE_BATCH,),
+            )
+            due = await cur.fetchall()
+        for row in due:
+            if await timeout_wait(conn, tenant_id, str(row["id"])):
+                timed_out += 1
+
     for run_id in claimed:
         await advance_run(tenant_id, run_id)
-    return len(claimed)
+    return len(claimed) + timed_out
 
 
 # ---------------------------------------------------------------------------

@@ -1,25 +1,10 @@
 import { X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { DateTimePicker } from "@/components/ui/DateTimePicker";
 import type { EventFacets, EventQuery } from "@/lib/api";
 
 const selectClass =
   "h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
-
-function toLocalInput(iso?: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-    d.getHours(),
-  )}:${pad(d.getMinutes())}`;
-}
-
-function fromLocalInput(v: string): string | undefined {
-  if (!v) return undefined;
-  const d = new Date(v);
-  return isNaN(d.getTime()) ? undefined : d.toISOString();
-}
 
 export function EventFilters({
   facets,
@@ -61,22 +46,20 @@ export function EventFilters({
           ))}
         </select>
 
-        <label className="flex items-center gap-1 text-xs text-muted-foreground">
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
           From
-          <input
-            type="datetime-local"
-            className={selectClass}
-            value={toLocalInput(filters.since)}
-            onChange={(e) => onChange({ since: fromLocalInput(e.target.value) })}
+          <DateTimePicker
+            value={filters.since}
+            onChange={(iso) => onChange({ since: iso })}
+            placeholder="Any start"
           />
         </label>
-        <label className="flex items-center gap-1 text-xs text-muted-foreground">
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
           To
-          <input
-            type="datetime-local"
-            className={selectClass}
-            value={toLocalInput(filters.until)}
-            onChange={(e) => onChange({ until: fromLocalInput(e.target.value) })}
+          <DateTimePicker
+            value={filters.until}
+            onChange={(iso) => onChange({ until: iso })}
+            placeholder="Any end"
           />
         </label>
       </div>
