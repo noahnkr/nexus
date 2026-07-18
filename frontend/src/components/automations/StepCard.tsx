@@ -4,6 +4,7 @@ import {
   ChevronUp,
   Clock,
   GitBranch,
+  Hourglass,
   ShieldAlert,
   Sigma,
   Sparkles,
@@ -31,6 +32,7 @@ const STEP_ICONS: Record<Step["type"], ComponentType<{ className?: string }>> = 
   condition: GitBranch,
   function: Sigma,
   generate: Sparkles,
+  wait_until: Hourglass,
 };
 
 const selectClass =
@@ -153,6 +155,13 @@ function readDetail(step: Step): string | null {
       return step.save_as ? `saved as ${step.save_as}` : null;
     case "condition":
       return "If false, the automation stops here.";
+    case "wait_until": {
+      const bits = [
+        step.event_type ? `event: ${step.event_type}` : null,
+        step.timeout_minutes ? `times out after ${step.timeout_minutes} min` : "no timeout",
+      ].filter(Boolean);
+      return bits.join("  ·  ") || null;
+    }
     default:
       return null;
   }
@@ -235,6 +244,7 @@ function StepEditor({ step, edit }: { step: Step; edit: StepEdit }) {
           conditions={step.conditions ?? []}
           onChange={(conditions) => onChange({ ...step, conditions, on_false: "stop" })}
           vocabulary={vocabulary}
+          contextKeys={contextKeys}
           label="Only if"
           addLabel="Add check"
         />
@@ -268,6 +278,60 @@ function StepEditor({ step, edit }: { step: Step; edit: StepEdit }) {
           />
         )}
         <SaveAsField value={step.save_as} onChange={(v) => onChange({ ...step, save_as: v })} />
+      </div>
+    );
+  }
+
+  if (step.type === "wait_until") {
+    return (
+      <div className="space-y-2.5">
+        <div>
+          <label className="mb-1 block text-xs font-medium text-muted-foreground">
+            Wait until this event happens
+          </label>
+          <select
+            className={selectClass}
+            value={step.event_type ?? ""}
+            onChange={(e) => onChange({ ...step, event_type: e.target.value })}
+          >
+            <option value="">select event…</option>
+            {vocabulary.triggers.event_types.map((et) => (
+              <option key={et} value={et}>{et}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-muted-foreground">
+            Matching these conditions (optional)
+          </label>
+          <ConditionChips
+            conditions={step.conditions ?? []}
+            onChange={(conditions) => onChange({ ...step, conditions })}
+            vocabulary={vocabulary}
+            contextKeys={contextKeys}
+            label="Where"
+            addLabel="Add condition"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-muted-foreground">
+            Give up after (minutes) — leave blank to wait indefinitely
+          </label>
+          <Input
+            type="number"
+            min={1}
+            value={step.timeout_minutes ?? ""}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              onChange({
+                ...step,
+                timeout_minutes: e.target.value && n >= 1 ? n : null,
+              });
+            }}
+            placeholder="no timeout"
+            className="w-40"
+          />
+        </div>
       </div>
     );
   }

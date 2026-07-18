@@ -1,6 +1,7 @@
 import { Filter, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { FieldCombobox } from "./FieldCombobox";
 import {
   describeCondition,
   OPERATORS,
@@ -21,17 +22,25 @@ export function ConditionChips({
   conditions,
   onChange,
   vocabulary,
+  contextKeys = [],
   label = "If",
   addLabel = "Add condition",
 }: {
   conditions: Condition[];
   onChange?: (c: Condition[]) => void;
   vocabulary?: Vocabulary;
+  contextKeys?: string[]; // save_as names from earlier steps -> context.<name>
   label?: string;
   addLabel?: string;
 }) {
   const operators = (vocabulary?.operators as Operator[]) ?? OPERATORS;
   const roots = vocabulary?.field_roots ?? ["trigger", "entity", "context"];
+  // Autocomplete suggestions: concrete server paths + this run's context keys.
+  const suggestions = [
+    ...roots.map((r) => `${r}.`),
+    ...(vocabulary?.field_suggestions ?? []),
+    ...contextKeys.map((k) => `context.${k}`),
+  ];
 
   if (!onChange) {
     if (!conditions || conditions.length === 0) return null;
@@ -62,12 +71,10 @@ export function ConditionChips({
       </div>
       {conditions.map((c, i) => (
         <div key={i} className="flex flex-wrap items-center gap-1.5">
-          <Input
+          <FieldCombobox
             value={c.field}
-            onChange={(e) => update(i, { field: e.target.value })}
-            placeholder="entity.status"
-            className="h-8 w-48 font-mono text-xs"
-            list="field-roots"
+            onChange={(field) => update(i, { field })}
+            suggestions={suggestions}
           />
           <select
             className={selectClass}
@@ -98,11 +105,6 @@ export function ConditionChips({
           </button>
         </div>
       ))}
-      <datalist id="field-roots">
-        {roots.map((r) => (
-          <option key={r} value={`${r}.`} />
-        ))}
-      </datalist>
       <Button type="button" size="sm" variant="outline" onClick={add}>
         <Plus className="h-3.5 w-3.5" /> {addLabel}
       </Button>

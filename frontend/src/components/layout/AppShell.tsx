@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom";
 import {
+  Filter,
   Home,
   ListTodo,
   MessageSquare,
@@ -17,6 +18,7 @@ const nav = [
   { to: "/", label: "Home", icon: Home, end: true },
   { to: "/chat", label: "Chat", icon: MessageSquare, end: false },
   { to: "/tasks", label: "Tasks", icon: ListTodo, end: false },
+  { to: "/leads", label: "Leads", icon: Filter, end: false },
   { to: "/automations", label: "Automations", icon: Zap, end: false },
   { to: "/ingestion", label: "Ingestion", icon: Upload, end: false },
   { to: "/events", label: "Event Log", icon: ScrollText, end: false },

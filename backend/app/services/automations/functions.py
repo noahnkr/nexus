@@ -61,6 +61,31 @@ async def _now(conn, args: dict) -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _as_number(value: Any, what: str) -> float:
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        raise ValueError(f"{what} must be a number.")
+
+
+async def _weighted_score(conn, args: dict) -> float:
+    """A builder-configurable weighted sum: `sum(weights[k] * inputs[k])`. The
+    formula lives in the recipe as data (weights + input references), so scoring a
+    lead's value or an applicant's fit is tunable in the builder without code. A
+    missing input contributes nothing; a non-numeric input is a plain error."""
+    weights = args.get("weights") or {}
+    inputs = args.get("inputs") or {}
+    if not isinstance(weights, dict) or not isinstance(inputs, dict):
+        raise ValueError("weighted_score needs 'weights' and 'inputs' objects.")
+    total = 0.0
+    for key, weight in weights.items():
+        raw = inputs.get(key)
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            continue  # missing/blank input contributes nothing
+        total += _as_number(weight, f"weight for '{key}'") * _as_number(raw, f"input '{key}'")
+    return round(total, 4)
+
+
 async def _days_since(conn, args: dict) -> int:
     """Whole days between a given date/date-time and now (negative if in the
     future). Raises ValueError on an unparseable date — the engine fails the run
@@ -78,6 +103,35 @@ register_function(FunctionDef(
     description="The current date and time as an ISO-8601 UTC timestamp.",
     input_schema={"type": "object", "properties": {}},
     handler=_now,
+))
+
+register_function(FunctionDef(
+    name="weighted_score",
+    description=(
+        "Compute a weighted score: the sum of each factor's weight times its value. "
+        "Configure it in the builder — 'weights' maps factor names to numbers, and "
+        "'inputs' maps the same names to values (often templated, e.g. "
+        "{{entity.years_experience}}). Use it to score a lead's value or an "
+        "applicant's fit, then branch on the result with a condition."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "weights": {
+                "type": "object",
+                "description": "Map of factor name to numeric weight (e.g. {\"experience\": 3}).",
+            },
+            "inputs": {
+                "type": "object",
+                "description": (
+                    "Map of the same factor names to values to score (numbers or "
+                    "{{templated}} references)."
+                ),
+            },
+        },
+        "required": ["weights", "inputs"],
+    },
+    handler=_weighted_score,
 ))
 
 register_function(FunctionDef(

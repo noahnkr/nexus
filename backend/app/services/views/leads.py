@@ -1,0 +1,104 @@
+"""Leads view — vertical content seam (Module 9).
+
+The one place the leads pipeline's *meaning* lives on the server: the ordered
+stage config (labels, terminal flags), the smart-summary prompt intro, and (9b)
+the funnel metrics queries. Core code never imports this — `routers/leads.py`
+(itself seam) and the `update_lead_status` tool handler (`services/tools/
+entities.py`, also seam) are the only readers.
+
+Stages are `leads.status` values (Module 0 CHECK: new/contacted/qualified/
+converted/lost) — there is no stage table and no new column. This config is the
+label/order/terminal overlay on those raw values, mirrored on the frontend in
+`frontend/src/lib/leads.ts`.
+"""
+from __future__ import annotations
+
+from psycopg.rows import dict_row
+
+# Ordered funnel: the four worked stages then the terminal drop-off. `terminal`
+# marks a stage a lead ends at (converted = won, lost = dropped) — used by the
+# funnel/metrics (9b) for the "in pipeline" (non-terminal) count.
+LEAD_STAGES: list[dict] = [
+    {"key": "new", "label": "New", "terminal": False},
+    {"key": "contacted", "label": "Contacted", "terminal": False},
+    {"key": "qualified", "label": "Qualified", "terminal": False},
+    {"key": "converted", "label": "Converted", "terminal": True},
+    {"key": "lost", "label": "Lost", "terminal": True},
+]
+
+STAGE_KEYS: list[str] = [s["key"] for s in LEAD_STAGES]
+_LABELS: dict[str, str] = {s["key"]: s["label"] for s in LEAD_STAGES}
+
+
+def is_valid_stage(status: str | None) -> bool:
+    return status in _LABELS
+
+
+def stage_label(status: str | None) -> str:
+    """Plain-language label for a stage value ("contacted" -> "Contacted").
+    Falls back to the raw value so an unrecognized status never crashes a summary."""
+    if status is None:
+        return "—"
+    return _LABELS.get(status, status)
+
+
+# --- Smart summary (9a) — the only vertical content the generic helper needs ---
+# The prompt intro tells the fast model what a *lead* summary should say; the span
+# name makes the trace read `lead_summary`. Everything else is in views/summary.py.
+LEAD_SUMMARY_INTRO = (
+    "You summarize a prospective home-care client (a 'lead') for the office staff "
+    "working the sales pipeline. In 2-4 sentences say who the lead is, where they "
+    "came from, what has happened with them so far, and the likely next step to move "
+    "them forward."
+)
+LEAD_SUMMARY_SPAN = "lead_summary"
+
+
+# --- Funnel metrics (9b) — plain SQL over leads + events, no materialized views --
+async def funnel_metrics(conn) -> dict:
+    """Conversion snapshot for the leads dashboard widgets. Returns per-stage counts
+    (all five stages, zero-filled), conversion rate (converted ÷ all leads, %),
+    new-this-week, average days-to-convert (from lead.created_at to its
+    stage_changed→converted event; null if none observed), and the top sources.
+    Empty tenant → zeroes and nulls, never a 500."""
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute("select status, count(*) as n from public.leads group by status")
+        counts = {r["status"]: r["n"] for r in await cur.fetchall()}
+
+        await cur.execute("select count(*) as n from public.leads")
+        total = (await cur.fetchone())["n"]
+
+        await cur.execute(
+            "select count(*) as n from public.leads "
+            "where created_at >= now() - interval '7 days'"
+        )
+        new_last_7_days = (await cur.fetchone())["n"]
+
+        # Mean days from a lead's creation to its move-to-converted event.
+        await cur.execute(
+            """select avg(extract(epoch from (e.created_at - l.created_at)) / 86400.0) as d
+                 from public.events e
+                 join public.leads l on l.id = e.entity_id
+                where e.entity_type = 'lead'
+                  and e.event_type = 'lead.stage_changed'
+                  and e.payload->>'to' = 'converted'"""
+        )
+        avg_days = (await cur.fetchone())["d"]
+
+        await cur.execute(
+            """select source, count(*) as n from public.leads
+                where source is not null and source <> ''
+                group by source order by n desc, source limit 5"""
+        )
+        top_sources = [{"source": r["source"], "count": r["n"]} for r in await cur.fetchall()]
+
+    converted = counts.get("converted", 0)
+    conversion_rate = round(100.0 * converted / total, 1) if total else 0.0
+    stages = [{"stage": s["key"], "count": counts.get(s["key"], 0)} for s in LEAD_STAGES]
+    return {
+        "stages": stages,
+        "conversion_rate": conversion_rate,
+        "new_last_7_days": new_last_7_days,
+        "avg_days_to_convert": round(float(avg_days), 1) if avg_days is not None else None,
+        "top_sources": top_sources,
+    }

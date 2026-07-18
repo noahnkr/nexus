@@ -99,8 +99,17 @@ class GenerateStep(BaseModel):
     model: Literal["default", "fast"] = "default"
 
 
+class WaitUntilStep(BaseModel):
+    """Park the run until a matching event arrives (conditions like a trigger),
+    with an optional timeout (minutes) after which the run stops."""
+    type: Literal["wait_until"]
+    event_type: str
+    conditions: list[Condition] = []
+    timeout_minutes: int | None = None
+
+
 Step = Annotated[
-    Union[ToolStep, DelayStep, ConditionStep, FunctionStep, GenerateStep],
+    Union[ToolStep, DelayStep, ConditionStep, FunctionStep, GenerateStep, WaitUntilStep],
     Field(discriminator="type"),
 ]
 
@@ -200,5 +209,13 @@ def validate_recipe(data: Any) -> Recipe:
             _validate_delay(step, i)
         elif isinstance(step, ConditionStep):
             _validate_conditions(step.conditions, f"Step {i + 1}: ")
+        elif isinstance(step, WaitUntilStep):
+            if not step.event_type.strip():
+                raise RecipeError(f"Step {i + 1}: a wait-until needs an event to wait for.")
+            _validate_conditions(step.conditions, f"Step {i + 1}: ")
+            if step.timeout_minutes is not None and step.timeout_minutes < 1:
+                raise RecipeError(
+                    f"Step {i + 1}: a wait-until timeout must be at least 1 minute."
+                )
 
     return recipe

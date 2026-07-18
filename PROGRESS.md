@@ -143,10 +143,48 @@ Module-by-module build status for the Nexus Control Center. Claude Code reads th
 - `[x]` Task 6 — Wrap-up: README Automations Center section. **Live walk passed** (running server): vocabulary (16 tools, send_sms gated) → cron-preview → real-LLM draft ("WelcomeHome Lead Welcome Text": event trigger + generate + gated send_sms) → create-from-draft (paused) → activate → seeded `lead.created` → dispatcher run → gated park → approve → completed. Browser builder UI type-checked via clean build; full in-browser walk (both themes) pending the Module 6 office user.
 
 ### Module 9: Leads View & Marketing Funnel
-`[ ]` Not started. First vertical dashboard view (entity-dashboard/pipeline pattern is core; lead content is the re-templating seam): stage funnel, per-stage outreach sequence builder (SMS/email/call tasks, delays, waits, conditionals, content generation on the M7 framework), lead directory with expanded profiles (basic info, entity event log, AI smart summary), funnel metrics. Depends on Module 7.
+`[x]` Built (2026-07-17) — 🔴 Complex, split per the planning rule into two sub-plans. Parent: `.agent/plans/9.leads-view.md`. Build order 9a → 9b. User-locked: funnel strip + directory on one page (no kanban/dnd); sequence↔stage linkage via core `automations.binding` jsonb (one sequence per stage); smart summary on-demand with no persistence; lead writes = create + stage moves + basic-field edits (no delete). Requires Modules 7–8 built. Backend fully test-covered (195 pytest green); frontend builds clean. Browser/live-walk validations (9a T3–4, 9b T3–5) need the running stack + Module 6 office user — no browser MCP available in this environment.
+
+**9a — Leads API, directory & profiles** (`.agent/plans/9a.leads-api-directory.md`):
+- `[x]` Task 1 — Migration (`leads` → Realtime publication) + `routers/leads.py` (list/facets/create/patch/detail, `lead.stage_changed`/`lead.updated` events, no delete) + `services/views/leads.py` stage config + `update_lead_status` emits `lead.stage_changed` (via a tool-invocation contextvar so the caller's `source_system` rides the event — the M7 loop guard depends on it); gated `test_leads_api.py` green
+- `[x]` Task 2 — Smart summary: `GET /api/leads/{id}/summary` (fast model over lead + recent event summaries, `lead_summary` trace span, 503 without key, no persistence; generic helper `services/views/summary.py` for M10 reuse); `test_lead_summary.py` green (incl. gated-live)
+- `[x]` Task 3 — `/leads` directory page: table + stage-chip/source/search filters ↔ URL, create dialog, Realtime, nav entry (Leads, Filter icon); build clean *(browser check pending running stack)*
+- `[x]` Task 4 — `/leads/{id}` profile: SmartSummary card, inline info edit, StageSelect, `EntityTimeline` (shared component); build clean *(browser check pending running stack)*
+- `[x]` Task 5 — Wrap-up: README Leads section; full pytest green (195); build clean *(live `lead_summary` LangSmith span verified via gated-live test)*
+
+**9b — Funnel, metrics & per-stage sequences** (`.agent/plans/9b.funnel-and-stage-sequences.md`):
+- `[x]` Task 1 — Core migration (`automations.binding` jsonb + partial unique index) + binding API (accept/validate, 409 on duplicate, `?view=` filter, `AutomationOut.binding`); gated `test_automation_binding.py` green
+- `[x]` Task 2 — `GET /api/leads/metrics` (stage counts, conversion rate, new-last-7-days, avg days to convert, top sources); gated metrics tests green (`test_lead_metrics`)
+- `[x]` Task 3 — `FunnelStrip` (clickable segments + sequence chips) + `LeadMetrics` tiles replacing the 9a chip row; build clean *(browser check pending running stack)*
+- `[x]` Task 4 — `/leads/stages/{stage}/sequence` constrained builder (fixed stage trigger convention, restricted tool palette, saves via standard API with binding, starts paused) + Center binding chips/edit rerouting (`lib/pipeline.ts` view-config map); convention validated by `test_automation_binding` recipe *(browser check pending running stack)*
+- `[x]` Task 5 — Wrap-up + README; full pytest (195) + build green *(live end-to-end walk pending running stack)*
+
+**Post-M9 automations/pipeline refinements** (2026-07-17, `~/.claude/plans/rustling-juggling-squirrel.md`) — seven user-raised items:
+- `[x]` #1 Sequence supersede — advancing a lead's stage cancels the prior stage's in-flight sequence run (generic binding-driven `supersede_sequence_runs`; waiting_approval runs rejected via the approvals seam). `test_sequence_supersede.py` green.
+- `[x]` #2 Field-path autocomplete — themed `FieldCombobox` replaces the native datalist in condition editors; vocabulary gains `field_suggestions` (entity columns via the seam + trigger.* + observed payload keys).
+- `[x]` #3 `weighted_score` — generic builder-configurable scoring function (weights + inputs as data). `test_functions.py` green.
+- `[x]` #4 Schedule builder — dropdowns (frequency/day/time → cron) replace the raw cron string + next-dates preview; `cron-preview` endpoint/api/test removed.
+- `[x]` #5 `wait_until` step (+ timeout) — new engine step + `waiting_event` run state; dispatcher resumes on a matching event, waker times out. Migration `20260722000000_wait_until.sql`. Approval steps already gate a run (documented, no change). `test_wait_until` green.
+- `[x]` #6 Themed date-time picker — dependency-free `DateTimePicker` replaces the native inputs in the Event Log; `color-scheme` per theme.
+- `[x]` #7 Summary caching — first open generates + caches (`entity_summaries` core table, migration `20260722000001`), later opens serve cache, manual Regenerate refreshes. Reverses the M9 no-persistence lock (user-requested). `test_lead_summary.py` updated.
+- Verification: full `pytest backend/tests` + `npm run build` green *(browser/live walks pending running stack)*.
 
 ### Module 10: Caregivers View & Hiring Process
-`[ ]` Not started. Same dashboard pattern for caregiver recruiting: hiring-stage pipeline, automated accepted/denied emails, scoring functions, applicant directory with smart summaries, hiring metrics. Depends on Module 7 (and reuses Module 9's view pattern).
+`[-]` Planned (2026-07-17) — 🔴 Complex, split per the planning rule into two sub-plans. Parent: `.agent/plans/10.caregivers-view.md`. Build order 10a → 10b. User-locked: new `applicants` table + promotion to `resources` on hire (leads→clients precedent); stages `applied → screening → interview → offer → hired` + terminal `rejected`; promotion is automatic and atomic on the hired stage move (emits `resource.created`); **scoring deferred to Module 11** (no scoring function/column/UI this module). Requires Module 9 built (generic pipeline components + binding; plans 9a/9b amended at M10 planning time to build those pieces generic: `services/views/summary.py`, `components/pipeline/FunnelStrip`, view-config-driven `StageSequencePage` + `lib/pipeline.ts`).
+
+**10a — Applicants model, API, directory & profiles** (`.agent/plans/10a.applicants-api-directory.md`):
+- `[ ]` Task 1 — Migration (`applicants` table + RLS + Realtime, `resources.applicant_id`) + seeds + seams (`ENTITY_TABLES`, `list_applicants`/`get_applicant`, gated `update_applicant_stage`, `SQL_SCHEMA_DOC`, labels, `_KNOWN_EVENT_TYPES`); gated schema/tool tests green
+- `[ ]` Task 2 — `routers/applicants.py` (list/facets/create/patch/detail, no delete) + `views/caregivers.py` `move_stage()` (single event/promotion path; hired → atomic caregiver auto-create + `resource.created`, idempotent re-hire); gated `test_applicants_api.py` green
+- `[ ]` Task 3 — Hiring smart summary (`GET /api/applicants/{id}/summary` via shared `views/summary.py`, `applicant_summary` span, 503 without key); `test_applicant_summary.py` green
+- `[ ]` Task 4 — `/caregivers` directory page: table + stage-chip/source/search filters ↔ URL, create dialog w/ qualification/region multi-selects, Realtime, nav entry (Caregivers, Users icon); browser check + build clean
+- `[ ]` Task 5 — `/caregivers/{id}` profile: SmartSummary, editable info + quals/regions, notes, StageSelect w/ hire-confirm dialog + hired banner, `EntityTimeline`; browser check (hire trail on timeline)
+- `[ ]` Task 6 — Wrap-up: README Caregivers section; full pytest green; build clean; live `applicant_summary` LangSmith span
+
+**10b — Hiring funnel, metrics & per-stage sequences** (`.agent/plans/10b.hiring-funnel-and-sequences.md`):
+- `[ ]` Task 1 — `GET /api/applicants/metrics` (six stage counts, hire rate, new-last-7-days, avg days to hire, top sources); gated metrics tests green
+- `[ ]` Task 2 — Generic `FunnelStrip` + `HiringMetrics` StatCards on `/caregivers` (rejected carries a sequence chip — per-view config); browser check + build clean
+- `[ ]` Task 3 — Caregivers `PipelineViewConfig` (`lib/caregivers.ts`) feeding the shared `StageSequencePage` route `/caregivers/stages/{stage}/sequence` + Center binding chips/edit rerouting via the view-config map; browser + gated convention test
+- `[ ]` Task 4 — Wrap-up + live walk: applicant → Rejected → denial sequence (generate + gated `send_email`) parks → approve → completes; applicant → Hired → caregiver row + `resource.created`; trails on timeline/Event Log/LangSmith; README; full pytest + build green
 
 ### Module 11: Deterministic Matching/Decision Harness
 `[ ]` Not started. Default 🔴 Complex — break into sub-plans. (Formerly Module 8.)
@@ -163,6 +201,7 @@ Module-by-module build status for the Nexus Control Center. Claude Code reads th
 * Calender date input improvement that matches theme. Current one is ugly.
 * Home page dashboard with census, billable hours week-over-week, new starts, caregiver headcount, coverage rate (% of visits filled), AR/unbilled, and the top open alerts.
 * Referral-source dashboard — which partners (hospitals, senior-living, discharge planners) send leads that actually convert. Referral ROI drives where the owner spends relationship time; this is the highest-value net-new growth view not already on the roadmap.
+* Run manually button for manual triggered automations. Also able to be triggered via chat. 
 * Client & care oversight: 
     * Active census — count of active clients, by region/payer, plus authorized hours vs scheduled vs delivered. The gap between authorized and delivered is direct revenue leakage — owners obsess over it.
     * Per-client care overview — care plan, assigned caregivers, schedule, family contacts, status (active / hospital-hold / discharged). Care plans and visit notes flow through your ingestion + RAG so they're searchable in chat.

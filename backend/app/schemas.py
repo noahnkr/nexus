@@ -77,6 +77,83 @@ class EventFacets(BaseModel):
     event_types: list[str] = []
 
 
+# --- Leads view (Module 9, vertical seam) ------------------------------------
+class RegionRef(BaseModel):
+    id: str
+    name: str
+
+
+class LeadOut(BaseModel):
+    id: str
+    name: str
+    phone: str | None = None
+    email: str | None = None
+    source: str | None = None
+    status: str  # new | contacted | qualified | converted | lost (leads.status)
+    region_id: str | None = None
+    region_name: str | None = None  # left-joined from regions
+    requirements: dict[str, Any] = {}
+    created_at: datetime
+    updated_at: datetime
+
+
+class LeadPage(BaseModel):
+    leads: list[LeadOut] = []
+    total: int = 0  # full count for the filtered set (offset paging in the UI)
+
+
+class LeadFacets(BaseModel):
+    sources: list[str] = []  # distinct non-null lead sources
+    regions: list[RegionRef] = []  # for the create/edit selector + source filter
+
+
+class LeadCreate(BaseModel):
+    name: str
+    phone: str | None = None
+    email: str | None = None
+    source: str | None = None
+    region_id: str | None = None
+
+
+class LeadPatch(BaseModel):
+    """Partial update. Only fields present in the request body are written (the
+    router reads `model_fields_set`), so region_id can be explicitly cleared to
+    null while an omitted field is left untouched. A `status` change emits
+    lead.stage_changed; other field changes emit one lead.updated."""
+    name: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    source: str | None = None
+    region_id: str | None = None
+    status: str | None = None
+
+
+class LeadSummaryOut(BaseModel):
+    """On-demand AI smart summary — generated per profile open, never persisted."""
+    summary: str
+    generated_at: datetime
+
+
+class StageCount(BaseModel):
+    stage: str
+    count: int
+
+
+class SourceCount(BaseModel):
+    source: str
+    count: int
+
+
+class LeadMetrics(BaseModel):
+    """Funnel dashboard widgets (9b). All five stages, zero-filled; conversion rate
+    as a percent; avg_days_to_convert null when none observed."""
+    stages: list[StageCount] = []
+    conversion_rate: float = 0.0
+    new_last_7_days: int = 0
+    avg_days_to_convert: float | None = None
+    top_sources: list[SourceCount] = []
+
+
 # --- Tasks & approvals -------------------------------------------------------
 class PendingActionOut(BaseModel):
     id: str
@@ -164,17 +241,23 @@ class AutomationCreate(BaseModel):
     trigger: dict[str, Any]
     conditions: list[dict[str, Any]] = []
     steps: list[dict[str, Any]] = []
+    # Optional generic view-binding (Module 9b): {"view": …, "stage": …}. Validated
+    # for shape only server-side; a duplicate (view, stage) is a 409.
+    binding: dict[str, Any] | None = None
 
 
 class AutomationPatch(BaseModel):
     """Partial update. A present trigger/conditions/steps triggers revalidation of
-    the merged recipe; `status` flips active/paused."""
+    the merged recipe; `status` flips active/paused. `binding` is
+    model_fields_set-gated by the router: omit to leave unchanged, send null to
+    clear, send an object to (re)bind."""
     name: str | None = None
     description: str | None = None
     status: str | None = None
     trigger: dict[str, Any] | None = None
     conditions: list[dict[str, Any]] | None = None
     steps: list[dict[str, Any]] | None = None
+    binding: dict[str, Any] | None = None
 
 
 class LastRun(BaseModel):
@@ -196,6 +279,7 @@ class AutomationOut(BaseModel):
     active_runs: int = 0  # runs currently running/waiting/waiting_approval
     last_run: LastRun | None = None  # newest run's status + time (grid card)
     requires_approval: bool = False  # any step calls a gated (unsafe) tool
+    binding: dict[str, Any] | None = None  # generic view-binding (9b), null = unbound
     created_at: datetime
     updated_at: datetime
 
@@ -251,10 +335,9 @@ class Vocabulary(BaseModel):
     operators: list[str] = []
     generate_models: list[str] = []
     field_roots: list[str] = []
-
-
-class CronPreview(BaseModel):
-    next: list[datetime] = []
+    # Concrete `entity.*` / `trigger.*` dotted paths for the builder's field
+    # autocomplete (WS2). Suggestions only — any path is still allowed.
+    field_suggestions: list[str] = []
 
 
 class DraftRequest(BaseModel):

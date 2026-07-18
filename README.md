@@ -410,10 +410,16 @@ The Automations Center is the UI over the engine — nav → **Automations**. It
   opens a timeline drawer built from `step_log`, with the accumulated `context`
   behind a technical expander and a **Cancel run** button for active runs.
 - **Builder** (`/automations/new`, `/automations/{id}/edit`) — the monday.com-style
-  **sentence + step-list** builder: an editable WHEN line (event/cron/manual, with a
-  live next-fires preview for cron), IF condition chips, and a reorderable list of
-  THEN step cards whose forms are generated from each tool/function's JSON Schema
-  (with a `{{template}}` inserter on text fields). The server is the validator of
+  **sentence + step-list** builder: an editable WHEN line (event, or a **schedule
+  built from dropdowns** — frequency + day + time, emitting a standard cron
+  expression — or manual), IF condition chips with a **field-path autocomplete**
+  (server-provided `entity.<col>` / `trigger.*` suggestions + this run's context
+  keys), and a reorderable list of THEN step cards whose forms are generated from
+  each tool/function's JSON Schema (with a `{{template}}` inserter on text fields).
+  Step types: run a tool, write with AI, wait a fixed delay, **wait until an event
+  happens** (with optional timeout), only-continue-if, and compute a value —
+  including a generic **`weighted_score`** function (builder-configurable weights +
+  inputs) for lead-value / applicant-fit scoring. The server is the validator of
   record — a 422 renders inline; editing a definition with runs in flight returns a
   409 with a "cancel runs & save" path.
 - **Describe → draft → review** — on the create page, describe the automation in
@@ -427,8 +433,8 @@ Backend additions (all tenant-scoped via RLS):
 POST /api/automation-runs/{id}/cancel   cancel an active run (waiting_approval routes
         through the approvals seam so action + task + run resolve together); 409 terminal
 GET  /api/automations/vocabulary        tools (+schema/safety/label), functions, operators,
-        event types (observed ∪ core-known, automation-sourced excluded), field roots
-GET  /api/automations/cron-preview?expr= next 3 fire times for a cron expression; 422 on garbage
+        event types (observed ∪ core-known, automation-sourced excluded), field roots,
+        and field_suggestions (entity.<col> + trigger.* paths for the builder autocomplete)
 POST /api/automations/draft {description}
         agent-drafted, Pydantic-validated, UNSAVED recipe (one retry on validation
         failure); 503 without ANTHROPIC_API_KEY, 422 if it can't produce a valid recipe
@@ -438,6 +444,69 @@ POST /api/automations/draft {description}
 `requires_approval`; `GET /api/home/summary` gains an `automations` block
 (`active`, `runs_today`, `failed_today`) driving a Home StatCard. Drafting needs
 `ANTHROPIC_API_KEY`; no other new env vars.
+
+### Leads View (Module 9)
+
+The first vertical dashboard view — nav → **Leads**. The *pattern* (entity
+directory + profile + funnel strip + per-stage sequences + metrics) is core and
+M10 re-instantiates it for caregivers; the *content* (stages, outreach steps, the
+router) is the re-templating seam (`backend/app/services/views/`,
+`routers/leads.py`, `frontend/src/lib/leads.ts`, the leads pages/components).
+
+- **Directory** (`/leads`) — a clickable **funnel strip** (per-stage counts + a
+  sequence chip) filtering the table below, conversion **metrics** widgets (in
+  pipeline, conversion rate, new this week, avg days-to-convert, top sources), a
+  source filter and search, and a **New lead** dialog. Live via Realtime on
+  `leads`. Stage moves happen in the profile, not the table.
+- **Profile** (`/leads/{id}`) — a **cached AI smart summary** (the first open
+  generates + persists it in the core `entity_summaries` table; later opens serve
+  the cached row instantly; a **Regenerate** button refreshes on demand; a quiet
+  notice without `ANTHROPIC_API_KEY`), an inline-editable info card with a **stage
+  selector**, requirements behind a technical expander, and a compact **entity
+  timeline** of the lead's events.
+- **Per-stage sequences** (`/leads/stages/{stage}/sequence`) — a constrained
+  outreach builder that composes M8's step/condition components with a **fixed**
+  trigger sentence ("When a lead enters *Contacted*"). A sequence is an ordinary
+  M7 automation tagged with the core `automations.binding` jsonb; the engine,
+  approval gate, run history, and Automations Center all apply unchanged. The
+  Center shows a binding chip ("Leads · Contacted") and routes a bound recipe's
+  Edit back to this builder. New sequences start **paused**. **Advancing a lead's
+  stage cancels the prior stage's in-flight sequence** (a generic, binding-driven
+  supersede), so a lead that moves up quickly never receives a colder stage's
+  message.
+
+Stages are `leads.status` values (no new table); the label/order/terminal config
+lives in the seam. Lead writes are human REST writes (`source_system='user'`) —
+create + stage moves + basic-field edits; every stage move emits
+`lead.stage_changed` (which per-stage sequences trigger on). **No delete** by
+design (a lead ends as converted/lost, keeping funnel history honest).
+
+The binding is a **core**, business-agnostic mechanism: an `automations.binding`
+jsonb column (`{"view":…,"stage":…}`) with a partial unique index enforcing one
+sequence per `(tenant, view, stage)`. Core validates binding *shape* only and
+never interprets stage names — M10 binds `{"view":"caregivers",…}` with zero
+schema work.
+
+Backend additions (all tenant-scoped via RLS):
+
+```
+GET   /api/leads?status=&source=&q=&limit=&offset=  directory list + total (offset paging)
+GET   /api/leads/facets                 distinct sources + regions for filters/selectors
+GET   /api/leads/metrics                funnel conversion metrics (all five stages, rate,
+        new-this-week, avg-days-to-convert, top sources)
+POST  /api/leads {name,phone?,email?,source?,region_id?}   create (status always 'new');
+        emits lead.created; 422 on missing name / bad region
+GET   /api/leads/{id}                   full row + region_name
+PATCH /api/leads/{id}                   partial edit; a status change emits lead.stage_changed,
+        other fields emit one lead.updated; no-op emits nothing; NO delete route
+GET   /api/leads/{id}/summary           cached AI smart summary (generates + caches on
+        first call, then serves the cache); 503 without a cache and no API key
+POST  /api/leads/{id}/summary/regenerate  force a fresh summary and overwrite the cache
+GET   /api/automations?view=leads       bound sequences for a view; AutomationOut.binding
+        returned everywhere; create/PATCH accept binding (409 on a duplicate stage)
+```
+
+No new frontend deps or env vars. Smart summaries need `ANTHROPIC_API_KEY`.
 
 ## Notes on Templating
 

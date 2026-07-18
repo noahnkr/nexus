@@ -23,6 +23,7 @@ line; raw args/data stay in the `events` payload and LangSmith only.
 """
 from __future__ import annotations
 
+import contextvars
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -34,6 +35,23 @@ from psycopg.types.json import Json
 from ...llm import traceable
 from ..events import log_event
 from .registry import get_tool
+
+# Invocation context for the running handler: the tenant + how the call arrived
+# (chat / mcp / automation). Set by execute_tool around the handler call so a
+# handler that needs to write an ADDITIONAL audit/entity event (e.g.
+# update_lead_status emitting lead.stage_changed) can attribute it to the real
+# caller — which the M7 loop guard depends on (an automation-sourced stage change
+# must carry source_system='automation' so it is never re-dispatched). A
+# contextvar keeps the handler signature (conn, args) untouched.
+_invocation: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "tool_invocation", default=None
+)
+
+
+def current_invocation() -> dict | None:
+    """`{"tenant_id", "source_system"}` for the in-flight tool call, or None when
+    no tool is executing (a handler called outside execute_tool)."""
+    return _invocation.get()
 
 
 class ToolInputError(Exception):
@@ -218,6 +236,7 @@ async def execute_tool(
         # Gate path: queue for approval, write exactly the action.queued event
         # (no tool.called — the handler has not run), return a non-error result.
         return await _queue_gated_call(conn, tenant_id, source_system, tool, args)
+    token = _invocation.set({"tenant_id": tenant_id, "source_system": source_system})
     try:
         # Savepoint: a handler SQL error rolls back to here, leaving the outer
         # transaction alive to write the audit row below.
@@ -229,6 +248,8 @@ async def execute_tool(
         result = ToolResult(
             f"'{name}' could not be completed.", {"error": str(exc)}, True
         )
+    finally:
+        _invocation.reset(token)
     return await _audit(
         conn, tenant_id, source_system, name, args, result,
         pending_action_id=approved_action_id,

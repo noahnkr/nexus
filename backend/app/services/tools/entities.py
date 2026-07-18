@@ -16,7 +16,9 @@ from datetime import datetime
 
 from psycopg.rows import dict_row
 
-from .core import ToolDef, ToolInputError, ToolResult, _jsonable
+from ..events import log_event
+from ..views.leads import stage_label
+from .core import ToolDef, ToolInputError, ToolResult, _jsonable, current_invocation
 from .registry import register
 
 LEAD_STATUSES = ["new", "contacted", "qualified", "converted", "lost"]
@@ -340,10 +342,46 @@ async def _update_lead_status(conn, args: dict) -> ToolResult:
     status = args.get("status")
     if status not in LEAD_STATUSES:
         raise ToolInputError(f"'status' must be one of: {', '.join(LEAD_STATUSES)}.")
-    name = await _lookup_name(conn, "leads", lead_id)
-    if name is None:
+    # Read the current status first so the stage_changed `from` is truthful.
+    row = await _fetch_one(
+        conn, "select name, status from public.leads where id=%s", (lead_id,)
+    )
+    if row is None:
         raise ToolInputError("No lead found with that id.")
+    name, previous = row["name"], row["status"]
     await conn.execute("update public.leads set status=%s where id=%s", (status, lead_id))
+
+    # Emit the first-class stage event (9a) so chat/MCP/automation stage moves
+    # appear in the lead's timeline and (chat/MCP only — the M7 loop guard skips
+    # automation-sourced events) fire 9b's per-stage sequences. Same payload shape
+    # as the REST PATCH. Only on an actual change, so `from`/`to` differ.
+    if status != previous:
+        inv = current_invocation()
+        if inv is not None:
+            # Advancing the lead ends any in-flight sequence bound to the leads view
+            # for it (same supersede the REST route applies). Lazy import avoids the
+            # tools<->automations cycle (the engine imports execute_tool).
+            from ..automations import supersede_sequence_runs
+
+            await supersede_sequence_runs(
+                conn, inv["tenant_id"], "lead", lead_id, view="leads"
+            )
+            await log_event(
+                conn,
+                tenant_id=inv["tenant_id"],
+                source_system=inv["source_system"],
+                event_type="lead.stage_changed",
+                entity_type="lead",
+                entity_id=lead_id,
+                payload={
+                    "summary": (
+                        f"Lead '{name}' moved from {stage_label(previous)} "
+                        f"to {stage_label(status)}"
+                    ),
+                    "from": previous,
+                    "to": status,
+                },
+            )
     return ToolResult(
         f"Updated lead '{name}' to {status}.", {"lead_id": lead_id, "status": status}
     )

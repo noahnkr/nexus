@@ -90,6 +90,16 @@ async def _scenario():
             out["lead_status_approved"] = await _scalar(
                 conn, "select status from public.leads where id=%s", (MARGARET_LEAD,)
             )
+            # the handler emitted a lead.stage_changed alongside tool.called (9a):
+            # a recent stage event for Margaret with a truthful new->contacted payload.
+            out["stage_event"] = await _scalar(
+                conn,
+                """select payload from public.events
+                    where entity_type='lead' and entity_id=%s
+                      and event_type='lead.stage_changed'
+                    order by created_at desc limit 1""",
+                (MARGARET_LEAD,),
+            )
             # revert the mutation
             await conn.execute(
                 "update public.leads set status='new' where id=%s", (MARGARET_LEAD,)
@@ -149,6 +159,9 @@ def test_write_tools():
     # unchanged while queued, changed only after approval.
     assert out["lead_status_queued"] == "new"
     assert out["lead_status_approved"] == "contacted"
+    # the approved stage move also left a first-class lead.stage_changed event (9a).
+    assert out["stage_event"] is not None
+    assert out["stage_event"]["from"] == "new" and out["stage_event"]["to"] == "contacted"
 
     # bad create_schedule failed cleanly post-approval (plain error, action failed).
     bad = out["bad_schedule_action"]

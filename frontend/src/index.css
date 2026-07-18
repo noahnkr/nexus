@@ -9,6 +9,7 @@
    blue=processing read consistently across every surface, light and dark. */
 @layer base {
   :root {
+    color-scheme: light;
     --background: 210 40% 99%;
     --foreground: 215 32% 14%;
     --card: 0 0% 100%;
@@ -39,6 +40,7 @@
   }
 
   .dark {
+    color-scheme: dark;
     --background: 215 33% 9%;
     --foreground: 210 32% 96%;
     --card: 215 30% 12%;

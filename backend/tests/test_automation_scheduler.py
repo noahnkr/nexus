@@ -600,3 +600,105 @@ def test_post_approval_failure_no_second_task():
     assert out["action_status"] == "failed"
     assert out["gate_task_status"] == "pending"  # Module 5: failed action's task stays pending
     assert out["extra_review_tasks"] == 0  # no duplicate human surface
+
+
+# ---------------------------------------------------------------------------
+# WS5 — wait_until: park on an event, resume on a match, time out otherwise
+# ---------------------------------------------------------------------------
+MARGARET_LEAD = "33333333-0000-0000-0000-000000000001"
+
+
+async def _wait_until_scenario():
+    from app import db
+    from app.services.automations import advance_run, start_run
+    from app.services.automations.scheduler import dispatch_once, wake_due_once
+    from app.services.events import log_event
+
+    sfx = uuid.uuid4().hex[:8]
+    et_a, et_b, et_c = f"await.a.{sfx}", f"await.b.{sfx}", f"await.c.{sfx}"
+
+    def recipe(event_type, *, timeout=None, conditions=None):
+        wait = {"type": "wait_until", "event_type": event_type,
+                "conditions": conditions if conditions is not None else []}
+        if timeout is not None:
+            wait["timeout_minutes"] = timeout
+        return {"trigger": {"type": "manual"},
+                "steps": [wait, {"type": "function", "function": "now", "save_as": "after"}]}
+
+    to_go = [{"field": "trigger.payload.to", "op": "eq", "value": "go"}]
+    out = {}
+    await db.open_pool()
+    try:
+        async with db.tenant_tx(DEMO_TENANT) as conn:
+            auto_a = await _insert_automation(conn, recipe(et_a, conditions=to_go), name=f"wa {sfx}")
+            auto_b = await _insert_automation(conn, recipe(et_b, conditions=to_go), name=f"wb {sfx}")
+            auto_c = await _insert_automation(conn, recipe(et_c, timeout=30), name=f"wc {sfx}")
+            run_a = await start_run(conn, DEMO_TENANT, auto_a, entity_type="lead", entity_id=MARGARET_LEAD)
+            run_b = await start_run(conn, DEMO_TENANT, auto_b, entity_type="lead", entity_id=MARGARET_LEAD)
+            run_c = await start_run(conn, DEMO_TENANT, auto_c, entity_type="lead", entity_id=MARGARET_LEAD)
+        for r in (run_a, run_b, run_c):
+            await advance_run(DEMO_TENANT, r)
+
+        async with db.tenant_tx(DEMO_TENANT) as conn:
+            out["parked_a"] = (await _run(conn, run_a))["status"]
+            out["parked_c"] = (await _run(conn, run_c))["status"]
+            # reset cursor to the current tip so only events we log next are processed
+            await conn.execute(
+                "delete from public.connector_state where source_system=%s", (_CURSOR_KEY,)
+            )
+        await dispatch_once(DEMO_TENANT)  # first-run init
+
+        # (A) matching event -> resume -> completes, ran the function after the wait
+        async with db.tenant_tx(DEMO_TENANT) as conn:
+            await log_event(conn, tenant_id=DEMO_TENANT, source_system="user",
+                            event_type=et_a, entity_type="lead", entity_id=MARGARET_LEAD,
+                            payload={"to": "go"})
+        await dispatch_once(DEMO_TENANT)
+        async with db.tenant_tx(DEMO_TENANT) as conn:
+            done_a = await _run(conn, run_a)
+            out["a_status"] = done_a["status"]
+            out["a_ran_after"] = "after" in (done_a["context"] or {})
+
+        # (B) non-matching event (to != go) -> stays parked
+        async with db.tenant_tx(DEMO_TENANT) as conn:
+            await log_event(conn, tenant_id=DEMO_TENANT, source_system="user",
+                            event_type=et_b, entity_type="lead", entity_id=MARGARET_LEAD,
+                            payload={"to": "nope"})
+        await dispatch_once(DEMO_TENANT)
+        async with db.tenant_tx(DEMO_TENANT) as conn:
+            out["b_status"] = (await _run(conn, run_b))["status"]
+
+        # (C) timeout -> the waker stops it without running the function
+        async with db.tenant_tx(DEMO_TENANT) as conn:
+            await conn.execute(
+                "update public.automation_runs set wake_at = now() - interval '1 minute' "
+                "where id=%s", (run_c,),
+            )
+        out["woken"] = await wake_due_once(DEMO_TENANT)
+        async with db.tenant_tx(DEMO_TENANT) as conn:
+            done_c = await _run(conn, run_c)
+            out["c_status"] = done_c["status"]
+            out["c_ran_after"] = "after" in (done_c["context"] or {})
+            for auto in (auto_a, auto_b, auto_c):
+                await _cleanup(conn, auto["id"])
+        return out
+    finally:
+        await db.close_pool()
+
+
+def test_wait_until():
+    out = asyncio.run(_wait_until_scenario())
+    assert out["parked_a"] == "waiting_event"
+    assert out["parked_c"] == "waiting_event"
+
+    # matching event resumed the run and the post-wait step ran
+    assert out["a_status"] == "completed"
+    assert out["a_ran_after"]
+
+    # a non-matching event left the run parked
+    assert out["b_status"] == "waiting_event"
+
+    # timeout stopped the run without running the post-wait step
+    assert out["woken"] >= 1
+    assert out["c_status"] == "completed"
+    assert out["c_ran_after"] is False

@@ -27,7 +27,13 @@ export interface Condition {
   value?: unknown;
 }
 
-export type StepType = "tool" | "delay" | "condition" | "function" | "generate";
+export type StepType =
+  | "tool"
+  | "delay"
+  | "condition"
+  | "function"
+  | "generate"
+  | "wait_until";
 
 export interface Step {
   type: StepType;
@@ -48,6 +54,9 @@ export interface Step {
   // generate
   prompt?: string;
   model?: "default" | "fast";
+  // wait_until
+  event_type?: string;
+  timeout_minutes?: number | null;
 }
 
 export interface Recipe {
@@ -184,6 +193,10 @@ export function describeStep(step: Step): string {
       return FUNCTION_LABELS[step.function ?? ""] ?? `Run ${step.function ?? "a function"}`;
     case "generate":
       return "Write a message with AI";
+    case "wait_until":
+      return step.event_type
+        ? `Wait until ${humanizeEventType(step.event_type)}`
+        : "Wait until an event happens";
     default:
       return "Step";
   }

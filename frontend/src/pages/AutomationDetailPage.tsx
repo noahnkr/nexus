@@ -11,8 +11,10 @@ import {
   Trash2,
   Zap,
 } from "lucide-react";
+import { GitBranch } from "lucide-react";
 import { api, type Automation, type Run } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
+import { bindingEditRoute, describeBinding } from "@/lib/pipeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -133,6 +135,9 @@ export function AutomationDetailPage() {
   }
 
   const active = automation.status === "active";
+  const bindingLabel = describeBinding(automation.binding);
+  const editRoute =
+    bindingEditRoute(automation.binding) ?? `/automations/${automation.id}/edit`;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -154,6 +159,11 @@ export function AutomationDetailPage() {
             {automation.requires_approval && (
               <Badge variant="warning">Requires approval</Badge>
             )}
+            {bindingLabel && (
+              <Badge variant="info" className="gap-1">
+                <GitBranch className="h-3 w-3" /> {bindingLabel}
+              </Badge>
+            )}
           </div>
           {automation.description && (
             <p className="mt-0.5 text-[13px] text-muted-foreground">
@@ -173,11 +183,7 @@ export function AutomationDetailPage() {
               </>
             )}
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => navigate(`/automations/${automation.id}/edit`)}
-          >
+          <Button size="sm" variant="outline" onClick={() => navigate(editRoute)}>
             <Pencil className="h-3.5 w-3.5" /> Edit
           </Button>
           <Button size="sm" variant="outline" onClick={() => setConfirmDelete(true)}>

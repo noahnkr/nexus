@@ -259,7 +259,7 @@ def test_home_automations_block():
 
 
 # ---------------------------------------------------------------------------
-# vocabulary + cron-preview endpoints (Module 8b, Task 1)
+# vocabulary endpoint (Module 8b, Task 1; + WS2 field_suggestions)
 # ---------------------------------------------------------------------------
 async def _vocab_scenario():
     import uuid as _uuid
@@ -289,23 +289,12 @@ async def _vocab_scenario():
             out["vocab"] = (await ac.get("/api/automations/vocabulary", headers=h)).json()
             out["custom"] = custom
             out["auto_only"] = auto_only
-
-            # cron-preview
-            out["cron_ok"] = (
-                await ac.get("/api/automations/cron-preview?expr=0+9+*+*+1", headers=h)
-            ).json()
-            out["cron_bad_code"] = (
-                await ac.get("/api/automations/cron-preview?expr=not+a+cron", headers=h)
-            ).status_code
-            out["cron_no_auth"] = (
-                await ac.get("/api/automations/cron-preview?expr=0+9+*+*+1")
-            ).status_code
         return out
     finally:
         await db.close_pool()
 
 
-def test_vocabulary_and_cron_preview():
+def test_vocabulary():
     from app.services.automations.recipe import OPERATORS
     from app.services.tools import all_tools
     from app.services.automations.functions import all_functions
@@ -327,7 +316,8 @@ def test_vocabulary_and_cron_preview():
     assert out["custom"] in v["triggers"]["event_types"]
     assert out["auto_only"] not in v["triggers"]["event_types"]
 
-    # cron-preview: 3 future timestamps; garbage -> 422; unauth -> 401
-    assert len(out["cron_ok"]["next"]) == 3
-    assert out["cron_bad_code"] == 422
-    assert out["cron_no_auth"] == 401
+    # WS2: field autocomplete suggestions include core trigger paths + entity columns
+    fs = v["field_suggestions"]
+    assert "trigger.payload.to" in fs or "trigger.event_type" in fs
+    assert any(s.startswith("entity.") for s in fs)
+    assert "entity.status" in fs  # a leads column, surfaced from the entity seam

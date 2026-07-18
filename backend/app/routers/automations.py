@@ -18,6 +18,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
@@ -29,7 +30,6 @@ from ..schemas import (
     AutomationDraft,
     AutomationOut,
     AutomationPatch,
-    CronPreview,
     DraftRequest,
     LastRun,
     RunNow,
@@ -49,6 +49,7 @@ from ..services.automations import (
     validate_recipe,
 )
 from ..services.automations.draft import DraftError, draft_recipe
+from ..services.automations.entities import entity_field_suggestions
 from ..services.automations.functions import all_functions
 from ..services.automations.recipe import OPERATORS
 from ..services.automations.scheduler import next_fire
@@ -67,6 +68,29 @@ router = APIRouter(prefix="/api", tags=["automations"])
 _ACTIVE_STATES = ("running", "waiting", "waiting_approval")
 _TERMINAL_STATES = ("completed", "failed", "cancelled")
 _MAX_RUN_LIMIT = 100
+
+# Plain message surfaced when the one-sequence-per-(view,stage) unique index fires.
+_BINDING_CONFLICT = "That stage already has a sequence — edit it instead."
+
+
+def _validate_binding(binding: dict | None) -> None:
+    """Validate binding SHAPE generically (core never interprets vertical stage
+    names): a non-empty object with string values, containing a 'view' key, at most
+    4 keys. Meaning is enforced by the unique index + the vertical builder. A null
+    binding (unbound) is always valid."""
+    if binding is None:
+        return
+    if not isinstance(binding, dict) or not binding:
+        raise HTTPException(status_code=422, detail="binding must be a non-empty object")
+    if len(binding) > 4:
+        raise HTTPException(status_code=422, detail="binding has too many keys")
+    if "view" not in binding:
+        raise HTTPException(status_code=422, detail="binding must include a 'view'")
+    for key, value in binding.items():
+        if not isinstance(value, str) or not value.strip():
+            raise HTTPException(
+                status_code=422, detail=f"binding value for '{key}' must be a non-empty string"
+            )
 
 
 def _requires_approval(steps: list) -> bool:
@@ -105,6 +129,7 @@ def _automation_out(
         active_runs=active_runs,
         last_run=last_run,
         requires_approval=_requires_approval(steps),
+        binding=row.get("binding"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -173,12 +198,24 @@ async def _load_row(conn, automation_id: str) -> dict | None:
 # CRUD
 # ---------------------------------------------------------------------------
 @router.get("/automations", response_model=list[AutomationOut])
-async def list_automations(conn=Depends(tenant_conn), status: str | None = None):
-    where, params = "", []
+async def list_automations(
+    conn=Depends(tenant_conn),
+    status: str | None = None,
+    view: str | None = None,
+):
+    clauses: list[str] = []
+    params: list = []
     if status:
         if status not in ("active", "paused"):
             raise HTTPException(status_code=422, detail="status must be 'active' or 'paused'")
-        where, params = " where status = %s", [status]
+        clauses.append("status = %s")
+        params.append(status)
+    if view:
+        # Bound-sequence lookup for a pipeline view (9b): the Center's binding chips
+        # and the funnel strip filter to one view's sequences.
+        clauses.append("binding->>'view' = %s")
+        params.append(view)
+    where = (" where " + " and ".join(clauses)) if clauses else ""
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             f"select * from public.automations{where} order by created_at desc", params
@@ -203,22 +240,28 @@ async def create_automation(
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="name is required")
+    _validate_binding(body.binding)
     recipe = {"trigger": body.trigger, "conditions": body.conditions, "steps": body.steps}
     try:
         validate_recipe(recipe)
     except RecipeError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    async with conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute(
-            """insert into public.automations
-                 (tenant_id, name, description, status, trigger, conditions, steps, created_by)
-               values (%s, %s, %s, 'paused', %s, %s, %s, %s)
-               returning *""",
-            (tenant_id, name, body.description, Json(body.trigger),
-             Json(body.conditions), Json(body.steps), user.get("email")),
-        )
-        row = await cur.fetchone()
+    binding = Json(body.binding) if body.binding is not None else None
+    try:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """insert into public.automations
+                     (tenant_id, name, description, status, trigger, conditions,
+                      steps, created_by, binding)
+                   values (%s, %s, %s, 'paused', %s, %s, %s, %s, %s)
+                   returning *""",
+                (tenant_id, name, body.description, Json(body.trigger),
+                 Json(body.conditions), Json(body.steps), user.get("email"), binding),
+            )
+            row = await cur.fetchone()
+    except UniqueViolation:
+        raise HTTPException(status_code=409, detail=_BINDING_CONFLICT)
     return _automation_out(row, 0)
 
 
@@ -244,6 +287,23 @@ async def _build_vocabulary(conn) -> Vocabulary:
         sources = [r["source_system"] for r in await cur.fetchall()]
 
     event_types = sorted(set(_KNOWN_EVENT_TYPES) | set(observed_types))
+
+    # Field autocomplete suggestions (WS2): core trigger paths + observed
+    # trigger.payload.* keys + the vertical's entity.<col> paths (from the seam).
+    field_suggestions: set[str] = {
+        "trigger.event_type", "trigger.source_system", "trigger.entity_type",
+        "trigger.entity_id", "trigger.created_at",
+    }
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select distinct jsonb_object_keys(payload) as k from public.events "
+            "where payload is not null and jsonb_typeof(payload) = 'object' "
+            "and source_system <> 'automation'"
+        )
+        for (key,) in await cur.fetchall():
+            field_suggestions.add(f"trigger.payload.{key}")
+    field_suggestions.update(await entity_field_suggestions(conn))
+
     tools = [
         VocabTool(name=t.name, label=tool_label(t.name), description=t.description,
                   input_schema=t.input_schema, safe=t.safe)
@@ -260,6 +320,7 @@ async def _build_vocabulary(conn) -> Vocabulary:
         operators=list(OPERATORS),
         generate_models=["default", "fast"],
         field_roots=["trigger", "entity", "context"],
+        field_suggestions=sorted(field_suggestions),
     )
 
 
@@ -268,19 +329,6 @@ async def get_vocabulary(conn=Depends(tenant_conn)):
     return await _build_vocabulary(conn)
 
 
-@router.get("/automations/cron-preview", response_model=CronPreview)
-async def cron_preview(expr: str, _tenant: str = Depends(get_tenant_id)):
-    from datetime import datetime, timezone
-
-    from croniter import croniter
-
-    if len(expr.split()) != 5 or not croniter.is_valid(expr):
-        raise HTTPException(
-            status_code=422,
-            detail="not a valid schedule (expected 5 fields like '0 9 * * 1').",
-        )
-    it = croniter(expr, datetime.now(timezone.utc))
-    return CronPreview(next=[it.get_next(datetime) for _ in range(3)])
 
 
 @router.post("/automations/draft", response_model=AutomationDraft)
@@ -363,6 +411,14 @@ async def patch_automation(
         raise HTTPException(status_code=422, detail="name is required")
     description = body.description if body.description is not None else row["description"]
 
+    # binding is model_fields_set-gated: omit to leave unchanged, send null to clear,
+    # send an object to (re)bind. Validate SHAPE only; a duplicate (view, stage) is a
+    # 409 from the unique index below.
+    binding_provided = "binding" in body.model_fields_set
+    binding = body.binding if binding_provided else row["binding"]
+    if binding_provided:
+        _validate_binding(binding)
+
     # Cron bookkeeping (7b): an active cron automation needs `next_fire_at` armed;
     # recompute on (re)activation or an expression change, and clear it otherwise so
     # a paused/non-cron automation never sits with a stale schedule.
@@ -375,17 +431,21 @@ async def patch_automation(
     else:
         next_fire_at = None
 
-    async with conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute(
-            """update public.automations
-                  set name=%s, description=%s, status=%s, trigger=%s,
-                      conditions=%s, steps=%s, next_fire_at=%s
-                where id=%s
-                returning *""",
-            (name, description, status, Json(trigger), Json(conditions), Json(steps),
-             next_fire_at, automation_id),
-        )
-        updated = await cur.fetchone()
+    try:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """update public.automations
+                      set name=%s, description=%s, status=%s, trigger=%s,
+                          conditions=%s, steps=%s, next_fire_at=%s, binding=%s
+                    where id=%s
+                    returning *""",
+                (name, description, status, Json(trigger), Json(conditions), Json(steps),
+                 next_fire_at, Json(binding) if binding is not None else None,
+                 automation_id),
+            )
+            updated = await cur.fetchone()
+    except UniqueViolation:
+        raise HTTPException(status_code=409, detail=_BINDING_CONFLICT)
     counts = await _active_run_counts(conn, [automation_id])
     last = await _last_runs(conn, [automation_id])
     return _automation_out(updated, counts.get(automation_id, 0), last.get(automation_id))

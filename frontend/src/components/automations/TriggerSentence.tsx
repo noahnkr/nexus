@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
 import { Zap } from "lucide-react";
-import { Input } from "@/components/ui/input";
-import { api, type Vocabulary } from "@/lib/api";
+import { ScheduleBuilder } from "./ScheduleBuilder";
+import type { Vocabulary } from "@/lib/api";
 import { describeTrigger, sourceLabel, type Trigger, type TriggerType } from "@/lib/recipe";
 
 const selectClass =
@@ -80,8 +79,8 @@ export function TriggerSentence({
       )}
 
       {trigger.type === "cron" && (
-        <CronField
-          expression={trigger.expression ?? ""}
+        <ScheduleBuilder
+          expression={trigger.expression ?? "0 9 * * 1"}
           onChange={(expr) => onChange({ type: "cron", expression: expr })}
         />
       )}
@@ -94,61 +93,5 @@ function WhenChip() {
     <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-primary">
       <Zap className="h-3 w-3" /> When
     </span>
-  );
-}
-
-function CronField({
-  expression,
-  onChange,
-}: {
-  expression: string;
-  onChange: (expr: string) => void;
-}) {
-  const [preview, setPreview] = useState<string[] | null>(null);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    if (!expression.trim()) {
-      setPreview(null);
-      setError(false);
-      return;
-    }
-    let cancelled = false;
-    const t = setTimeout(() => {
-      api
-        .cronPreview(expression)
-        .then((p) => {
-          if (cancelled) return;
-          setPreview(p.next);
-          setError(false);
-        })
-        .catch(() => {
-          if (cancelled) return;
-          setPreview(null);
-          setError(true);
-        });
-    }, 350);
-    return () => {
-      cancelled = true;
-      clearTimeout(t);
-    };
-  }, [expression]);
-
-  return (
-    <div className="flex flex-col gap-1">
-      <Input
-        value={expression}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="0 9 * * 1"
-        className="w-40 font-mono"
-      />
-      {error ? (
-        <span className="text-[11px] text-destructive">Not a valid schedule</span>
-      ) : preview ? (
-        <span className="text-[11px] text-muted-foreground">
-          Next: {preview.map((p) => new Date(p).toLocaleString()).join(" · ")}
-        </span>
-      ) : null}
-    </div>
   );
 }
