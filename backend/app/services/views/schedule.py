@@ -8,13 +8,15 @@ One event emitter per transition, so a coordinator's board click and a chat/MCP-
 approved action are indistinguishable in the timeline and can't diverge (the
 views/caregivers.move_stage precedent).
 
-Five transitions, each with its first-class event:
+Seven transitions, each with its first-class event:
   create_visits  -> schedule.created (per row)
   assign         -> schedule.assigned
   call_out       -> schedule.called_out (original, carries replacement id)
                     + schedule.created (replacement open shift)
   cancel         -> schedule.cancelled
   set_outcome    -> schedule.updated (past-visit bookkeeping to completed/no_show)
+  check_in       -> schedule.checked_in  (EVV clock-in, M16a)
+  check_out      -> schedule.checked_out (EVV clock-out; ALSO completes the visit)
 
 Statuses live in schedules.status (12a migration CHECK) with coherence CHECKs tying
 resource presence to status. This is a re-templating-seam member alongside
@@ -22,7 +24,7 @@ matching.py, the entity migration, tools/entities.py, and the connector writers.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from psycopg.rows import dict_row
 
@@ -410,3 +412,129 @@ async def set_outcome(conn, schedule_id: str, status: str, source_system: str) -
         },
     )
     return {"schedule_id": schedule_id, "status": status}
+
+
+# ---------------------------------------------------------------------------
+# check_in / check_out — EVV clock stamps (Module 16a).
+#
+# Electronic Visit Verification is legally mandated for Medicaid-funded home care
+# in most states: the record of when a caregiver actually arrived and left is a
+# billing artifact, not a convenience. These are the ONLY writers of
+# check_in_at/check_out_at — the board drawer, the gated agent tools, and (from
+# Module 14) connector-fed telephony clock-ins all land here.
+#
+# Deliberately NOT symmetric with the other transitions: check_out also COMPLETES
+# the visit. A caregiver clocking out *is* the visit finishing, and leaving the
+# status at 'scheduled' would mean the delivered-hours math ignored the very visit
+# whose actual duration we just recorded. `set_outcome` remains for manual
+# bookkeeping when no clock data exists.
+# ---------------------------------------------------------------------------
+def _fmt_duration(delta: timedelta) -> str:
+    """'4h 10m' — the plain form a coordinator reads in an event summary."""
+    minutes = int(delta.total_seconds() // 60)
+    hours, minutes = divmod(max(minutes, 0), 60)
+    if hours and minutes:
+        return f"{hours}h {minutes}m"
+    return f"{hours}h" if hours else f"{minutes}m"
+
+
+async def check_in(
+    conn, schedule_id: str, source_system: str, at: datetime | None = None
+) -> dict:
+    """Record a caregiver clocking in to a scheduled visit. Valid only on a
+    `scheduled` visit that has a caregiver and no existing check-in. `at` defaults
+    to now. Emits schedule.checked_in. Returns {schedule_id, check_in_at}."""
+    visit = await _visit(conn, schedule_id, lock=True)
+    if visit is None:
+        raise ScheduleError("no visit found with that id", not_found=True)
+    if visit["status"] != "scheduled":
+        raise ScheduleError(
+            f"can only check in to a scheduled visit (this one is {visit['status']})"
+        )
+    if visit["resource_id"] is None:
+        raise ScheduleError("this visit has no caregiver to check in")
+    if visit["check_in_at"] is not None:
+        raise ScheduleError("this visit is already checked in")
+
+    stamp = at or datetime.now(timezone.utc)
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+
+    await conn.execute(
+        "update public.schedules set check_in_at = %s where id = %s", (stamp, schedule_id)
+    )
+
+    tenant_id = await _current_tenant(conn)
+    resource_name = await _name(conn, "resources", str(visit["resource_id"]))
+    client_name = await _name(conn, "clients", str(visit["client_id"]))
+    await log_event(
+        conn,
+        tenant_id=tenant_id,
+        source_system=source_system,
+        event_type="schedule.checked_in",
+        entity_type="schedule",
+        entity_id=schedule_id,
+        payload={
+            "summary": (
+                f"{resource_name} checked in to the visit with {client_name} — "
+                f"{_fmt_window(visit['start_time'], visit['end_time'])}"
+            ),
+            "check_in_at": stamp.isoformat(),
+        },
+    )
+    return {"schedule_id": schedule_id, "check_in_at": stamp}
+
+
+async def check_out(
+    conn, schedule_id: str, source_system: str, at: datetime | None = None
+) -> dict:
+    """Record a caregiver clocking out, which COMPLETES the visit in the same
+    transition. Requires a prior check-in, no prior check-out, and a stamp after
+    the check-in (the DB coherence CHECK enforces the last one too — this is the
+    plain-language version of the same rule). Emits schedule.checked_out carrying
+    the actual duration. Returns {schedule_id, check_out_at, status, actual_hours}."""
+    visit = await _visit(conn, schedule_id, lock=True)
+    if visit is None:
+        raise ScheduleError("no visit found with that id", not_found=True)
+    if visit["check_in_at"] is None:
+        raise ScheduleError("this visit has not been checked in yet")
+    if visit["check_out_at"] is not None:
+        raise ScheduleError("this visit is already checked out")
+
+    stamp = at or datetime.now(timezone.utc)
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    if stamp <= visit["check_in_at"]:
+        raise ScheduleError("check-out must be after check-in")
+
+    await conn.execute(
+        "update public.schedules set check_out_at = %s, status = 'completed' where id = %s",
+        (stamp, schedule_id),
+    )
+
+    worked = stamp - visit["check_in_at"]
+    tenant_id = await _current_tenant(conn)
+    resource_name = await _name(conn, "resources", str(visit["resource_id"]))
+    client_name = await _name(conn, "clients", str(visit["client_id"]))
+    await log_event(
+        conn,
+        tenant_id=tenant_id,
+        source_system=source_system,
+        event_type="schedule.checked_out",
+        entity_type="schedule",
+        entity_id=schedule_id,
+        payload={
+            "summary": (
+                f"{resource_name} checked out of the visit with {client_name} — "
+                f"{_fmt_duration(worked)}"
+            ),
+            "check_out_at": stamp.isoformat(),
+            "actual_hours": round(worked.total_seconds() / 3600.0, 2),
+        },
+    )
+    return {
+        "schedule_id": schedule_id,
+        "check_out_at": stamp,
+        "status": "completed",
+        "actual_hours": round(worked.total_seconds() / 3600.0, 2),
+    }

@@ -70,8 +70,10 @@ from ..services.tools.labels import tool_label
 # observed in the events table (the vocabulary unions these with observed facets).
 _KNOWN_EVENT_TYPES = [
     "lead.created", "lead.updated", "client.created", "client.updated",
+    "client.status_changed",
     "schedule.created", "schedule.assigned", "schedule.called_out",
     "schedule.cancelled", "schedule.updated",
+    "schedule.checked_in", "schedule.checked_out",
     "applicant.created", "applicant.stage_changed",
 ]
 

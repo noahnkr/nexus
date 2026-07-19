@@ -19,6 +19,7 @@ from .routers import (
     applicants,
     automations,
     chat,
+    clients,
     documents,
     events,
     home,
@@ -73,6 +74,7 @@ app.include_router(tasks.router)
 app.include_router(automations.router)
 app.include_router(leads.router)
 app.include_router(applicants.router)
+app.include_router(clients.router)
 app.include_router(schedule.router)
 app.include_router(settings_router.router)
 

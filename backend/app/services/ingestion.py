@@ -31,8 +31,21 @@ async def _set_status(conn, document_id: str, status: str, error: str | None = N
 
 @traceable(run_type="chain", name="process_document")
 async def process_document(
-    document_id: str, tenant_id: str, filename: str, data: bytes
+    document_id: str,
+    tenant_id: str,
+    filename: str,
+    data: bytes,
+    *,
+    entity_type: str | None = None,
+    entity_id: str | None = None,
 ) -> None:
+    """Parse -> chunk -> embed -> ready for one uploaded document.
+
+    `entity_type`/`entity_id` carry the upload's optional canonical-entity tag
+    (M16a). When present, every chunk is stamped with it so retrieval can scope to
+    "this client's documents". When absent the chunk columns stay NULL, exactly as
+    before this module — an untagged upload is tenant-general knowledge.
+    """
     try:
         async with tenant_tx(tenant_id) as conn:
             await _set_status(conn, document_id, "processing")
@@ -57,9 +70,11 @@ async def process_document(
                 row = await (
                     await conn.execute(
                         """insert into public.document_chunks
-                             (tenant_id, document_id, chunk_index, chunk_text, metadata)
-                           values (%s, %s, %s, %s, %s) returning id""",
-                        (tenant_id, document_id, c.index, c.text, Json(c.metadata)),
+                             (tenant_id, document_id, chunk_index, chunk_text, metadata,
+                              entity_type, entity_id)
+                           values (%s, %s, %s, %s, %s, %s, %s) returning id""",
+                        (tenant_id, document_id, c.index, c.text, Json(c.metadata),
+                         entity_type, entity_id),
                     )
                 ).fetchone()
                 chunk_ids.append(row[0])

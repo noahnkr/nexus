@@ -815,6 +815,91 @@ The "AI dispatch" extension swaps step ②'s `create_task` for a gated `send_sms
 before any text goes out. The M11 token picker resolves the
 `{{trigger.payload.replacement_schedule_id}}` and `{{steps.N.candidates.0.*}}` paths.
 
+### Client & care oversight — backend (Module 16a)
+
+The clients surface is the fourth sanctioned vertical view (after Leads,
+Caregivers, and the Schedule board). Its content seam is
+`backend/app/services/views/clients.py` + `backend/app/routers/clients.py`.
+
+**Statuses.** Clients are `active` / `hospital_hold` / `discharged`. This replaces
+the M0 `active`/`paused`/`ended` set (data-migrated in
+`20260727000001_entities_client_oversight.sql`; the old values are now rejected by
+the CHECK). A client is never deleted — a status ends them and the history stays.
+Every status write goes through the seam's `change_status()`, which emits
+`client.status_changed`; the REST `PATCH /api/clients/{id}` and the gated
+`update_client_status` tool both delegate, so a UI click and a chat-approved change
+are indistinguishable in the timeline.
+
+**Census math** (`census_metrics`, one seam function, deterministic SQL — no LLM
+anywhere near the numbers). The window is the Monday week the Schedule board uses:
+
+| Number | Definition |
+| --- | --- |
+| `authorized_hours` | Σ `clients.authorized_hours_per_week` over **active** clients |
+| `scheduled_hours` | Σ scheduled duration of the week's `scheduled`/`completed`/`no_show`/`called_out` visits |
+| `delivered_hours` | Σ over **completed** visits of the *actual* clocked duration when both EVV stamps exist, else the scheduled window |
+| `open_hours` | Σ duration of the week's unfilled `open` shifts (reported separately, so a staffing gap can't hide inside "scheduled") |
+| `leakage_hours` | `max(authorized − delivered, 0)` — hours the business is paid for but did not deliver |
+| `delivery_rate` | delivered ÷ authorized as a %, `null` when authorized is 0 |
+
+`client_week_hours()` is the same math scoped to one client, so the profile can
+never disagree with the census strip.
+
+**EVV-lite.** `schedules.check_in_at` / `check_out_at` are the clock stamps, written
+only by the schedule seam's `check_in` / `check_out`. Check-**out** also completes
+the visit (a caregiver clocking out *is* the visit finishing, and the clocked
+duration becomes its delivered hours); `set_outcome` remains for manual bookkeeping
+when no clock data exists. Late/missed are **computed at read time** by
+`views/clients.evv_flag()` — a `scheduled` visit with no check-in reads `late` after
+a 15-minute grace and `missed` past its end time. There is no stored flag and no
+detector loop, so a badge can never survive the caregiver finally clocking in.
+`no_show` stays the explicit human-recorded terminal status. Connector-fed clock-ins
+(telephony, WellSky) land in the same columns via Module 14's ingest path.
+
+**Endpoints** (all JWT tenant-scoped; writes are `source_system='user'`):
+
+```
+GET    /api/clients                       list + filters (status/payer/region_id/q), limit/offset
+GET    /api/clients/metrics[?week=]       the census strip
+GET    /api/clients/facets                observed statuses/payers + all regions
+POST   /api/clients                       201 + client.created
+GET    /api/clients/{id}                  care overview: client + contacts + caregivers
+                                          + hours_this_week + tagged documents
+PATCH  /api/clients/{id}                  basic fields -> one client.updated;
+                                          status -> change_status
+POST   /api/clients/{id}/contacts         201; PATCH/DELETE .../contacts/{contact_id}
+GET    /api/clients/{id}/summary          cached AI care summary (503 without a key)
+POST   /api/clients/{id}/summary/regenerate
+POST   /api/schedules/{id}/check-in       optional {time}; omitted means now
+POST   /api/schedules/{id}/check-out      also completes the visit
+```
+
+Contact writes emit `client.updated` **on the client** ("Family contact 'Susan
+Grimes (daughter)' added for Walter Grimes") — a contact has no timeline of its own.
+Setting `is_primary` clears the previous primary in the same transaction, so there
+is never a moment with two. The board feed (`GET /api/schedule`) now carries
+`check_in_at`, `check_out_at`, and the derived `evv` field on every visit.
+
+**Tagged uploads.** `POST /api/documents` accepts optional `entity_type` +
+`entity_id` form fields — the one sanctioned way to associate a document with a
+record (a client's care plan). The type must be a key of the vertical entity map and
+the row must exist under the tenant's RLS, else 422. The tag is stored on the
+document row and stamped on every chunk, so retrieval and chat citations work
+unchanged and the profile's document list is one query. `GET /api/documents` takes
+the same pair as a filter. **Untagged uploads are unchanged** — tenant-general
+knowledge, chunk entity columns left NULL.
+
+**New agent tools:** gated `record_visit_check_in` / `record_visit_check_out` (an
+agent asserting when a caregiver arrived changes a billing record, so it goes
+through the approval gate even though a coordinator's own drawer click does not),
+and safe `get_census`. `update_client_status` was rewired to the seam and
+`get_client` now returns the care picture (payer label, contacts, this week's
+hours). Three new event types — `client.status_changed`, `schedule.checked_in`,
+`schedule.checked_out` — are registered as automation triggers, so a recipe can fire
+on "WHEN a visit is checked out".
+
+No new environment variables.
+
 ## Notes on Templating
 
 This repo is designed so that a second deployment, in a different vertical, requires:

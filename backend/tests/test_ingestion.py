@@ -104,6 +104,87 @@ def test_markdown_upload_reaches_ready(monkeypatch):
         conn.commit()
 
 
+def test_tagged_upload_stamps_chunks_and_filters(monkeypatch):
+    """M16a: an upload may carry a canonical-entity tag. The document row and every
+    chunk inherit it (so "this client's documents" is one query and retrieval can
+    scope), a bad tag is a clean 422, and an UNTAGGED upload is unchanged — its
+    chunk entity columns stay NULL exactly as before this module."""
+    _patch(monkeypatch)
+    WALTER = "44444444-0000-0000-0000-000000000001"
+    md = b"# Care Plan\n\n" + (b"Morning transfers with a Hoyer lift. " * 60)
+
+    async def scenario(ac):
+        out = {}
+        files = {"file": ("walter-care-plan.md", md, "text/markdown")}
+
+        # Unknown entity type / nonexistent row / half a tag -> 422, no document.
+        out["bad_type"] = (await ac.post(
+            "/api/documents", files={"file": ("a.md", md, "text/markdown")},
+            data={"entity_type": "unicorn", "entity_id": WALTER})).status_code
+        out["bad_id"] = (await ac.post(
+            "/api/documents", files={"file": ("a.md", md, "text/markdown")},
+            data={"entity_type": "client", "entity_id": str(__import__("uuid").uuid4())},
+        )).status_code
+        out["half_tag"] = (await ac.post(
+            "/api/documents", files={"file": ("a.md", md, "text/markdown")},
+            data={"entity_type": "client"})).status_code
+
+        tagged = await ac.post(
+            "/api/documents", files=files,
+            data={"entity_type": "client", "entity_id": WALTER},
+        )
+        out["tagged"] = tagged.json()
+
+        untagged = await ac.post(
+            "/api/documents", files={"file": ("general.md", md, "text/markdown")}
+        )
+        out["untagged"] = untagged.json()
+
+        # The list filter returns only the tagged document.
+        listed = (await ac.get(
+            f"/api/documents?entity_type=client&entity_id={WALTER}")).json()
+        out["listed_ids"] = [d["id"] for d in listed]
+        out["bad_filter_code"] = (await ac.get(
+            "/api/documents?entity_type=client&entity_id=nope")).status_code
+        return out
+
+    r = _run(_with_app(scenario))
+
+    assert r["bad_type"] == 422
+    assert r["bad_id"] == 422
+    assert r["half_tag"] == 422
+    assert r["tagged"]["entity_type"] == "client"
+    assert r["tagged"]["entity_id"] == WALTER
+    assert r["untagged"]["entity_type"] is None
+    assert r["tagged"]["id"] in r["listed_ids"]
+    assert r["untagged"]["id"] not in r["listed_ids"]
+    assert r["bad_filter_code"] == 422
+
+    import psycopg
+
+    with psycopg.connect(NEXUS_APP_DB_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("select set_config('request.app.tenant_id', %s, false)", (DEMO_TENANT,))
+            cur.execute(
+                "select count(*), count(*) filter (where entity_type='client' "
+                "and entity_id=%s) from public.document_chunks where document_id=%s",
+                (WALTER, r["tagged"]["id"]),
+            )
+            total, stamped = cur.fetchone()
+            assert total >= 1 and stamped == total, "every chunk inherits the tag"
+
+            cur.execute(
+                "select count(*) filter (where entity_type is not null) "
+                "from public.document_chunks where document_id=%s",
+                (r["untagged"]["id"],),
+            )
+            assert cur.fetchone()[0] == 0, "untagged uploads are unchanged"
+
+            for key in ("tagged", "untagged"):
+                cur.execute("delete from public.documents where id=%s", (r[key]["id"],))
+        conn.commit()
+
+
 def test_unparseable_pdf_sets_failed(monkeypatch):
     _patch(monkeypatch)
     garbage = b"%PDF-1.4 this is not a real pdf body \x00\x01\x02"

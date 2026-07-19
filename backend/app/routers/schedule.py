@@ -1,9 +1,10 @@
 """Schedule board API (Module 12a, vertical seam).
 
 The human REST surface for the Schedule board — the week feed (visits + roster),
-create/expand, field edits + outcomes, the three transition verbs (call-out,
-assign, cancel via the visit's own delete-less lifecycle), open-shift candidate
-ranking, the minimal roster editor, and the gated notify-by-SMS. JWT tenant-scoped
+create/expand, field edits + outcomes, the transition verbs (call-out, assign,
+cancel via the visit's own delete-less lifecycle, and the M16a EVV clock-in/out),
+open-shift candidate ranking, the minimal roster editor, and the gated
+notify-by-SMS. JWT tenant-scoped
 like every `/api` route (RLS does all filtering, so no query mentions tenant_id).
 
 Entity writes are `source_system='user'` (the leads/caregivers precedent): a
@@ -35,6 +36,7 @@ from ..schemas import (
     CandidateOut,
     CandidatesOut,
     CaregiverRosterOut,
+    CheckTimeBody,
     ClientRef,
     NotifyBody,
     NotifyResult,
@@ -47,12 +49,15 @@ from ..schemas import (
 )
 from ..services.events import log_event
 from ..services.tools import execute_tool
+from ..services.views.clients import evv_flag
 from ..services.views.matching import rank_candidates, week_hours_map
 from ..services.views.schedule import (
     ScheduleError,
     assign,
     call_out,
     cancel,
+    check_in,
+    check_out,
     create_visits,
     set_outcome,
 )
@@ -113,6 +118,11 @@ def _visit_out(row: dict, qmap: dict[str, str]) -> ScheduleVisitOut:
         required_qualification_names=[qmap[i] for i in q_ids if i in qmap],
         replaces_schedule_id=str(row["replaces_schedule_id"]) if row["replaces_schedule_id"] else None,
         notes=row["notes"],
+        check_in_at=row.get("check_in_at"),
+        check_out_at=row.get("check_out_at"),
+        # Derived per request from the clock + now (views/clients.evv_flag), never
+        # stored — so a late badge can't survive the caregiver finally clocking in.
+        evv=evv_flag(row),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -448,6 +458,47 @@ async def cancel_visit(
         raise _http(exc)
     qmap = await _qual_names(conn)
     out = await _load_visit(conn, schedule_id, qmap)
+    assert out is not None
+    return out
+
+
+# --- EVV clock (M16a) --------------------------------------------------------
+# Recorded from the visit drawer by the coordinator, so `source_system='user'` and
+# no gate — same rule as every other board write. The AGENT-initiated path to the
+# same seam functions (record_visit_check_in/_out) IS gated, because an agent
+# asserting when a caregiver arrived is an externally visible record change.
+@router.post("/schedules/{schedule_id}/check-in", response_model=ScheduleVisitOut)
+async def check_in_visit(
+    schedule_id: str,
+    body: CheckTimeBody | None = None,
+    conn=Depends(tenant_conn),
+):
+    """Clock a caregiver in to a scheduled visit. Body `{time}` is optional — a
+    back-dated stamp for a visit logged after the fact; omitted means now."""
+    schedule_id = _valid_uuid(schedule_id, "schedule_id")
+    try:
+        await check_in(conn, schedule_id, "user", at=body.time if body else None)
+    except ScheduleError as exc:
+        raise _http(exc)
+    out = await _load_visit(conn, schedule_id, await _qual_names(conn))
+    assert out is not None
+    return out
+
+
+@router.post("/schedules/{schedule_id}/check-out", response_model=ScheduleVisitOut)
+async def check_out_visit(
+    schedule_id: str,
+    body: CheckTimeBody | None = None,
+    conn=Depends(tenant_conn),
+):
+    """Clock a caregiver out, which also COMPLETES the visit — the clocked duration
+    becomes its delivered hours."""
+    schedule_id = _valid_uuid(schedule_id, "schedule_id")
+    try:
+        await check_out(conn, schedule_id, "user", at=body.time if body else None)
+    except ScheduleError as exc:
+        raise _http(exc)
+    out = await _load_visit(conn, schedule_id, await _qual_names(conn))
     assert out is not None
     return out
 

@@ -46,15 +46,37 @@ on conflict do nothing;
 -- refreshes them on the already-seeded rows. zips: Walter 92008 (North County),
 -- Estelle 92101 (Central), Frank 91910 (South Bay). preferences are free tags the
 -- caregiver `traits` match against.
-insert into public.clients (id, tenant_id, lead_id, name, phone, email, status, requirements, address, zip, languages, preferences) values
-  ('44444444-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', '33333333-0000-0000-0000-000000000004', 'Walter Grimes',   '+16195550104', 'wgrimes@example.com',   'active', '{"hours_per_week": 40, "needed_qualifications": ["CNA","Hoyer Lift Certified"]}', '123 Oak Street, Carlsbad',    '92008', '{en}',    '{"female caregiver","no dogs"}'),
-  ('44444444-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', '33333333-0000-0000-0000-000000000005', 'Estelle Ferraro', '+16195550105', 'estelle.f@example.com', 'active', '{"hours_per_week": 25, "needed_qualifications": ["HHA","Medication Management"]}', '45 Palm Avenue, San Diego',   '92101', '{en,es}', '{"speaks spanish"}'),
-  ('44444444-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', null,                                    'Frank Delgado',   '+16195550107', 'fdelgado@example.com',  'paused', '{"hours_per_week": 12, "needed_qualifications": ["HHA"]}', '9 Bayview Road, Chula Vista', '91910', '{en}',    '{}')
+-- 16a adds the oversight fields: payer + authorized_hours_per_week (promoted from
+-- requirements.hours_per_week — it is the census denominator now, not a jsonb
+-- note), region_id, and a one-line care_summary. Frank is the hospital_hold case
+-- (was 'paused' before the M16 status rename).
+insert into public.clients (id, tenant_id, lead_id, name, phone, email, status, requirements, address, zip, languages, preferences, region_id, payer, authorized_hours_per_week, care_summary) values
+  ('44444444-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', '33333333-0000-0000-0000-000000000004', 'Walter Grimes',   '+16195550104', 'wgrimes@example.com',   'active', '{"hours_per_week": 40, "needed_qualifications": ["CNA","Hoyer Lift Certified"]}', '123 Oak Street, Carlsbad',    '92008', '{en}',    '{"female caregiver","no dogs"}', '11111111-0000-0000-0000-000000000001', 'private_pay',   40.0, 'Post-stroke mobility support; requires Hoyer lift transfers twice daily and medication reminders.'),
+  ('44444444-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', '33333333-0000-0000-0000-000000000005', 'Estelle Ferraro', '+16195550105', 'estelle.f@example.com', 'active', '{"hours_per_week": 25, "needed_qualifications": ["HHA","Medication Management"]}', '45 Palm Avenue, San Diego',   '92101', '{en,es}', '{"speaks spanish"}',            '11111111-0000-0000-0000-000000000002', 'medicaid',      25.0, 'Early-stage dementia; Spanish-speaking companionship, meal prep, and medication management.'),
+  ('44444444-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', null,                                    'Frank Delgado',   '+16195550107', 'fdelgado@example.com',  'hospital_hold', '{"hours_per_week": 12, "needed_qualifications": ["HHA"]}', '9 Bayview Road, Chula Vista', '91910', '{en}',    '{}',                            '11111111-0000-0000-0000-000000000003', 'ltc_insurance', 12.0, 'Currently admitted for a hip fracture; care resumes on discharge.')
 on conflict (id) do update set
-  address     = excluded.address,
-  zip         = excluded.zip,
-  languages   = excluded.languages,
-  preferences = excluded.preferences;
+  status                    = excluded.status,
+  address                   = excluded.address,
+  zip                       = excluded.zip,
+  languages                 = excluded.languages,
+  preferences               = excluded.preferences,
+  region_id                 = excluded.region_id,
+  payer                     = excluded.payer,
+  authorized_hours_per_week = excluded.authorized_hours_per_week,
+  care_summary              = excluded.care_summary;
+
+-- Family contacts (16a) — home care is coordinated with a daughter/POA, not only
+-- the client. One primary each for the two active clients.
+insert into public.client_contacts (id, tenant_id, client_id, name, relationship, phone, email, is_primary, notes) values
+  ('cccccccc-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', '44444444-0000-0000-0000-000000000001', 'Susan Grimes',  'daughter', '+16195550401', 'susan.g@example.com',  true,  'Primary decision-maker; call before any schedule change.'),
+  ('cccccccc-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', '44444444-0000-0000-0000-000000000002', 'Marco Ferraro', 'son',      '+16195550402', 'marco.f@example.com',  true,  'Lives out of state; prefers email updates.')
+on conflict (id) do update set
+  name         = excluded.name,
+  relationship = excluded.relationship,
+  phone        = excluded.phone,
+  email        = excluded.email,
+  is_primary   = excluded.is_primary,
+  notes        = excluded.notes;
 
 -- Resources (caregivers) with overlapping regions/qualifications. address/zip/
 -- languages/traits feed the matching engine (12a); update-in-place so a re-seed
@@ -99,21 +121,25 @@ on conflict (id) do update set
 -- board needs demo data for: an OPEN shift (unfilled, resource_id null) and a
 -- CALLED-OUT visit with its linked OPEN replacement (replaces_schedule_id). Two
 -- scheduled visits (…06/…07) carry required quals so the board resolves them to names.
-insert into public.schedules (id, tenant_id, resource_id, client_id, start_time, end_time, status, required_qualification_ids, replaces_schedule_id, notes) values
-  ('66666666-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000001', '44444444-0000-0000-0000-000000000001', now() - interval '7 days'  + interval '8 hours', now() - interval '7 days'  + interval '12 hours', 'completed', '{}', null, null),
-  ('66666666-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000001', '44444444-0000-0000-0000-000000000001', now() - interval '5 days'  + interval '8 hours', now() - interval '5 days'  + interval '12 hours', 'completed', '{}', null, null),
-  ('66666666-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000002', '44444444-0000-0000-0000-000000000002', now() - interval '3 days'  + interval '9 hours', now() - interval '3 days'  + interval '14 hours', 'completed', '{}', null, null),
-  ('66666666-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000004', '44444444-0000-0000-0000-000000000002', now() - interval '2 days'  + interval '7 hours', now() - interval '2 days'  + interval '11 hours', 'no_show', '{}', null, null),
-  ('66666666-0000-0000-0000-000000000005', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000003', '44444444-0000-0000-0000-000000000001', now() - interval '1 days'  + interval '12 hours', now() - interval '1 days' + interval '16 hours', 'cancelled', '{}', null, null),
-  ('66666666-0000-0000-0000-000000000006', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000001', '44444444-0000-0000-0000-000000000001', now() + interval '1 days'  + interval '8 hours', now() + interval '1 days'  + interval '12 hours', 'scheduled', '{22222222-0000-0000-0000-000000000001}', null, null),
-  ('66666666-0000-0000-0000-000000000007', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000002', '44444444-0000-0000-0000-000000000002', now() + interval '2 days'  + interval '9 hours', now() + interval '2 days'  + interval '14 hours', 'scheduled', '{22222222-0000-0000-0000-000000000002}', null, null),
-  ('66666666-0000-0000-0000-000000000008', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000005', '44444444-0000-0000-0000-000000000003', now() + interval '4 days'  + interval '8 hours', now() + interval '4 days'  + interval '18 hours', 'scheduled', '{}', null, null),
+-- 16a adds EVV clock stamps. Visit …0003 carries a check-in/check-out pair whose
+-- ACTUAL duration (4h35m) differs from its scheduled window (5h) — so the census
+-- math is visibly actuals-first rather than scheduled-first. Every other completed
+-- visit has no clock data and falls back to its scheduled duration.
+insert into public.schedules (id, tenant_id, resource_id, client_id, start_time, end_time, status, required_qualification_ids, replaces_schedule_id, notes, check_in_at, check_out_at) values
+  ('66666666-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000001', '44444444-0000-0000-0000-000000000001', now() - interval '7 days'  + interval '8 hours', now() - interval '7 days'  + interval '12 hours', 'completed', '{}', null, null, null, null),
+  ('66666666-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000001', '44444444-0000-0000-0000-000000000001', now() - interval '5 days'  + interval '8 hours', now() - interval '5 days'  + interval '12 hours', 'completed', '{}', null, null, null, null),
+  ('66666666-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000002', '44444444-0000-0000-0000-000000000002', now() - interval '3 days'  + interval '9 hours', now() - interval '3 days'  + interval '14 hours', 'completed', '{}', null, null, now() - interval '3 days' + interval '9 hours' + interval '10 minutes', now() - interval '3 days' + interval '13 hours' + interval '45 minutes'),
+  ('66666666-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000004', '44444444-0000-0000-0000-000000000002', now() - interval '2 days'  + interval '7 hours', now() - interval '2 days'  + interval '11 hours', 'no_show', '{}', null, null, null, null),
+  ('66666666-0000-0000-0000-000000000005', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000003', '44444444-0000-0000-0000-000000000001', now() - interval '1 days'  + interval '12 hours', now() - interval '1 days' + interval '16 hours', 'cancelled', '{}', null, null, null, null),
+  ('66666666-0000-0000-0000-000000000006', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000001', '44444444-0000-0000-0000-000000000001', now() + interval '1 days'  + interval '8 hours', now() + interval '1 days'  + interval '12 hours', 'scheduled', '{22222222-0000-0000-0000-000000000001}', null, null, null, null),
+  ('66666666-0000-0000-0000-000000000007', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000002', '44444444-0000-0000-0000-000000000002', now() + interval '2 days'  + interval '9 hours', now() + interval '2 days'  + interval '14 hours', 'scheduled', '{22222222-0000-0000-0000-000000000002}', null, null, null, null),
+  ('66666666-0000-0000-0000-000000000008', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000005', '44444444-0000-0000-0000-000000000003', now() + interval '4 days'  + interval '8 hours', now() + interval '4 days'  + interval '18 hours', 'scheduled', '{}', null, null, null, null),
   -- Open shift: unfilled, requires a CNA (resource_id null ⇒ status 'open').
-  ('66666666-0000-0000-0000-000000000009', '00000000-0000-0000-0000-000000000001', null,                                    '44444444-0000-0000-0000-000000000001', now() + interval '3 days'  + interval '8 hours', now() + interval '3 days'  + interval '12 hours', 'open', '{22222222-0000-0000-0000-000000000001}', null, 'Needs a CNA — morning shift'),
+  ('66666666-0000-0000-0000-000000000009', '00000000-0000-0000-0000-000000000001', null,                                    '44444444-0000-0000-0000-000000000001', now() + interval '3 days'  + interval '8 hours', now() + interval '3 days'  + interval '12 hours', 'open', '{22222222-0000-0000-0000-000000000001}', null, 'Needs a CNA — morning shift', null, null),
   -- Called-out visit (…0A) + its linked open replacement (…0B). Alicia dropped a
   -- Walter visit; the replacement carries the same window / required quals.
-  ('66666666-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000001', '44444444-0000-0000-0000-000000000001', now() + interval '2 days'  + interval '8 hours', now() + interval '2 days'  + interval '12 hours', 'called_out', '{22222222-0000-0000-0000-000000000001}', null, null),
-  ('66666666-0000-0000-0000-00000000000b', '00000000-0000-0000-0000-000000000001', null,                                    '44444444-0000-0000-0000-000000000001', now() + interval '2 days'  + interval '8 hours', now() + interval '2 days'  + interval '12 hours', 'open', '{22222222-0000-0000-0000-000000000001}', '66666666-0000-0000-0000-00000000000a', 'Replacement for Alicia Moreno call-out')
+  ('66666666-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000001', '44444444-0000-0000-0000-000000000001', now() + interval '2 days'  + interval '8 hours', now() + interval '2 days'  + interval '12 hours', 'called_out', '{22222222-0000-0000-0000-000000000001}', null, null, null, null),
+  ('66666666-0000-0000-0000-00000000000b', '00000000-0000-0000-0000-000000000001', null,                                    '44444444-0000-0000-0000-000000000001', now() + interval '2 days'  + interval '8 hours', now() + interval '2 days'  + interval '12 hours', 'open', '{22222222-0000-0000-0000-000000000001}', '66666666-0000-0000-0000-00000000000a', 'Replacement for Alicia Moreno call-out', null, null)
 -- Schedule times are relative to now(): refresh them on re-seed so the demo
 -- always has past (completed/cancelled) and upcoming (scheduled/open) visits,
 -- rather than freezing at first-seed time and drifting into the past.
@@ -124,7 +150,9 @@ on conflict (id) do update set
   status                     = excluded.status,
   required_qualification_ids = excluded.required_qualification_ids,
   replaces_schedule_id       = excluded.replaces_schedule_id,
-  notes                      = excluded.notes;
+  notes                      = excluded.notes,
+  check_in_at                = excluded.check_in_at,
+  check_out_at               = excluded.check_out_at;
 
 -- external_ids (two leads + one client mapped to fake CRM ids)
 insert into public.external_ids (id, tenant_id, entity_type, entity_id, source_system, external_id, last_synced_at) values
