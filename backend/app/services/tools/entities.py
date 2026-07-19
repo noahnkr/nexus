@@ -17,14 +17,26 @@ from datetime import datetime
 from psycopg.rows import dict_row
 
 from ..events import log_event
+from ..views.clients import STATUS_KEYS as CLIENT_STATUSES
+from ..views.clients import status_label as client_status_label
+from ..views.clients import census_metrics, client_week_hours, payer_label
 from ..views.leads import stage_label
 from ..views.matching import rank_candidates
-from ..views.schedule import ScheduleError, assign, call_out, cancel, create_visits
+from ..views.schedule import (
+    ScheduleError,
+    assign,
+    call_out,
+    cancel,
+    check_in,
+    check_out,
+    create_visits,
+)
 from .core import ToolDef, ToolInputError, ToolResult, _jsonable, current_invocation
 from .registry import register
 
 LEAD_STATUSES = ["new", "contacted", "qualified", "converted", "lost"]
-CLIENT_STATUSES = ["active", "paused", "ended"]
+# Client statuses come from the clients seam (views/clients.CLIENT_STATUSES) — one
+# source, so the tool enum can never drift from the DB CHECK or the REST surface.
 SCHEDULE_STATUSES = ["open", "scheduled", "called_out", "completed", "cancelled", "no_show"]
 # Caregiver-recruiting pipeline stages (Module 10); mirrors views/caregivers.py
 # STAGE_KEYS and the applicants.stage CHECK.
@@ -185,7 +197,8 @@ async def _get_client(conn, args: dict) -> ToolResult:
     )
     client["upcoming_schedules"] = await _fetch_all(
         conn,
-        """select s.id, s.start_time, s.end_time, s.status, r.name as resource
+        """select s.id, s.start_time, s.end_time, s.status, s.check_in_at,
+                  s.check_out_at, r.name as resource
              from public.schedules s
              left join public.resources r on r.id = s.resource_id
             where s.client_id = %s and s.start_time >= now()
@@ -193,8 +206,28 @@ async def _get_client(conn, args: dict) -> ToolResult:
             limit 5""",
         (client_id,),
     )
+    # 16a: the care picture the agent needs to answer "who is this client and are
+    # we delivering their hours" without a second tool call.
+    client["region"] = (
+        await _lookup_name(conn, "regions", str(client["region_id"]))
+        if client.get("region_id")
+        else None
+    )
+    client["payer_label"] = payer_label(client.get("payer"))
+    client["contacts"] = await _fetch_all(
+        conn,
+        """select name, relationship, phone, email, is_primary, notes
+             from public.client_contacts
+            where client_id = %s
+            order by is_primary desc, name""",
+        (client_id,),
+    )
+    client["hours_this_week"] = _jsonable(await client_week_hours(conn, client_id))
+
     return ToolResult(
-        f"Client: {client['name']} (status {client['status']}).", {"client": client}
+        f"Client: {client['name']} "
+        f"(status {client_status_label(client['status']).lower()}).",
+        {"client": client},
     )
 
 
@@ -465,20 +498,43 @@ async def _update_lead_status(conn, args: dict) -> ToolResult:
 async def _describe_update_client_status(conn, args: dict) -> str:
     client_id = _require_uuid(args, "client_id")
     name = await _lookup_name(conn, "clients", client_id) or f"id {client_id[:8]}"
-    return f"Update client '{name}' to {args.get('status')}"
+    # The task title an office user reads should say "hospital hold", not the raw
+    # `hospital_hold` column value (CLAUDE.md: plain language in user-facing views).
+    return f"Update client '{name}' to {client_status_label(args.get('status')).lower()}"
 
 
 async def _update_client_status(conn, args: dict) -> ToolResult:
+    """Change a client's status. Delegates to the single `change_status()` path
+    (never its own UPDATE) so a chat/MCP-approved change emits the same
+    `client.status_changed` event as a coordinator's UI click — the
+    views/caregivers.move_stage precedent."""
     client_id = _require_uuid(args, "client_id")
     status = args.get("status")
     if status not in CLIENT_STATUSES:
         raise ToolInputError(f"'status' must be one of: {', '.join(CLIENT_STATUSES)}.")
-    name = await _lookup_name(conn, "clients", client_id)
-    if name is None:
-        raise ToolInputError("No client found with that id.")
-    await conn.execute("update public.clients set status=%s where id=%s", (status, client_id))
+
+    # The caller's tenant + source_system ride the event (the M7 loop guard depends
+    # on it). Lazy import avoids the tools<->views import cycle at module load.
+    from ..views.clients import ClientError, change_status
+
+    inv = current_invocation()
+    tenant_id = inv["tenant_id"] if inv else None
+    try:
+        result = await change_status(
+            conn, tenant_id, _source_system(), client_id, status
+        )
+    except ClientError as exc:
+        raise ToolInputError(str(exc))
+
+    name = result["name"]
+    if not result["changed"]:
+        return ToolResult(
+            f"Client '{name}' is already {client_status_label(status).lower()}.",
+            {"client_id": client_id, "status": status, "changed": False},
+        )
     return ToolResult(
-        f"Updated client '{name}' to {status}.", {"client_id": client_id, "status": status}
+        f"Updated client '{name}' to {client_status_label(status).lower()}.",
+        {"client_id": client_id, "status": status, "changed": True},
     )
 
 
@@ -708,6 +764,89 @@ async def _assign_caregiver(conn, args: dict) -> ToolResult:
     )
 
 
+# --- EVV clock tools (Module 16a) ---
+# Gated despite feeling like a small stamp: check-in/out times are the billing
+# record for a Medicaid-funded visit, and check-out also completes the visit. An
+# agent asserting when a caregiver arrived is exactly the kind of externally
+# visible record change the M5 gate exists for.
+async def _visit_gate_phrase(conn, schedule_id: str, verb: str) -> str:
+    row = await _fetch_one(
+        conn,
+        """select c.name as client, s.start_time, s.end_time
+             from public.schedules s
+             join public.clients c on c.id = s.client_id
+            where s.id = %s""",
+        (schedule_id,),
+    )
+    if row is None:
+        return f"Record {verb} for an unknown visit"
+    when = _fmt_time(row["start_time"], row["end_time"])
+    return f"Record {verb} for the visit with {row['client']} on {when}"
+
+
+def _optional_time(args: dict, key: str) -> datetime | None:
+    """Optional ISO-8601 stamp; absent/blank means 'now' (the seam's default)."""
+    raw = args.get(key)
+    if raw is None or str(raw).strip() == "":
+        return None
+    return _require_iso(args, key)
+
+
+async def _describe_record_visit_check_in(conn, args: dict) -> str:
+    return await _visit_gate_phrase(conn, _require_uuid(args, "schedule_id"), "check-in")
+
+
+async def _record_visit_check_in(conn, args: dict) -> ToolResult:
+    schedule_id = _require_uuid(args, "schedule_id")
+    try:
+        result = await check_in(
+            conn, schedule_id, _source_system(), at=_optional_time(args, "time")
+        )
+    except ScheduleError as exc:
+        raise ToolInputError(str(exc))
+    return ToolResult("Checked in to the visit.", _jsonable(result))
+
+
+async def _describe_record_visit_check_out(conn, args: dict) -> str:
+    return await _visit_gate_phrase(conn, _require_uuid(args, "schedule_id"), "check-out")
+
+
+async def _record_visit_check_out(conn, args: dict) -> ToolResult:
+    schedule_id = _require_uuid(args, "schedule_id")
+    try:
+        result = await check_out(
+            conn, schedule_id, _source_system(), at=_optional_time(args, "time")
+        )
+    except ScheduleError as exc:
+        raise ToolInputError(str(exc))
+    return ToolResult(
+        f"Checked out of the visit ({result['actual_hours']} hours worked); "
+        "the visit is now complete.",
+        _jsonable(result),
+    )
+
+
+# --- get_census (safe read over the seam's deterministic math) ---
+async def _get_census(conn, args: dict) -> ToolResult:
+    """Current-week census. Read-only and safe: it computes nothing the office
+    can't see on the Clients page, and the numbers come from the same seam
+    function that page renders, so chat and UI can never disagree."""
+    metrics = await census_metrics(conn)
+    rate = metrics["delivery_rate"]
+    line = (
+        f"{metrics['active_clients']} active client(s); "
+        f"{metrics['authorized_hours']} authorized hrs/wk, "
+        f"{metrics['delivered_hours']} delivered this week"
+    )
+    if rate is not None:
+        line += f" ({rate}%)"
+    if metrics["leakage_hours"]:
+        line += f" — {metrics['leakage_hours']} hrs short of authorized"
+    if metrics["open_hours"]:
+        line += f"; {metrics['open_hours']} hrs still unfilled"
+    return ToolResult(line + ".", _jsonable(metrics))
+
+
 # --- update_applicant_stage (Module 10) ---
 async def _describe_update_applicant_stage(conn, args: dict) -> str:
     applicant_id = _require_uuid(args, "applicant_id")
@@ -897,8 +1036,10 @@ register(ToolDef(
 register(ToolDef(
     name="update_client_status",
     description=(
-        "Change a client's status (active, paused, or ended). This changes a "
-        "record and requires human approval before it takes effect."
+        "Change a client's status: 'active' (receiving care), 'hospital_hold' "
+        "(temporarily admitted elsewhere; care resumes on discharge), or "
+        "'discharged' (service ended). This changes a record and requires human "
+        "approval before it takes effect."
     ),
     input_schema=_obj({
         "client_id": {"type": "string", "description": "The client's id."},
@@ -907,6 +1048,61 @@ register(ToolDef(
     handler=_update_client_status,
     safe=False,
     gate_describe=_describe_update_client_status,
+))
+
+register(ToolDef(
+    name="record_visit_check_in",
+    description=(
+        "Record that the caregiver has clocked in to a scheduled visit (Electronic "
+        "Visit Verification). Defaults to now; pass `time` for a back-dated stamp. "
+        "This changes a billing-relevant care record and requires human approval "
+        "before it takes effect."
+    ),
+    input_schema=_obj({
+        "schedule_id": {"type": "string", "description": "The scheduled visit's id."},
+        "time": {
+            "type": "string",
+            "description": "When they clocked in (ISO-8601). Omit for now.",
+        },
+    }, ["schedule_id"]),
+    handler=_record_visit_check_in,
+    safe=False,
+    gate_describe=_describe_record_visit_check_in,
+))
+
+register(ToolDef(
+    name="record_visit_check_out",
+    description=(
+        "Record that the caregiver has clocked out of a visit they checked in to "
+        "(Electronic Visit Verification). This also marks the visit completed, and "
+        "the clocked duration becomes the visit's delivered hours. Defaults to now; "
+        "pass `time` for a back-dated stamp. This changes a billing-relevant care "
+        "record and requires human approval before it takes effect."
+    ),
+    input_schema=_obj({
+        "schedule_id": {"type": "string", "description": "The visit's id."},
+        "time": {
+            "type": "string",
+            "description": "When they clocked out (ISO-8601). Omit for now.",
+        },
+    }, ["schedule_id"]),
+    handler=_record_visit_check_out,
+    safe=False,
+    gate_describe=_describe_record_visit_check_out,
+))
+
+register(ToolDef(
+    name="get_census",
+    description=(
+        "Get this week's client census and hours: how many active clients (by "
+        "region and payer), how many hours a week they are authorized for, how many "
+        "hours are scheduled, how many were actually delivered, how many shifts are "
+        "still unfilled, and the gap between authorized and delivered hours. "
+        "Read-only."
+    ),
+    input_schema=_obj({}),
+    handler=_get_census,
+    safe=True,
 ))
 
 register(ToolDef(
@@ -1037,8 +1233,16 @@ leads(id uuid, name text, phone text, email text, source text,
       status text {new|contacted|qualified|converted|lost},
       region_id uuid -> regions.id, requirements jsonb, created_at timestamptz)
 clients(id uuid, lead_id uuid -> leads.id, name text, phone text, email text,
-        status text {active|paused|ended}, requirements jsonb, address text, zip text,
-        languages text[], preferences text[], created_at timestamptz)
+        status text {active|hospital_hold|discharged}, requirements jsonb,
+        address text, zip text, languages text[], preferences text[],
+        region_id uuid -> regions.id,
+        payer text {private_pay|medicaid|ltc_insurance|va|other} (NULL = unknown),
+        authorized_hours_per_week numeric (contracted hours/week — the census
+          denominator; authorized minus delivered is revenue leakage),
+        care_summary text, created_at timestamptz)
+client_contacts(id uuid, client_id uuid -> clients.id, name text, relationship text,
+                phone text, email text, is_primary boolean, notes text,
+                created_at timestamptz)  -- family / POA contacts for a client
 resources(id uuid, name text, phone text, email text, qualification_ids uuid[],
           region_ids uuid[], availability jsonb, address text, zip text,
           languages text[], traits text[], applicant_id uuid -> applicants.id,
@@ -1051,7 +1255,11 @@ schedules(id uuid, resource_id uuid -> resources.id (NULL for an unfilled 'open'
           client_id uuid -> clients.id, start_time timestamptz, end_time timestamptz,
           status text {open|scheduled|called_out|completed|cancelled|no_show},
           required_qualification_ids uuid[], replaces_schedule_id uuid -> schedules.id,
-          notes text, created_at timestamptz)
+          notes text, check_in_at timestamptz, check_out_at timestamptz,
+          created_at timestamptz)
+          -- check_in_at/check_out_at are the EVV clock stamps. Delivered hours for a
+          -- completed visit = the clocked duration when both stamps exist, else the
+          -- scheduled window (end_time - start_time).
 regions(id uuid, name text, zip_codes text[])
 qualifications(id uuid, name text, description text)
 events(id uuid, source_system text, event_type text, entity_type text,
@@ -1066,7 +1274,9 @@ pending_actions(id uuid, task_id uuid -> tasks.id, tool_name text, tool_input js
 external_ids(id uuid, entity_type text, entity_id uuid, source_system text,
              external_id text, last_synced_at timestamptz)
 documents(id uuid, filename text, mime_type text,
-          status text {uploaded|processing|ready|failed}, created_at timestamptz)
+          status text {uploaded|processing|ready|failed},
+          entity_type text, entity_id uuid,  -- optional canonical-entity tag
+          created_at timestamptz)
 
 resources.qualification_ids / region_ids are uuid arrays: filter with
 `<id> = any(qualification_ids)`, or `join qualifications q on q.id = any(r.qualification_ids)`

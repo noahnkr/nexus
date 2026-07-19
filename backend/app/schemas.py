@@ -15,6 +15,11 @@ class DocumentOut(BaseModel):
     status: str
     error: str | None = None
     storage_path: str | None = None
+    # Optional canonical-entity tag (M16a). Null = a tenant-general document;
+    # set = this document belongs to one record (a client's care plan), and its
+    # chunks inherit the tag so retrieval and profile listings agree.
+    entity_type: str | None = None
+    entity_id: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -222,6 +227,165 @@ class ApplicantSummaryOut(BaseModel):
     generated_at: datetime
 
 
+# --- Clients & care oversight (Module 16a, vertical seam) ---------------------
+class ClientContactOut(BaseModel):
+    """A family / POA contact. Home care is coordinated with a daughter or son as
+    often as with the client themselves."""
+    id: str
+    client_id: str
+    name: str
+    relationship: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    is_primary: bool = False
+    notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ClientContactCreate(BaseModel):
+    name: str
+    relationship: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    is_primary: bool = False
+    notes: str | None = None
+
+
+class ClientContactPatch(BaseModel):
+    """Partial update — only fields present in the body are written."""
+    name: str | None = None
+    relationship: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    is_primary: bool | None = None
+    notes: str | None = None
+
+
+class ClientOut(BaseModel):
+    id: str
+    name: str
+    phone: str | None = None
+    email: str | None = None
+    status: str  # active | hospital_hold | discharged (clients.status)
+    lead_id: str | None = None
+    address: str | None = None
+    zip: str | None = None
+    languages: list[str] = []
+    preferences: list[str] = []
+    region_id: str | None = None
+    region_name: str | None = None  # left-joined from regions
+    payer: str | None = None  # null = unknown (intake in progress)
+    authorized_hours_per_week: float | None = None
+    care_summary: str | None = None
+    requirements: dict[str, Any] = {}
+    created_at: datetime
+    updated_at: datetime
+
+
+class ClientPage(BaseModel):
+    clients: list[ClientOut] = []
+    total: int = 0  # full count for the filtered set (offset paging in the UI)
+
+
+class ClientFacets(BaseModel):
+    statuses: list[str] = []  # observed, for the directory's filter chips
+    payers: list[str] = []
+    regions: list[RegionRef] = []
+
+
+class ClientCreate(BaseModel):
+    name: str
+    phone: str | None = None
+    email: str | None = None
+    address: str | None = None
+    zip: str | None = None
+    region_id: str | None = None
+    payer: str | None = None
+    authorized_hours_per_week: float | None = None
+    care_summary: str | None = None
+    languages: list[str] = []
+    preferences: list[str] = []
+
+
+class ClientPatch(BaseModel):
+    """Partial update. Only fields present in the request body are written (the
+    router reads `model_fields_set`). A `status` change routes through
+    views/clients.change_status() (emits client.status_changed); other field
+    changes emit one client.updated naming them."""
+    name: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    address: str | None = None
+    zip: str | None = None
+    region_id: str | None = None
+    payer: str | None = None
+    authorized_hours_per_week: float | None = None
+    care_summary: str | None = None
+    languages: list[str] | None = None
+    preferences: list[str] | None = None
+    status: str | None = None
+
+
+class ClientHours(BaseModel):
+    """One week of hours for a client or the whole census. `leakage_hours` is the
+    number that matters: authorized (paid-for) minus delivered."""
+    week_start: datetime
+    week_end: datetime
+    authorized_hours: float = 0.0
+    scheduled_hours: float = 0.0
+    delivered_hours: float = 0.0
+    open_hours: float = 0.0
+    leakage_hours: float = 0.0
+    delivery_rate: float | None = None  # % of authorized; null when authorized = 0
+
+
+class RegionCount(BaseModel):
+    region_id: str | None = None
+    region: str
+    count: int
+
+
+class PayerCount(BaseModel):
+    payer: str  # payer key, or 'unknown' for clients with none recorded
+    count: int
+
+
+class CensusMetrics(ClientHours):
+    """Active census + this week's hours. Deterministic seam SQL — no LLM."""
+    active_clients: int = 0
+    by_region: list[RegionCount] = []
+    by_payer: list[PayerCount] = []
+
+
+class ClientCaregiverRef(BaseModel):
+    """A caregiver currently serving this client, from their non-terminal visits."""
+    resource_id: str
+    name: str
+    next_visit: datetime | None = None
+
+
+class ClientDocumentRef(BaseModel):
+    """A document tagged to this client (a care plan, an assessment)."""
+    id: str
+    filename: str
+    status: str
+    created_at: datetime
+
+
+class ClientDetail(ClientOut):
+    contacts: list[ClientContactOut] = []
+    caregivers: list[ClientCaregiverRef] = []
+    hours_this_week: ClientHours
+    documents: list[ClientDocumentRef] = []
+
+
+class ClientSummaryOut(BaseModel):
+    """Cached AI care summary — generated on first open, refreshed on demand."""
+    summary: str
+    generated_at: datetime
+
+
 class ApplicantMetrics(BaseModel):
     """Hiring funnel dashboard widgets (10b). All six stages, zero-filled; hire rate
     as a percent; avg_days_to_hire null when none observed."""
@@ -246,8 +410,20 @@ class ScheduleVisitOut(BaseModel):
     required_qualification_names: list[str] = []  # resolved for display
     replaces_schedule_id: str | None = None
     notes: str | None = None
+    # EVV (M16a): the raw clock stamps plus the server-computed read-time flag
+    # ('late' | 'missed' | null). The flag is derived per request by
+    # views/clients.evv_flag — never stored — so the board and the client profile
+    # can never show a stale badge.
+    check_in_at: datetime | None = None
+    check_out_at: datetime | None = None
+    evv: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class CheckTimeBody(BaseModel):
+    """Optional back-dated EVV stamp; omitted means now (the seam's default)."""
+    time: datetime | None = None
 
 
 class CaregiverRosterOut(BaseModel):
