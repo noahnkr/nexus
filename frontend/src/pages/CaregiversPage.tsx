@@ -208,7 +208,7 @@ export function CaregiversPage() {
         }
       />
 
-      <div className="flex min-h-0 flex-1 flex-col gap-4 p-6">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 p-4 sm:p-6">
         <HiringMetrics metrics={metrics} />
 
         <FunnelStrip

@@ -10,6 +10,9 @@ State machine (locked, D5/D6):
     an already-resolved one raises `ActionAlreadyResolved` (router -> 404 / 409).
   * approve: status -> approved, execute; on success -> executed + task done; on a
     handler error -> failed + task STAYS pending (a human decides: cancel or re-ask).
+  * approve may carry approver edits (M15a) restricted to the tool's
+    `editable_fields` — validated by the router, applied to the stored input before
+    execution, and recorded on the action.approved event. Still one execution path.
   * reject: status -> rejected, task -> cancelled. No execution.
   * Resolving an action drives its task one way only; the task never drives the
     action (a task PATCH is 409'd while an action is still pending — the router).
@@ -57,13 +60,66 @@ async def _lock_action(conn, action_id: str) -> dict:
     return row
 
 
+def _approved_payload(
+    action: dict,
+    action_id: str,
+    result,
+    final_status: str,
+    edited_fields: list[str],
+    original_input: dict,
+) -> dict:
+    """`action.approved` payload. When the approver edited the draft, the event is
+    the record of what changed: which fields, and what the agent originally wrote."""
+    payload = {
+        "summary": f"Approved: {action['task_title']} — {result.summary}",
+        "pending_action_id": action_id,
+        "tool_name": action["tool_name"],
+        "outcome": final_status,
+    }
+    if edited_fields:
+        payload["summary"] = (
+            f"Approved with edits ({', '.join(edited_fields)}): "
+            f"{action['task_title']} — {result.summary}"
+        )
+        payload["edited"] = True
+        payload["edited_fields"] = edited_fields
+        payload["original_input"] = original_input
+    return payload
+
+
 async def approve_action(
-    conn, tenant_id: str, action_id: str, *, resolved_by: str | None = None
+    conn,
+    tenant_id: str,
+    action_id: str,
+    *,
+    resolved_by: str | None = None,
+    edited_input: dict | None = None,
 ) -> str:
     """Approve and execute a queued action. Returns the task id (the router
-    refetches the refreshed action + task for its response)."""
+    refetches the refreshed action + task for its response).
+
+    `edited_input` (M15a) carries approver edits already validated by the router
+    against the tool's `editable_fields`. The stored `tool_input` is updated BEFORE
+    execution, so the handler, the `tool.called` audit row, and the action row all
+    see the same final text — one execution path, one version of the truth. The
+    pre-edit draft survives on the `action.approved` event as `original_input`.
+    """
     action = await _lock_action(conn, action_id)
     task_id = str(action["task_id"])
+
+    original_input = action["tool_input"] or {}
+    tool_input = original_input
+    edited_fields: list[str] = []
+    if edited_input:
+        edited_fields = sorted(
+            k for k, v in edited_input.items() if original_input.get(k) != v
+        )
+        if edited_fields:
+            tool_input = {**original_input, **edited_input}
+            await conn.execute(
+                "update public.pending_actions set tool_input=%s where id=%s",
+                (Json(tool_input), action_id),
+            )
 
     # Mark approved before running, then execute through the seam with the bypass.
     await conn.execute(
@@ -73,12 +129,15 @@ async def approve_action(
         conn,
         tenant_id,
         action["tool_name"],
-        action["tool_input"],
+        tool_input,
         source_system=action["source_system"],
         approved_action_id=action_id,
     )
 
-    outcome = {"summary": result.summary}
+    outcome: dict = {"summary": result.summary}
+    if edited_fields:
+        outcome["edited"] = True
+        outcome["edited_fields"] = edited_fields
     if result.is_error:
         final_status = "failed"
         if isinstance(result.data, dict) and "error" in result.data:
@@ -106,12 +165,9 @@ async def approve_action(
         event_type="action.approved",
         entity_type="task",
         entity_id=task_id,
-        payload={
-            "summary": f"Approved: {action['task_title']} — {result.summary}",
-            "pending_action_id": action_id,
-            "tool_name": action["tool_name"],
-            "outcome": final_status,
-        },
+        payload=_approved_payload(
+            action, action_id, result, final_status, edited_fields, original_input
+        ),
     )
 
     # If this action gated an automation step (Module 7b), resume the paused run in

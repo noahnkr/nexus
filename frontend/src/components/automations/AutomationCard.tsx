@@ -25,13 +25,29 @@ export function AutomationCard({
   automation,
   onToggle,
   onDelete,
+  onRun,
 }: {
   automation: Automation;
   onToggle: (a: Automation) => void;
   onDelete: (a: Automation) => void;
+  onRun: (a: Automation) => Promise<void>;
 }) {
   const navigate = useNavigate();
   const active = automation.status === "active";
+  // A manual automation has no trigger to be active FOR — `status` is ignored by
+  // the run endpoint entirely — so pausing it is a control that does nothing.
+  // It gets a neutral "Manual" badge and a Run button instead (M15c).
+  const manual = automation.trigger?.type === "manual";
+  const [running, setRunning] = useState(false);
+
+  const doRun = async () => {
+    setRunning(true);
+    try {
+      await onRun(automation);
+    } finally {
+      setRunning(false);
+    }
+  };
   const last = automation.last_run;
   // A bound sequence (9b): show its "Leads · Contacted" chip and route Edit to the
   // view's stage builder (one editing surface per recipe — the generic builder
@@ -50,9 +66,13 @@ export function AutomationCard({
           <span className="line-clamp-2">{automation.name}</span>
         </Link>
         <div className="flex shrink-0 items-center gap-1.5">
-          <Badge variant={active ? "success" : "secondary"}>
-            {active ? "Active" : "Paused"}
-          </Badge>
+          {manual ? (
+            <Badge variant="outline">Manual</Badge>
+          ) : (
+            <Badge variant={active ? "success" : "secondary"}>
+              {active ? "Active" : "Paused"}
+            </Badge>
+          )}
           <OverflowMenu
             onView={() => navigate(`/automations/${automation.id}`)}
             onEdit={() => navigate(editRoute)}
@@ -106,22 +126,28 @@ export function AutomationCard({
             "No runs yet"
           )}
         </span>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => onToggle(automation)}
-          className="shrink-0"
-        >
-          {active ? (
-            <>
-              <Pause className="h-3.5 w-3.5" /> Pause
-            </>
-          ) : (
-            <>
-              <Play className="h-3.5 w-3.5" /> Activate
-            </>
-          )}
-        </Button>
+        {manual ? (
+          <Button size="sm" onClick={doRun} disabled={running} className="shrink-0">
+            <Play className="h-3.5 w-3.5" /> {running ? "Starting…" : "Run"}
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onToggle(automation)}
+            className="shrink-0"
+          >
+            {active ? (
+              <>
+                <Pause className="h-3.5 w-3.5" /> Pause
+              </>
+            ) : (
+              <>
+                <Play className="h-3.5 w-3.5" /> Activate
+              </>
+            )}
+          </Button>
+        )}
       </div>
     </div>
   );

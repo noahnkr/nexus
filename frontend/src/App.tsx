@@ -3,7 +3,7 @@ import { Toaster } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
 import { HomePage } from "@/pages/HomePage";
 import { ChatPage } from "@/pages/ChatPage";
-import { IngestionPage } from "@/pages/IngestionPage";
+import { KnowledgePage } from "@/pages/KnowledgePage";
 import { TasksPage } from "@/pages/TasksPage";
 import { LeadsPage } from "@/pages/LeadsPage";
 import { LeadProfilePage } from "@/pages/LeadProfilePage";
@@ -15,6 +15,7 @@ import { EventLogPage } from "@/pages/EventLogPage";
 import { AutomationsPage } from "@/pages/AutomationsPage";
 import { AutomationDetailPage } from "@/pages/AutomationDetailPage";
 import { AutomationBuilderPage } from "@/pages/AutomationBuilderPage";
+import { SettingsPage } from "@/pages/SettingsPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { RequireAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
@@ -31,7 +32,9 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <HomePage /> },
       { path: "chat", element: <ChatPage /> },
-      { path: "ingestion", element: <IngestionPage /> },
+      { path: "knowledge", element: <KnowledgePage /> },
+      // Old links and bookmarks from when this was the Ingestion page.
+      { path: "ingestion", element: <Navigate to="/knowledge" replace /> },
       { path: "tasks", element: <TasksPage /> },
       { path: "leads", element: <LeadsPage /> },
       { path: "leads/stages/:stage/sequence", element: <StageSequencePage view="leads" /> },
@@ -45,6 +48,7 @@ const router = createBrowserRouter([
       { path: "automations/:id", element: <AutomationDetailPage /> },
       { path: "automations/:id/edit", element: <AutomationBuilderPage /> },
       { path: "events", element: <EventLogPage /> },
+      { path: "settings", element: <SettingsPage /> },
       // Stale bookmarks (old "/" was Chat) and unknown paths land on Home.
       { path: "*", element: <Navigate to="/" replace /> },
     ],

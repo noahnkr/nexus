@@ -87,6 +87,10 @@ _CORE_TRIGGER_FIELDS: list[tuple[str, str]] = [
 
 router = APIRouter(prefix="/api", tags=["automations"])
 
+# Tools the builder must not offer as recipe steps (M15c). See the vocabulary
+# endpoint for why.
+_STEP_EXCLUDED_TOOLS = {"run_automation"}
+
 _ACTIVE_STATES = ("running", "waiting", "waiting_approval")
 _TERMINAL_STATES = ("completed", "failed", "cancelled")
 _MAX_RUN_LIMIT = 100
@@ -400,10 +404,15 @@ async def _build_vocabulary(conn) -> Vocabulary:
             field_suggestions.add(f"trigger.payload.{key}")
     field_suggestions.update(await entity_field_suggestions(conn))
 
+    # `run_automation` is deliberately absent from the step palette: it refuses
+    # every call made with source_system='automation' (automations must not start
+    # automations), so offering it in the builder would only ever produce a step
+    # that fails at run time. Chat and MCP still see it via the registry.
     tools = [
         VocabTool(name=t.name, label=tool_label(t.name), description=t.description,
                   input_schema=t.input_schema, safe=t.safe)
         for t in all_tools()
+        if t.name not in _STEP_EXCLUDED_TOOLS
     ]
     functions = [
         VocabFunction(name=f.name, description=f.description, input_schema=f.input_schema)

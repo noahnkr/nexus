@@ -24,6 +24,7 @@ TOOL_LABELS: dict[str, str] = {
     "record_call_out": "Recording a call-out",
     "assign_caregiver": "Assigning a caregiver",
     "create_task": "Creating a task",
+    "run_automation": "Running an automation",
     "send_sms": "Sending a text message",
     "send_email": "Sending an email",
 }

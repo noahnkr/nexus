@@ -17,7 +17,7 @@ const actions: {
     icon: MessageSquarePlus,
   },
   {
-    to: "/ingestion",
+    to: "/knowledge",
     label: "Upload document",
     hint: "Add a file to the knowledge base",
     icon: Upload,

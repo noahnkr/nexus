@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 # --- Documents / ingestion ---------------------------------------------------
@@ -362,10 +362,14 @@ class NotifyResult(BaseModel):
 class PendingActionOut(BaseModel):
     id: str
     tool_name: str
-    tool_input: dict[str, Any] = {}  # UI expandable technical detail only
+    tool_input: dict[str, Any] = {}  # rendered as labeled fields in the task drawer
     status: str  # pending | approved | rejected | executed | failed
     source_system: str
-    result: dict[str, Any] | None = None  # {summary, error?} once resolved
+    # Input keys a human may edit before approving (M15a). Resolved at read time
+    # from the tool registry — never stored, so changing a ToolDef takes effect
+    # immediately and can't leave stale permissions on old rows.
+    editable_fields: list[str] = []
+    result: dict[str, Any] | None = None  # {summary, error?, edited?} once resolved
     created_at: datetime
     resolved_at: datetime | None = None
     resolved_by: str | None = None
@@ -404,6 +408,12 @@ class TaskPatch(BaseModel):
 
 class RejectBody(BaseModel):
     note: str | None = None
+
+
+class ApproveBody(BaseModel):
+    """Optional approver edits (M15a). Only keys in the tool's `editable_fields` are
+    accepted, and only as non-empty strings — the router 422s otherwise."""
+    tool_input: dict[str, Any] | None = None
 
 
 class ActionResolution(BaseModel):
@@ -587,3 +597,23 @@ class AutomationDraft(BaseModel):
     conditions: list[dict[str, Any]] = []
     steps: list[dict[str, Any]] = []
     explanation: str
+
+
+# --- Tenant settings (Module 15b) --------------------------------------------
+class SettingsOut(BaseModel):
+    """Every whitelisted preference, defaults filled in by services/settings.py."""
+    workspace_name: str = ""
+    agent_instructions: str = ""
+    agent_tone: str = "balanced"
+
+
+class SettingsPatch(BaseModel):
+    """Partial update — only the fields actually sent are applied (exclude_unset).
+    `extra="forbid"` turns a typo'd or retired key into a 422 at the edge rather
+    than a silently ignored write; the seam keeps its own unknown-key guard for
+    non-HTTP callers."""
+    model_config = ConfigDict(extra="forbid")
+
+    workspace_name: str | None = None
+    agent_instructions: str | None = None
+    agent_tone: str | None = None

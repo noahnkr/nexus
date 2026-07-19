@@ -9,15 +9,19 @@ export function ThreadList({
   onSelect,
   onNew,
   onDelete,
+  className,
 }: {
   threads: ThreadOut[];
   activeId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
+  // Overridden on mobile, where this renders inside an overlay panel instead of
+  // as a fixed rail beside the conversation.
+  className?: string;
 }) {
   return (
-    <div className="flex w-60 shrink-0 flex-col border-r bg-muted/20">
+    <div className={cn("flex w-60 shrink-0 flex-col border-r bg-muted/20", className)}>
       <div className="p-3">
         <Button className="w-full" size="sm" onClick={onNew}>
           <Plus className="h-4 w-4" />

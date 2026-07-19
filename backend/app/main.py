@@ -24,6 +24,7 @@ from .routers import (
     home,
     leads,
     schedule,
+    settings as settings_router,
     tasks,
     webhooks,
 )
@@ -73,6 +74,7 @@ app.include_router(automations.router)
 app.include_router(leads.router)
 app.include_router(applicants.router)
 app.include_router(schedule.router)
+app.include_router(settings_router.router)
 
 # MCP server (Streamable HTTP) exposing the tool registry to external clients.
 # Bearer-token gated; unset token fails closed. n8n consumes this same mount in M7.

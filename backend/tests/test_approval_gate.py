@@ -285,3 +285,126 @@ def test_failing_handler_marks_failed():
     approved = [e for e in events if e["event_type"] == "action.approved"]
     assert len(approved) == 1
     assert approved[0]["payload"]["outcome"] == "failed"
+
+
+# ---------------------------------------------------------------------------
+# Module 15a — approve with edits (editable_fields seam)
+# ---------------------------------------------------------------------------
+async def _edit_scenario():
+    """Queue a send_sms-shaped gated tool, then approve with a reworded body."""
+    from app import db
+    from app.services.approvals import approve_action
+    from app.services.tools import ToolResult, execute_tool
+
+    sfx = uuid.uuid4().hex[:8]
+    name = f"t_edit_{sfx}"
+    seen = {}
+
+    async def handler(conn, args):
+        seen.update(args)
+        return ToolResult(f"[placeholder] Would send SMS to {args['to']}: “{args['body']}”", {})
+
+    from app.services.tools import ToolDef
+    from app.services.tools.registry import register
+
+    register(ToolDef(
+        name=name,
+        description="throwaway editable test tool",
+        input_schema={"type": "object", "properties": {}},
+        handler=handler,
+        safe=False,
+        editable_fields=["body"],
+    ))
+
+    draft = {"to": "+16195550101", "body": "Hi Margret, can you cover Tuesday?"}
+    fixed = "Hi Margaret, can you cover Tuesday?"
+
+    await db.open_pool()
+    try:
+        async with db.tenant_tx(DEMO_TENANT) as conn:
+            queued = await execute_tool(conn, DEMO_TENANT, name, draft, source_system="chat")
+            action_id = queued.data["pending_action_id"]
+            task_id = queued.data["task_id"]
+
+            await approve_action(
+                conn, DEMO_TENANT, action_id,
+                resolved_by="tester", edited_input={"body": fixed},
+            )
+            action = await _action(conn, action_id)
+            events = await _events_for(conn, name)
+            await _cleanup(conn, [task_id])
+        return seen, action, events, draft, fixed
+    finally:
+        _unregister(name)
+        await db.close_pool()
+
+
+def test_approve_with_edits_executes_edited_input():
+    seen, action, events, draft, fixed = asyncio.run(_edit_scenario())
+
+    # The handler ran with the corrected text — and only the editable key changed.
+    assert seen["body"] == fixed
+    assert seen["to"] == draft["to"]
+
+    # The stored input is the final text, so the row and the audit agree.
+    assert action["status"] == "executed"
+    assert action["tool_input"]["body"] == fixed
+    assert action["result"]["edited"] is True
+    assert action["result"]["edited_fields"] == ["body"]
+    assert fixed in action["result"]["summary"]
+
+    # action.approved records WHAT changed and what the agent originally drafted.
+    approved = [e for e in events if e["event_type"] == "action.approved"]
+    assert len(approved) == 1
+    payload = approved[0]["payload"]
+    assert payload["edited"] is True
+    assert payload["edited_fields"] == ["body"]
+    assert payload["original_input"]["body"] == draft["body"]
+    assert "edits" in payload["summary"]
+
+    # The tool.called audit row carries the executed (edited) input, not the draft.
+    called = [e for e in events if e["event_type"] == "tool.called"]
+    assert len(called) == 1
+    assert called[0]["payload"]["input"]["body"] == fixed
+
+
+async def _noop_edit_scenario():
+    """Re-sending the unchanged input is a plain approval, not an 'edited' one."""
+    from app import db
+    from app.services.approvals import approve_action
+    from app.services.tools import ToolResult, execute_tool
+
+    sfx = uuid.uuid4().hex[:8]
+    name = f"t_noedit_{sfx}"
+
+    async def handler(conn, args):
+        return ToolResult("sent", {})
+
+    _register_tool(name, handler, safe=False)
+    await db.open_pool()
+    try:
+        async with db.tenant_tx(DEMO_TENANT) as conn:
+            queued = await execute_tool(
+                conn, DEMO_TENANT, name, {"body": "unchanged"}, source_system="chat"
+            )
+            await approve_action(
+                conn, DEMO_TENANT, queued.data["pending_action_id"],
+                edited_input={"body": "unchanged"},
+            )
+            action = await _action(conn, queued.data["pending_action_id"])
+            events = await _events_for(conn, name)
+            await _cleanup(conn, [queued.data["task_id"]])
+        return action, events
+    finally:
+        _unregister(name)
+        await db.close_pool()
+
+
+def test_unchanged_input_is_not_recorded_as_an_edit():
+    action, events = asyncio.run(_noop_edit_scenario())
+
+    assert action["status"] == "executed"
+    assert "edited" not in action["result"]
+    approved = [e for e in events if e["event_type"] == "action.approved"][0]
+    assert "edited" not in approved["payload"]
+    assert "original_input" not in approved["payload"]

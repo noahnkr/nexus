@@ -56,10 +56,18 @@ export function DateTimePicker({
   value,
   onChange,
   placeholder = "Any time",
+  className,
+  align = "left",
 }: {
   value?: string;
   onChange: (iso: string | undefined) => void;
   placeholder?: string;
+  // Trigger classes — pass "w-full" to make it fill a form column (the default is
+  // content-width, which is what a filter bar wants).
+  className?: string;
+  // Which edge the popover hangs from. Right-align it when the field sits in the
+  // right-hand column of a narrow container, or the 320px panel overflows.
+  align?: "left" | "right";
 }) {
   const selected = value ? new Date(value) : null;
   const valid = selected && !isNaN(selected.getTime()) ? selected : null;
@@ -106,10 +114,18 @@ export function DateTimePicker({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex h-9 items-center gap-2 rounded-md border border-input bg-background px-2.5 text-sm text-foreground transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className={cn(
+          "flex h-9 items-center gap-2 rounded-md border border-input bg-background px-2.5 text-sm text-foreground transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          className,
+        )}
       >
-        <CalendarDays className="h-4 w-4 text-muted-foreground" />
-        <span className={valid ? "" : "text-muted-foreground"}>
+        <CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span
+          className={cn(
+            "flex-1 truncate text-left",
+            valid ? "" : "text-muted-foreground",
+          )}
+        >
           {valid ? formatLabel(valid) : placeholder}
         </span>
         {valid && (
@@ -120,7 +136,7 @@ export function DateTimePicker({
               e.stopPropagation();
               onChange(undefined);
             }}
-            className="ml-0.5 rounded-full text-muted-foreground hover:text-foreground"
+            className="ml-0.5 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
             aria-label="Clear"
           >
             <X className="h-3.5 w-3.5" />
@@ -129,7 +145,12 @@ export function DateTimePicker({
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full z-40 mt-1 w-80 rounded-lg border bg-card p-3 shadow-lg">
+        <div
+          className={cn(
+            "absolute top-full z-40 mt-1 w-80 rounded-lg border bg-card p-3 shadow-lg",
+            align === "right" ? "right-0" : "left-0",
+          )}
+        >
           <div className="mb-2 flex items-center justify-between">
             <button
               type="button"

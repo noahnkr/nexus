@@ -80,6 +80,8 @@ register(ToolDef(
     handler=_send_sms,
     safe=False,
     gate_describe=_describe_send_sms,
+    # The approver may reword the draft; the recipient is not up for editing.
+    editable_fields=["body"],
 ))
 
 register(ToolDef(
@@ -100,4 +102,5 @@ register(ToolDef(
     handler=_send_email,
     safe=False,
     gate_describe=_describe_send_email,
+    editable_fields=["subject", "body"],
 ))

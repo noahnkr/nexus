@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Awaitable, Callable
 
+from .formula import evaluate
+
 
 @dataclass
 class FunctionDef:
@@ -68,22 +70,22 @@ def _as_number(value: Any, what: str) -> float:
         raise ValueError(f"{what} must be a number.")
 
 
-async def _weighted_score(conn, args: dict) -> float:
-    """A builder-configurable weighted sum: `sum(weights[k] * inputs[k])`. The
-    formula lives in the recipe as data (weights + input references), so scoring a
-    lead's value or an applicant's fit is tunable in the builder without code. A
-    missing input contributes nothing; a non-numeric input is a plain error."""
-    weights = args.get("weights") or {}
-    inputs = args.get("inputs") or {}
-    if not isinstance(weights, dict) or not isinstance(inputs, dict):
-        raise ValueError("weighted_score needs 'weights' and 'inputs' objects.")
-    total = 0.0
-    for key, weight in weights.items():
-        raw = inputs.get(key)
-        if raw is None or (isinstance(raw, str) and not raw.strip()):
-            continue  # missing/blank input contributes nothing
-        total += _as_number(weight, f"weight for '{key}'") * _as_number(raw, f"input '{key}'")
-    return round(total, 4)
+async def _formula(conn, args: dict) -> float:
+    """Evaluate an arithmetic expression (M15c).
+
+    By the time this runs, the engine's template pass has already substituted
+    `{{field}}` references, so `"{{trigger.record.hourly_rate}} * 1.5"` arrives as
+    `"22.5 * 1.5"`. Parsing (never `eval`) keeps a user-typed expression on the
+    control path safe; see services/automations/formula.py."""
+    raw = args.get("formula")
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        raise ValueError("formula needs a 'formula' expression.")
+    try:
+        value = evaluate(str(raw))
+    except ValueError as exc:
+        # Prefix so the run's error line names which step failed and why.
+        raise ValueError(f"Couldn't compute the formula: {exc}")
+    return round(value, 4)
 
 
 async def _days_since(conn, args: dict) -> int:
@@ -118,32 +120,30 @@ register_function(FunctionDef(
 ))
 
 register_function(FunctionDef(
-    name="weighted_score",
+    name="formula",
     description=(
-        "Compute a weighted score: the sum of each factor's weight times its value. "
-        "Configure it in the builder — 'weights' maps factor names to numbers, and "
-        "'inputs' maps the same names to values (often templated, e.g. "
-        "{{entity.years_experience}}). Use it to score a lead's value or an "
-        "applicant's fit, then branch on the result with a condition."
+        "Calculate a number from an arithmetic expression, then branch on the "
+        "result with a condition. Supports + - * /, parentheses, negative numbers, "
+        "and round(value) or round(value, decimals). Reference record fields with "
+        "{{templates}} — they are substituted before the calculation runs, e.g. "
+        "'({{trigger.record.hourly_rate}} + 2) * 1.5' or "
+        "'round({{entity.visits_last_month}} / 4, 1)'. Every referenced field must "
+        "hold a number."
     ),
     input_schema={
         "type": "object",
         "properties": {
-            "weights": {
-                "type": "object",
-                "description": "Map of factor name to numeric weight (e.g. {\"experience\": 3}).",
-            },
-            "inputs": {
-                "type": "object",
+            "formula": {
+                "type": "string",
                 "description": (
-                    "Map of the same factor names to values to score (numbers or "
-                    "{{templated}} references)."
+                    "The expression to calculate, e.g. "
+                    "'{{entity.years_experience}} * 3 + 10'."
                 ),
             },
         },
-        "required": ["weights", "inputs"],
+        "required": ["formula"],
     },
-    handler=_weighted_score,
+    handler=_formula,
 ))
 
 register_function(FunctionDef(

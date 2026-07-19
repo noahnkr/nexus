@@ -117,11 +117,18 @@ async def _scenario():
                 )
                 receipts = (await cur.fetchone())[0]
 
-                # Every event this run uses the connector name as source_system.
+                # Every event the INGEST path writes is tagged with its connector
+                # name. Scoped to exclude the other (non-connector) source systems:
+                # this is a shared test tenant, every event in a transaction shares
+                # that transaction's timestamp, and other suites legitimately write
+                # user/chat/automation events — asserting global quiet in the window
+                # made this fail on unrelated additions. The drift it guards against
+                # (an adapter forgetting to tag its source) is still caught.
                 await cur.execute(
                     "select count(*) from public.events where created_at >= %s "
                     "and source_system not in "
-                    "('welcomehome','goto','wellsky','gmail','gcal')",
+                    "('welcomehome','goto','wellsky','gmail','gcal') "
+                    "and source_system not in ('user','chat','mcp','automation','system')",
                     (start_ts,),
                 )
                 foreign_sources = (await cur.fetchone())[0]

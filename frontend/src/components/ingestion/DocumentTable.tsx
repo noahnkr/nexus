@@ -1,5 +1,3 @@
-import { Trash2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -15,12 +13,15 @@ function fmt(ts: string) {
   return new Date(ts).toLocaleString();
 }
 
+// Rows open the document drawer (M15b), where chunks, status detail, and a
+// confirmed Delete live. Delete is deliberately no longer a one-click column
+// here — removing a document also removes everything indexed from it.
 export function DocumentTable({
   documents,
-  onDelete,
+  onOpen,
 }: {
   documents: DocumentOut[];
-  onDelete: (id: string) => void;
+  onOpen: (doc: DocumentOut) => void;
 }) {
   if (documents.length === 0) {
     return (
@@ -30,19 +31,30 @@ export function DocumentTable({
     );
   }
   return (
-    <div className="rounded-lg border">
+    <div className="overflow-x-auto rounded-lg border">
       <Table>
         <TableHeader>
           <TableRow>
             <TableHead>Filename</TableHead>
             <TableHead>Status</TableHead>
             <TableHead>Uploaded</TableHead>
-            <TableHead className="w-10" />
           </TableRow>
         </TableHeader>
         <TableBody>
           {documents.map((doc) => (
-            <TableRow key={doc.id}>
+            <TableRow
+              key={doc.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => onOpen(doc)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onOpen(doc);
+                }
+              }}
+              className="cursor-pointer"
+            >
               <TableCell className="font-medium">
                 {doc.filename}
                 {doc.status === "failed" && doc.error && (
@@ -52,18 +64,8 @@ export function DocumentTable({
               <TableCell>
                 <StatusBadge status={doc.status} />
               </TableCell>
-              <TableCell className="text-muted-foreground">
+              <TableCell className="whitespace-nowrap text-muted-foreground">
                 {fmt(doc.created_at)}
-              </TableCell>
-              <TableCell>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => onDelete(doc.id)}
-                  aria-label={`Delete ${doc.filename}`}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
               </TableCell>
             </TableRow>
           ))}

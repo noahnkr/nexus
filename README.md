@@ -9,7 +9,7 @@ See [`PRD.md`](./PRD.md) for full scope, target users, and success criteria. See
 ## What's Here
 
 - **Chat** — threaded conversations with an AI agent that has retrieval access to unstructured business context (via RAG) and structured business data (via parameterized tools), and can take gated actions (send a message, create a task, trigger an automation)
-- **Ingestion** — manual document upload with chunking/embedding status
+- **Knowledge** — manual document upload with chunking/embedding status, plus the free-text instructions that shape how the assistant writes
 - **Control Center Home** — landing dashboard: at-a-glance counts, recent activity, quick actions
 - **Tasks** — anything needing a human decision, created automatically or manually
 - **Event Log** — an immutable audit trail of everything that happened across every connected system and every agent action
@@ -173,9 +173,23 @@ npm run test                  # vitest unit tests (the template tokenizer, Modul
 
 Home (default route `/`) is a light landing page — greeting, at-a-glance counts,
 recent activity, and quick actions. Chat moved to `/chat`; it streams responses over
-SSE with RAG citations and renders assistant replies as GFM markdown. Ingestion
-(`/ingestion`) is drag-and-drop upload with live status via Supabase Realtime; Tasks
-(`/tasks`) and Event Log (`/events`) round out the shell.
+SSE with RAG citations and renders assistant replies as GFM markdown — including
+document-style answers (headings, lists, tables) when you ask for one, with wide
+tables scrolling inside the bubble. The send button becomes a **stop** button while a
+reply streams; stopping keeps whatever was written (annotated "— stopped") and
+persists it, so the conversation stays valid and the next question answers normally.
+Knowledge
+(`/knowledge`, formerly `/ingestion`, which now redirects) is drag-and-drop upload
+with live status via Supabase Realtime; Tasks (`/tasks`), Event Log (`/events`), and
+Settings (`/settings`) round out the shell.
+
+The sidebar collapses to an icon rail (remembered per browser in
+`localStorage["nexus.sidebar"]`). Below `md` it becomes an overlay drawer behind a
+hamburger in a slim top bar, and the core pages — Home, Chat, Tasks, Leads,
+Caregivers, Event Log, Knowledge, Settings — lay out for small screens: grids
+collapse, filter rows wrap, tables scroll inside their own containers, and drawers
+go full-width. The schedule board and automation builder stay desktop-first; they
+scroll horizontally rather than reflow.
 
 ### Auth Setup (Module 6)
 
@@ -205,6 +219,40 @@ dashboard (a one-time ops step):
 Then sign in at `/login`; the app redirects there automatically when signed out.
 `NEXUS_TENANT_ID` is no longer read for the user surface — it remains only for the
 machine paths (webhooks, `/mcp`), the seed, and the test harness.
+
+### Workspace Settings & Agent Instructions (Module 15b)
+
+`tenant_settings` is a core table holding one jsonb row per tenant of *user-facing*
+preferences. It is deliberately not a config store: infra config and credentials
+stay in env vars, nothing here is a secret, and the machine paths (`/mcp`, webhooks)
+never read it.
+
+```
+GET   /api/settings     every whitelisted key, defaults filled in
+PATCH /api/settings     partial update; 422 on an unknown key or invalid value
+```
+
+Keys are whitelisted in `services/settings.py`, which owns each one's default,
+validation, and audit label — adding a preference needs no migration:
+
+| key | v1 rule |
+| --- | --- |
+| `workspace_name` | text ≤ 80; shown in the Home greeting |
+| `agent_instructions` | text ≤ 4000; appended to the chat system prompt |
+| `agent_tone` | `balanced` (default) \| `professional` \| `friendly` \| `concise` |
+
+Every write logs a `settings.updated` event naming the changed **keys only** —
+never their values, since instructions are free text an owner may treat as private.
+
+**How instructions reach the model.** `build_system()` returns the system array for
+a turn: `PERSONA` first and unmodified, then — only when instructions or a
+non-balanced tone are set — a second block framed as *"Follow these preferences
+where they don't conflict with the rules above"*. `cache_control` sits on the last
+block so the whole prefix is cached. The ordering is the safety property: tenant
+text can shape tone and content, never the approval gate or tool semantics.
+
+Edit instructions at `/knowledge?tab=instructions`; `/settings` covers profile
+(display name and password, both via Supabase Auth), workspace name, and theme.
 
 ### Connecting an MCP Client (Module 3a)
 
@@ -286,16 +334,31 @@ GET   /api/tasks?status=&priority=&cursor=&limit=50   list tasks (status is a
 POST  /api/tasks                                       create a task {title, description?, priority?, due_at?} → 201
 PATCH /api/tasks/{id}  {status}                        transition a task (pending↔in_progress,
         either → done|cancelled); 409 on terminal states or while an action is pending
-POST  /api/pending-actions/{id}/approve               approve → execute the queued tool
+POST  /api/pending-actions/{id}/approve  {tool_input?}  approve → execute the queued
+        tool; the optional tool_input carries approver edits (see below)
 POST  /api/pending-actions/{id}/reject  {note?}       reject → cancel the task
 ```
 
 No new env vars. `tasks` and `pending_actions` are in the Realtime publication, so
 the **Tasks** page (nav → Tasks) live-updates: it lists tasks with status tabs
-(Open / Done / Cancelled / All) and a priority filter, inline Approve/Reject cards
-for queued actions, status transitions, manual task creation, and a "View history"
-drill-down into the Event Log. In Chat, a gated call shows an amber "queued" chip
-linking to the Tasks page.
+(Open / Done / Cancelled / All) and a priority filter, status transitions, manual
+task creation, and a drill-down into the Event Log. In Chat, a gated call shows an
+amber "queued" chip linking to the Tasks page.
+
+**Task drawer & approve-with-edits (Module 15a).** Task cards are summaries —
+type icon and label ("Text message", "Scheduling"), status, and an "awaiting your
+approval" chip. Clicking one opens a right-side drawer that renders the queued call
+as labeled fields (*To*, *Message*, *Subject*) instead of raw JSON; the payload
+survives only in a collapsed "technical detail" expander at the bottom of the drawer.
+
+A tool may declare `editable_fields` on its `ToolDef` — currently `send_sms.body`
+and `send_email.subject`/`body`. Those fields render as inputs in the drawer, so an
+office user can fix a typo in a drafted message and click **Approve with edits**
+instead of rejecting and re-asking. The API re-validates every edit against the
+tool's `editable_fields` (422 on any other key, or on blank text, with the action
+left pending), applies it to the stored `tool_input` *before* execution — one
+execution path, unchanged — and records the change on the `action.approved` event as
+`edited`, `edited_fields`, and the agent's `original_input`.
 
 ### Automations Engine (Module 7a)
 
@@ -419,9 +482,9 @@ The Automations Center is the UI over the engine — nav → **Automations**. It
   keys), and a reorderable list of THEN step cards whose forms are generated from
   each tool/function's JSON Schema (with a `{{template}}` inserter on text fields).
   Step types: run a tool, write with AI, wait a fixed delay, **wait until an event
-  happens** (with optional timeout), only-continue-if, and compute a value —
-  including a generic **`weighted_score`** function (builder-configurable weights +
-  inputs) for lead-value / applicant-fit scoring. The server is the validator of
+  happens** (with optional timeout), only-continue-if, and compute a value — see
+  the **`formula`** function under Module 15c for lead-value / applicant-fit
+  scoring. The server is the validator of
   record — a 422 renders inline; editing a definition with runs in flight returns a
   409 with a "cancel runs & save" path.
 - **Describe → draft → review** — on the create page, describe the automation in
@@ -459,10 +522,10 @@ grouped by *the selected trigger's* actual fields inserts them at the caret — 
 user never types a dotted path), and read-mode surfaces show "…to Phone" instead of
 `{{trigger.payload.phone}}`. The stored recipe format is unchanged — chips are a
 view over the same `{{path}}` strings, so existing recipes and the draft agent are
-untouched. The `function` step is presented as **"Run a calculation"**, and
-`weighted_score` gets a *field × weight* editor (with a live formula line) that
-writes its `{weights, inputs}` args without the user seeing JSON. New function:
-**`days_until`** (credential-expiry / upcoming-date automations). Condition *values*
+untouched. The `function` step is presented as **"Run a calculation"** (its editor
+landed in Module 15c, below — M11b shipped the step type but left the args on the
+generic schema form). New function: **`days_until`** (credential-expiry /
+upcoming-date automations). Condition *values*
 are now template-rendered by the engine (an unresolvable value makes the condition
 false, never a run failure). Frontend adds a `vitest` unit suite for the tokenizer
 (`npm run test`); no new backend env vars or migrations.
@@ -660,6 +723,54 @@ window — usable from chat/MCP and as an automation step), gated `record_call_o
 `assign_caregiver`; `create_schedule`/`cancel_schedule` now delegate to the seam. The
 `schedule.called_out` event (payload carries `replacement_schedule_id`) is the trigger
 for call-out automations. No new frontend deps or env vars.
+
+### Formula steps & manual runs (Module 15c)
+
+**`formula` function.** The "Run a calculation" step now takes a real arithmetic
+expression instead of the `weighted_score` weights/inputs objects that fell through
+to raw-JSON textareas:
+
+```
+({{trigger.record.hourly_rate}} + 2) * 1.5
+round({{entity.visits_last_month}} / 4, 1)
+```
+
+Grammar: decimal numbers, `+ - * /`, parentheses, unary minus, and
+`round(value[, digits])`. Field references are ordinary `{{templates}}` — the
+engine substitutes them before the function runs, so every referenced field must
+hold a number.
+
+It is evaluated by a hand-rolled tokenizer + recursive-descent parser
+(`services/automations/formula.py`) — **no `eval`, no `ast`**. The expression comes
+from a recipe a non-technical user typed, so it is untrusted input on the
+automation control path; a parser can only ever produce a number. Errors are plain
+language ("'pending' is not a number", "Division by zero") and fail the run per M7
+semantics. `lib/formula.ts` mirrors the grammar in the builder for live validation
+only — the backend parser is the authority at run time.
+
+`weighted_score` — the old weights/inputs function — was **retired** in the same
+change. No stored recipe referenced it, so nothing needed migrating; a recipe that
+still names it now fails validation rather than running silently against a missing
+function.
+
+**Manual runs.** A manual-trigger automation has no trigger to be "active" for —
+`POST /api/automations/{id}/run` has always ignored `status` — so the grid and
+detail page now show a neutral **Manual** badge and a **Run** button instead of a
+pause toggle that did nothing.
+
+**`run_automation` tool** lets chat and MCP start one: *"run the Score this lead
+automation"*. It is **safe** (starting a run has no direct external effect; a gated
+step inside it still parks for approval) and refuses three ways, all in plain
+language: unknown name (the message lists what *can* be run), a non-manual trigger,
+and — extending the automations-don't-trigger-automations rule to the tool layer —
+any call arriving with `source_system='automation'`. It is deliberately absent from
+the builder's step palette for that last reason, while chat and MCP see it normally.
+
+The run is created **deferred** (`status='waiting'`, `wake_at=now()`): a tool
+handler executes inside `execute_tool`'s savepoint on an uncommitted transaction,
+and `advance_run` opens its own per-step transactions that wouldn't see the row. The
+M7b waker picks it up on its next poll, so the run starts a few seconds later on
+machinery that already exists.
 
 ### Schedule board (Module 12b)
 

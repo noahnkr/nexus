@@ -323,3 +323,80 @@ def test_no_tool_turn_matches_m1_sequence(monkeypatch):
     assert calls == []
     citations = next(d for e, d in events if e == "citations")
     assert citations["sources"] == []
+
+
+# ---------------------------------------------------------------------------
+# Module 15a — output-formatting guidance (cheap regression pin, no model call)
+# ---------------------------------------------------------------------------
+def test_persona_asks_for_document_style_output():
+    """The formatting rules are prompt-only, so pin the load-bearing words: without
+    them the model reverts to flat prose for care plans and comparisons."""
+    persona = cs.PERSONA.lower()
+    assert "tables" in persona
+    assert "markdown" in persona
+    assert "headings" in persona
+    # Conversational answers must NOT get the document treatment.
+    assert "prose" in persona
+
+
+# ---------------------------------------------------------------------------
+# Module 15b — tenant instructions injected as a second system block
+# ---------------------------------------------------------------------------
+def test_build_system_default_is_one_cached_block():
+    blocks = cs.build_system({"agent_instructions": "", "agent_tone": "balanced"})
+    assert len(blocks) == 1
+    assert blocks[0]["text"] == cs.PERSONA
+    assert blocks[0]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_build_system_handles_missing_settings():
+    """A tenant with no row (or a caller passing None) must not crash the turn."""
+    assert cs.build_system(None) == cs.build_system({})
+    assert len(cs.build_system(None)) == 1
+
+
+def test_build_system_appends_instructions_after_persona():
+    blocks = cs.build_system({
+        "agent_instructions": "Always sign off as The Nexus Team.",
+        "agent_tone": "friendly",
+    })
+    assert len(blocks) == 2
+    # PERSONA stays FIRST and unmodified — the gating rules outrank tenant text.
+    assert blocks[0]["text"] == cs.PERSONA
+    assert "cache_control" not in blocks[0]
+    # The tenant block is framed as subordinate and carries tone + instructions.
+    second = blocks[1]["text"]
+    assert second.startswith(cs.INSTRUCTIONS_PREAMBLE)
+    assert "warm and conversational" in second
+    assert "Always sign off as The Nexus Team." in second
+    # cache_control moves to the last block so the whole prefix is cached.
+    assert blocks[1]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_build_system_tone_alone_still_injects():
+    blocks = cs.build_system({"agent_instructions": "", "agent_tone": "concise"})
+    assert len(blocks) == 2
+    assert "Be brief" in blocks[1]["text"]
+
+
+def test_turn_sends_the_built_system_array(monkeypatch):
+    """The loop must actually send build_system's output, on every iteration."""
+    store = {"messages": [], "events": []}
+    captured, calls = [], []
+    script = [(["hi"], FakeMessage([FakeBlock("text", text="hi")], "end_turn"))]
+    _install(monkeypatch, store, script, captured, calls)
+    monkeypatch.setattr(
+        cs, "get_settings",
+        lambda conn: _async_value({"agent_instructions": "Be terse.", "agent_tone": "balanced"}),
+    )
+
+    asyncio.run(_collect("t", "thread-1", "hello"))
+
+    system = captured[0]["system"]
+    assert len(system) == 2
+    assert system[0]["text"] == cs.PERSONA
+    assert "Be terse." in system[1]["text"]
+
+
+async def _async_value(value):
+    return value

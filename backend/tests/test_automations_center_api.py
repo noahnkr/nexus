@@ -312,9 +312,14 @@ def test_vocabulary():
     assert out["no_auth"] == 401
 
     v = out["vocab"]
-    # every registered tool + function is present, with schema + safety
+    # every registered tool + function is present, with schema + safety — except
+    # the tools deliberately kept out of the step palette (M15c): run_automation
+    # refuses every automation-sourced call, so a step calling it could only fail.
+    from app.routers.automations import _STEP_EXCLUDED_TOOLS
+
     tool_names = {t["name"] for t in v["tools"]}
-    assert {t.name for t in all_tools()} == tool_names
+    assert {t.name for t in all_tools()} - _STEP_EXCLUDED_TOOLS == tool_names
+    assert _STEP_EXCLUDED_TOOLS and not (_STEP_EXCLUDED_TOOLS & tool_names)
     assert all("input_schema" in t and "safe" in t and "label" in t for t in v["tools"])
     fn_names = {f["name"] for f in v["functions"]}
     assert {f.name for f in all_functions()} <= fn_names
