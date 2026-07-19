@@ -2,10 +2,8 @@ import { useState } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/Select";
 import type { LeadCreate, LeadFacets } from "@/lib/api";
-
-const selectClass =
-  "h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 // Manual lead entry — name required, the rest optional. Region comes from the
 // facets endpoint so the dropdown always matches the tenant's regions. New leads
@@ -131,18 +129,14 @@ export function LeadCreateDialog({
               <label className="mb-1 block text-xs font-medium text-muted-foreground">
                 Region
               </label>
-              <select
-                className={selectClass}
+              <Select
                 value={regionId}
-                onChange={(e) => setRegionId(e.target.value)}
-              >
-                <option value="">No region</option>
-                {facets.regions.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.name}
-                  </option>
-                ))}
-              </select>
+                onChange={setRegionId}
+                options={facets.regions.map((r) => ({ value: r.id, label: r.name }))}
+                clearable
+                placeholder="No region"
+                aria-label="Region"
+              />
             </div>
           </div>
         </div>

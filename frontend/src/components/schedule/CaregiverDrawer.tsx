@@ -4,6 +4,7 @@ import { Plus, X } from "lucide-react";
 import { api, type Availability, type CaregiverRoster } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { TimePicker } from "@/components/ui/TimePicker";
 
 // The one roster-editing surface (a full roster view stays in Future Plans). Edits
 // contact/address/zip, the languages/traits tags matching feeds on, and per-day
@@ -219,29 +220,30 @@ export function CaregiverDrawer({
                     <div className="flex-1 space-y-1.5">
                       {ranges.map((r, i) => (
                         <div key={i} className="flex items-center gap-1.5">
-                          <Input
-                            type="time"
-                            value={r.start}
-                            onChange={(e) =>
-                              setDay(
-                                key,
-                                ranges.map((x, j) => (j === i ? { ...x, start: e.target.value } : x)),
-                              )
-                            }
-                            className="w-28"
-                          />
+                          <div className="w-32">
+                            <TimePicker
+                              value={r.start}
+                              onChange={(v) =>
+                                setDay(
+                                  key,
+                                  ranges.map((x, j) => (j === i ? { ...x, start: v } : x)),
+                                )
+                              }
+                            />
+                          </div>
                           <span className="text-xs text-muted-foreground">–</span>
-                          <Input
-                            type="time"
-                            value={r.end}
-                            onChange={(e) =>
-                              setDay(
-                                key,
-                                ranges.map((x, j) => (j === i ? { ...x, end: e.target.value } : x)),
-                              )
-                            }
-                            className="w-28"
-                          />
+                          <div className="w-32">
+                            <TimePicker
+                              value={r.end}
+                              align="end"
+                              onChange={(v) =>
+                                setDay(
+                                  key,
+                                  ranges.map((x, j) => (j === i ? { ...x, end: v } : x)),
+                                )
+                              }
+                            />
+                          </div>
                           <button
                             type="button"
                             onClick={() => setDay(key, ranges.filter((_, j) => j !== i))}

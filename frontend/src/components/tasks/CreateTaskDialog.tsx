@@ -3,12 +3,17 @@ import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, type SelectOption } from "@/components/ui/Select";
+import { PRIORITY_DOT } from "./TaskCard";
 import type { TaskCreate, TaskPriority } from "@/lib/api";
 
 const PRIORITIES: TaskPriority[] = ["low", "normal", "high", "urgent"];
 
-const selectClass =
-  "h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+const PRIORITY_OPTIONS: SelectOption<TaskPriority>[] = PRIORITIES.map((p) => ({
+  value: p,
+  label: p,
+  dot: PRIORITY_DOT[p],
+}));
 
 export function CreateTaskDialog({
   open,
@@ -98,17 +103,12 @@ export function CreateTaskDialog({
               <label className="mb-1 block text-xs font-medium text-muted-foreground">
                 Priority
               </label>
-              <select
-                className={selectClass}
+              <Select
                 value={priority}
-                onChange={(e) => setPriority(e.target.value as TaskPriority)}
-              >
-                {PRIORITIES.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
+                onChange={setPriority}
+                options={PRIORITY_OPTIONS}
+                aria-label="Priority"
+              />
             </div>
             <div className="flex-1">
               <label className="mb-1 block text-xs font-medium text-muted-foreground">
@@ -116,7 +116,7 @@ export function CreateTaskDialog({
               </label>
               <input
                 type="datetime-local"
-                className={selectClass}
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 value={dueAt}
                 onChange={(e) => setDueAt(e.target.value)}
               />

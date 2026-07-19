@@ -3,13 +3,25 @@ import { ChevronDown, ChevronRight, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, type SelectOption } from "@/components/ui/Select";
 import { Card, CardContent } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/automations/ConfirmDialog";
 import { CAREGIVER_STAGES } from "@/lib/caregivers";
 import type { Applicant, ApplicantFacets, ApplicantPatch, ApplicantStage } from "@/lib/api";
 
-const selectClass =
-  "h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
+// Stage-tone → dot color, matching the funnel badges (tones live in lib/caregivers.ts).
+const TONE_DOT: Record<string, string> = {
+  info: "bg-info",
+  success: "bg-success",
+  secondary: "bg-muted-foreground",
+  default: "bg-primary",
+};
+
+const STAGE_OPTIONS: SelectOption<ApplicantStage>[] = CAREGIVER_STAGES.map((s) => ({
+  value: s.key,
+  label: s.label,
+  dot: TONE_DOT[s.tone] ?? "bg-primary",
+}));
 
 function Field({ label, value }: { label: string; value: string | null }) {
   return (
@@ -210,18 +222,14 @@ export function ApplicantInfoCard({
 
         <div className="border-t pt-4">
           <p className="mb-1.5 text-xs font-medium text-muted-foreground">Stage</p>
-          <select
-            className={selectClass}
+          <Select
+            className="w-56"
             value={applicant.stage}
             disabled={busy}
-            onChange={(e) => onStageChange(e.target.value as ApplicantStage)}
-          >
-            {CAREGIVER_STAGES.map((s) => (
-              <option key={s.key} value={s.key}>
-                {s.label}
-              </option>
-            ))}
-          </select>
+            onChange={onStageChange}
+            options={STAGE_OPTIONS}
+            aria-label="Applicant stage"
+          />
         </div>
 
         {hasAvailability && (

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Select, type SelectOption } from "@/components/ui/Select";
 
 // A themed date-time picker (WS6) — replaces the native <input type="datetime-local">
 // whose calendar icon and popup don't follow the app theme. Dependency-free: a
@@ -9,14 +10,29 @@ import { cn } from "@/lib/utils";
 
 const DOW = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 const MINUTES = Array.from({ length: 12 }, (_, i) => i * 5);
-const HOURS = Array.from({ length: 24 }, (_, i) => i);
-
-const selectClass =
-  "h-8 rounded-md border border-input bg-background px-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+const HOURS12 = Array.from({ length: 12 }, (_, i) => i + 1); // 1..12
 
 function pad(n: number): string {
   return String(n).padStart(2, "0");
 }
+
+function to12(hour24: number): { hour12: number; period: "AM" | "PM" } {
+  const period = hour24 < 12 ? "AM" : "PM";
+  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+  return { hour12, period };
+}
+
+function to24(hour12: number, period: "AM" | "PM"): number {
+  const base = hour12 % 12; // 12 -> 0
+  return period === "PM" ? base + 12 : base;
+}
+
+const HOUR12_OPTIONS: SelectOption[] = HOURS12.map((h) => ({ value: String(h), label: String(h) }));
+const MINUTE_OPTIONS: SelectOption[] = MINUTES.map((m) => ({ value: String(m), label: pad(m) }));
+const PERIOD_OPTIONS: SelectOption<"AM" | "PM">[] = [
+  { value: "AM", label: "AM" },
+  { value: "PM", label: "PM" },
+];
 
 function sameDay(a: Date, b: Date): boolean {
   return (
@@ -113,7 +129,7 @@ export function DateTimePicker({
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full z-40 mt-1 w-72 rounded-lg border bg-card p-3 shadow-lg">
+        <div className="absolute left-0 top-full z-40 mt-1 w-80 rounded-lg border bg-card p-3 shadow-lg">
           <div className="mb-2 flex items-center justify-between">
             <button
               type="button"
@@ -167,26 +183,31 @@ export function DateTimePicker({
 
           <div className="mt-3 flex items-center justify-between border-t pt-3">
             <div className="flex items-center gap-1.5">
-              <span className="text-xs text-muted-foreground">Time</span>
-              <select
-                className={selectClass}
-                value={hour}
-                onChange={(e) => pickTime(Number(e.target.value), minute)}
-              >
-                {HOURS.map((h) => (
-                  <option key={h} value={h}>{pad(h)}</option>
-                ))}
-              </select>
+              <Select
+                className="w-16"
+                size="sm"
+                value={String(to12(hour).hour12)}
+                onChange={(v) => pickTime(to24(Number(v), to12(hour).period), minute)}
+                options={HOUR12_OPTIONS}
+                aria-label="Hour"
+              />
               <span className="text-xs text-muted-foreground">:</span>
-              <select
-                className={selectClass}
-                value={minute}
-                onChange={(e) => pickTime(hour, Number(e.target.value))}
-              >
-                {MINUTES.map((m) => (
-                  <option key={m} value={m}>{pad(m)}</option>
-                ))}
-              </select>
+              <Select
+                className="w-16"
+                size="sm"
+                value={String(minute)}
+                onChange={(v) => pickTime(hour, Number(v))}
+                options={MINUTE_OPTIONS}
+                aria-label="Minute"
+              />
+              <Select<"AM" | "PM">
+                className="w-20"
+                size="sm"
+                value={to12(hour).period}
+                onChange={(v) => pickTime(to24(to12(hour).hour12, v), minute)}
+                options={PERIOD_OPTIONS}
+                aria-label="AM or PM"
+              />
             </div>
             <button
               type="button"

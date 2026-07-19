@@ -34,6 +34,15 @@ const PRIORITY_VARIANT: Record<TaskPriority, "default" | "secondary" | "destruct
   low: "outline",
 };
 
+// Leading-dot colors for the priority Select (Module 13), mirroring the badge
+// variant tones so priority reads the same in filters, dialogs, and cards.
+export const PRIORITY_DOT: Record<TaskPriority, string> = {
+  urgent: "bg-destructive",
+  high: "bg-primary",
+  normal: "bg-muted-foreground",
+  low: "bg-muted-foreground/40",
+};
+
 const STATUS_VARIANT: Record<
   TaskStatus,
   "secondary" | "outline" | "success" | "warning" | "info"

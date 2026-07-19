@@ -1,10 +1,14 @@
 import { X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { DateTimePicker } from "@/components/ui/DateTimePicker";
+import { Select, type SelectOption } from "@/components/ui/Select";
+import {
+  eventTypeLabel,
+  isDisplayableEventType,
+  isDisplayableSource,
+  sourceLabel,
+} from "@/lib/recipe";
 import type { EventFacets, EventQuery } from "@/lib/api";
-
-const selectClass =
-  "h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 export function EventFilters({
   facets,
@@ -17,34 +21,38 @@ export function EventFilters({
 }) {
   const hasEntity = Boolean(filters.entity_type && filters.entity_id);
 
+  // Labeled options; filtering stays keyed by the raw value (label is a view only).
+  // Test/dummy noise from the observed facets is hidden.
+  const sourceOptions: SelectOption[] = facets.source_systems
+    .filter(isDisplayableSource)
+    .map((s) => ({ value: s, label: sourceLabel(s) }));
+  const eventTypeOptions: SelectOption[] = facets.event_types
+    .filter(isDisplayableEventType)
+    .map((t) => ({ value: t, label: eventTypeLabel(t), mono: t }));
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <select
-          className={selectClass}
+        <Select
+          className="w-44"
           value={filters.source_system ?? ""}
-          onChange={(e) => onChange({ source_system: e.target.value || undefined })}
-        >
-          <option value="">All sources</option>
-          {facets.source_systems.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
+          onChange={(v) => onChange({ source_system: v || undefined })}
+          options={sourceOptions}
+          clearable
+          placeholder="All sources"
+          aria-label="Source filter"
+        />
 
-        <select
-          className={selectClass}
+        <Select
+          className="w-56"
           value={filters.event_type ?? ""}
-          onChange={(e) => onChange({ event_type: e.target.value || undefined })}
-        >
-          <option value="">All event types</option>
-          {facets.event_types.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
+          onChange={(v) => onChange({ event_type: v || undefined })}
+          options={eventTypeOptions}
+          clearable
+          searchable
+          placeholder="All event types"
+          aria-label="Event type filter"
+        />
 
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
           From

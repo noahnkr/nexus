@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { fieldGroups, type FieldContext } from "./FieldPicker";
+import { fieldGroups, type FieldContext } from "@/lib/fields";
 
 // The condition FIELD side — a dotted path (not a template). A controlled text input
 // plus a popover of grouped, labeled fields from the catalog (Module 11b): label
 // primary, mono path secondary. Picking one fills the field; free text is always
 // allowed (suggestions guide, they don't constrain). Keyboard: arrows/enter/escape.
+// Module 13: hint-only groups (cron/manual, an unlinked event) and an explicit
+// empty-state row now render, so the popover is never a silent no-op — the reported
+// "no fields appear" bug surfaced when the only groups were hints and the popover
+// short-circuited on an empty flat list.
 export function FieldCombobox({
   value,
   onChange,
@@ -23,18 +27,20 @@ export function FieldCombobox({
   const [active, setActive] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
 
-  // Flat, labeled entries grouped by source; filtered by the current text.
+  // Grouped, labeled entries filtered by the current text. Hints are preserved so
+  // an explanatory group ("Pick an event above…") still renders even with no items.
   const groups = useMemo(() => fieldGroups(ctx), [ctx]);
   const q = value.trim().toLowerCase();
   const shownGroups = groups
     .map((g) => ({
       title: g.title,
+      hint: g.hint,
       items: g.items.filter(
         (it) =>
           !q || it.label.toLowerCase().includes(q) || it.path.toLowerCase().includes(q),
       ),
     }))
-    .filter((g) => g.items.length > 0);
+    .filter((g) => g.items.length > 0 || g.hint);
   const flat = shownGroups.flatMap((g) => g.items);
 
   useEffect(() => {
@@ -90,13 +96,16 @@ export function FieldCombobox({
           className,
         )}
       />
-      {open && flat.length > 0 && (
+      {open && (
         <div className="absolute left-0 top-full z-30 mt-1 max-h-64 w-72 overflow-y-auto rounded-lg border bg-card py-1 shadow-lg">
           {shownGroups.map((g) => (
             <div key={g.title}>
               <p className="px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                 {g.title}
               </p>
+              {g.hint && g.items.length === 0 && (
+                <p className="px-3 pb-1 text-[12px] italic text-muted-foreground/80">{g.hint}</p>
+              )}
               {g.items.map((it) => {
                 flatIndex += 1;
                 const i = flatIndex;
@@ -121,6 +130,11 @@ export function FieldCombobox({
               })}
             </div>
           ))}
+          {shownGroups.length === 0 && (
+            <p className="px-3 py-2 text-[12px] text-muted-foreground">
+              {q ? "No matching fields." : "No fields here yet."}
+            </p>
+          )}
         </div>
       )}
     </div>

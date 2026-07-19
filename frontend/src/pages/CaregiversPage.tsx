@@ -14,6 +14,7 @@ import { supabase } from "@/lib/supabase";
 import { CAREGIVERS_VIEW } from "@/lib/caregivers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/Select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { EmptyState } from "@/components/layout/EmptyState";
@@ -23,9 +24,6 @@ import { HiringMetrics } from "@/components/caregivers/HiringMetrics";
 import { FunnelStrip, type FunnelSegment } from "@/components/pipeline/FunnelStrip";
 
 const PAGE_SIZE = 50;
-
-const selectClass =
-  "h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 // Build the funnel segments from the view config + live counts + bound sequences.
 function buildSegments(
@@ -220,18 +218,15 @@ export function CaregiversPage() {
         />
 
         <div className="flex flex-wrap items-center gap-3">
-          <select
-            className={selectClass}
+          <Select
+            className="w-44"
             value={source}
-            onChange={(e) => patchParam({ source: e.target.value || undefined })}
-          >
-            <option value="">All sources</option>
-            {facets.sources.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
+            onChange={(v) => patchParam({ source: v || undefined })}
+            options={facets.sources.map((s) => ({ value: s, label: s }))}
+            clearable
+            placeholder="All sources"
+            aria-label="Source filter"
+          />
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
