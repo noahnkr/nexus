@@ -24,6 +24,7 @@ from .routers import (
     events,
     home,
     leads,
+    referrals,
     schedule,
     settings as settings_router,
     tasks,
@@ -73,6 +74,7 @@ app.include_router(events.router)
 app.include_router(tasks.router)
 app.include_router(automations.router)
 app.include_router(leads.router)
+app.include_router(referrals.router)
 app.include_router(applicants.router)
 app.include_router(clients.router)
 app.include_router(schedule.router)

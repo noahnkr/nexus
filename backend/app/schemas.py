@@ -801,3 +801,87 @@ class SettingsPatch(BaseModel):
     workspace_name: str | None = None
     agent_instructions: str | None = None
     agent_tone: str | None = None
+
+
+# --- Referrals dashboard (Module 17, vertical seam) --------------------------
+class PartnerOut(BaseModel):
+    """A tracked referral partner — enrichment over `leads.source` by exact name."""
+    id: str
+    name: str
+    category: str | None = None  # null = untyped
+    contact_name: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class PartnerCreate(BaseModel):
+    name: str
+    category: str | None = None
+    contact_name: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    notes: str | None = None
+
+
+class PartnerPatch(BaseModel):
+    """Partial update. Only fields present in the body are written (the router reads
+    `model_fields_set`). A rename simply re-joins by the new name, by design."""
+    name: str | None = None
+    category: str | None = None
+    contact_name: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    notes: str | None = None
+
+
+class ReferralPartnerRef(BaseModel):
+    """The partner enrichment attached to a source row (null when untracked)."""
+    id: str
+    category: str | None = None
+    contact_name: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    notes: str | None = None
+
+
+class MonthCount(BaseModel):
+    month: str  # 'YYYY-MM' bucket key (the frontend formats the label)
+    count: int = 0
+
+
+class ReferralSourceRow(BaseModel):
+    """One distinct `leads.source` (or a tracked partner with no leads yet)."""
+    source: str
+    partner: ReferralPartnerRef | None = None
+    leads_total: int = 0
+    in_pipeline: int = 0
+    converted: int = 0
+    lost: int = 0
+    conversion_rate: float = 0.0  # converted / all leads for this source, %
+    avg_days_to_convert: float | None = None  # null when none observed
+    hours_won: float = 0.0  # summed authorized_hours/week of linked won clients
+    last_lead_at: datetime | None = None
+    monthly: list[MonthCount] = []
+
+
+class BestConverter(BaseModel):
+    source: str
+    conversion_rate: float
+
+
+class ReferralTotals(BaseModel):
+    tracked_partners: int = 0
+    leads_last_30_days: int = 0
+    total_hours_won: float = 0.0
+    best_converter: BestConverter | None = None  # null below the leads threshold
+
+
+class ReferralMetrics(BaseModel):
+    """Deterministic seam SQL — no LLM near the numbers (CLAUDE.md)."""
+    sources: list[ReferralSourceRow] = []
+    totals: ReferralTotals
+    months: list[str] = []  # the ordered 'YYYY-MM' window (oldest first)
+    monthly: list[MonthCount] = []  # ALL leads per month (the overall trend row)

@@ -814,6 +814,95 @@ export interface ClientQuery {
   offset?: number;
 }
 
+// --- Referrals dashboard (Module 17, vertical seam) --------------------------
+export type PartnerCategory =
+  | "hospital"
+  | "senior_living"
+  | "discharge_planner"
+  | "home_health"
+  | "community"
+  | "other";
+
+export interface Partner {
+  id: string;
+  name: string;
+  category: PartnerCategory | null; // null = untyped
+  contact_name: string | null;
+  phone: string | null;
+  email: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PartnerCreate {
+  name: string;
+  category?: PartnerCategory | null;
+  contact_name?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  notes?: string | null;
+}
+
+// Only the fields being changed are sent. A rename simply re-joins by the new name.
+export interface PartnerPatch {
+  name?: string;
+  category?: PartnerCategory | null;
+  contact_name?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  notes?: string | null;
+}
+
+// The partner enrichment attached to a source row (null when the source is untracked).
+export interface ReferralPartnerRef {
+  id: string;
+  category: PartnerCategory | null;
+  contact_name: string | null;
+  phone: string | null;
+  email: string | null;
+  notes: string | null;
+}
+
+export interface MonthCount {
+  month: string; // 'YYYY-MM' bucket key
+  count: number;
+}
+
+// One distinct leads.source (or a tracked partner with no leads yet).
+export interface ReferralSourceRow {
+  source: string;
+  partner: ReferralPartnerRef | null;
+  leads_total: number;
+  in_pipeline: number;
+  converted: number;
+  lost: number;
+  conversion_rate: number; // converted / all leads for this source, %
+  avg_days_to_convert: number | null;
+  hours_won: number; // summed authorized hours/week of linked won clients
+  last_lead_at: string | null;
+  monthly: MonthCount[];
+}
+
+export interface BestConverter {
+  source: string;
+  conversion_rate: number;
+}
+
+export interface ReferralTotals {
+  tracked_partners: number;
+  leads_last_30_days: number;
+  total_hours_won: number;
+  best_converter: BestConverter | null; // null below the leads threshold
+}
+
+export interface ReferralMetrics {
+  sources: ReferralSourceRow[];
+  totals: ReferralTotals;
+  months: string[]; // ordered 'YYYY-MM' window (oldest first)
+  monthly: MonthCount[]; // ALL leads per month (the overall trend row)
+}
+
 // --- Home summary ------------------------------------------------------------
 export interface HomeSummary {
   open_tasks: number;
@@ -1142,6 +1231,29 @@ export const api = {
     authFetch(`/api/clients/${clientId}/contacts/${contactId}`, {
       method: "DELETE",
     }).then((r) => {
+      if (!r.ok && r.status !== 204) throw new Error(`delete failed: ${r.status}`);
+    }),
+
+  // Referrals dashboard (Module 17)
+  getReferralMetrics: (months?: number) =>
+    authFetch(`/api/referrals/metrics${queryString({ months })}`).then(
+      json<ReferralMetrics>,
+    ),
+  listPartners: () => authFetch("/api/referrals/partners").then(json<Partner[]>),
+  createPartner: (body: PartnerCreate) =>
+    authFetch("/api/referrals/partners", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<Partner>),
+  patchPartner: (id: string, body: PartnerPatch) =>
+    authFetch(`/api/referrals/partners/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<Partner>),
+  deletePartner: (id: string) =>
+    authFetch(`/api/referrals/partners/${id}`, { method: "DELETE" }).then((r) => {
       if (!r.ok && r.status !== 204) throw new Error(`delete failed: ${r.status}`);
     }),
 };

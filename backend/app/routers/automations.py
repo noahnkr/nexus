@@ -75,6 +75,8 @@ _KNOWN_EVENT_TYPES = [
     "schedule.cancelled", "schedule.updated",
     "schedule.checked_in", "schedule.checked_out",
     "applicant.created", "applicant.stage_changed",
+    "referral_partner.created", "referral_partner.updated",
+    "referral_partner.deleted",
 ]
 
 # The five core trigger fields every event carries, with plain-language labels
