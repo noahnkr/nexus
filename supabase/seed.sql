@@ -41,54 +41,90 @@ insert into public.leads (id, tenant_id, name, phone, email, source, status, reg
   ('33333333-0000-0000-0000-000000000006', '00000000-0000-0000-0000-000000000001', 'Raymond Cho',      '+16195550106', 'rcho@example.com',        'website',   'lost',      '11111111-0000-0000-0000-000000000003', '{"hours_per_week": 10}')
 on conflict do nothing;
 
--- Clients (two converted from leads, one standalone)
-insert into public.clients (id, tenant_id, lead_id, name, phone, email, status, requirements) values
-  ('44444444-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', '33333333-0000-0000-0000-000000000004', 'Walter Grimes',   '+16195550104', 'wgrimes@example.com',   'active', '{"hours_per_week": 40, "needed_qualifications": ["CNA","Hoyer Lift Certified"]}'),
-  ('44444444-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', '33333333-0000-0000-0000-000000000005', 'Estelle Ferraro', '+16195550105', 'estelle.f@example.com', 'active', '{"hours_per_week": 25, "needed_qualifications": ["HHA","Medication Management"]}'),
-  ('44444444-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', null,                                    'Frank Delgado',   '+16195550107', 'fdelgado@example.com',  'paused', '{"hours_per_week": 12, "needed_qualifications": ["HHA"]}')
-on conflict do nothing;
+-- Clients (two converted from leads, one standalone). address/zip/languages/
+-- preferences feed the matching engine (12a); update-in-place so a re-seed
+-- refreshes them on the already-seeded rows. zips: Walter 92008 (North County),
+-- Estelle 92101 (Central), Frank 91910 (South Bay). preferences are free tags the
+-- caregiver `traits` match against.
+insert into public.clients (id, tenant_id, lead_id, name, phone, email, status, requirements, address, zip, languages, preferences) values
+  ('44444444-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', '33333333-0000-0000-0000-000000000004', 'Walter Grimes',   '+16195550104', 'wgrimes@example.com',   'active', '{"hours_per_week": 40, "needed_qualifications": ["CNA","Hoyer Lift Certified"]}', '123 Oak Street, Carlsbad',    '92008', '{en}',    '{"female caregiver","no dogs"}'),
+  ('44444444-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', '33333333-0000-0000-0000-000000000005', 'Estelle Ferraro', '+16195550105', 'estelle.f@example.com', 'active', '{"hours_per_week": 25, "needed_qualifications": ["HHA","Medication Management"]}', '45 Palm Avenue, San Diego',   '92101', '{en,es}', '{"speaks spanish"}'),
+  ('44444444-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', null,                                    'Frank Delgado',   '+16195550107', 'fdelgado@example.com',  'paused', '{"hours_per_week": 12, "needed_qualifications": ["HHA"]}', '9 Bayview Road, Chula Vista', '91910', '{en}',    '{}')
+on conflict (id) do update set
+  address     = excluded.address,
+  zip         = excluded.zip,
+  languages   = excluded.languages,
+  preferences = excluded.preferences;
 
--- Resources (caregivers) with overlapping regions/qualifications
-insert into public.resources (id, tenant_id, name, phone, email, qualification_ids, region_ids, availability) values
+-- Resources (caregivers) with overlapping regions/qualifications. address/zip/
+-- languages/traits feed the matching engine (12a); update-in-place so a re-seed
+-- refreshes them. zips: Alicia 92008 (same zip as Walter), Carmen 92009 (North
+-- County region-covered for Walter, not same zip), Brian 92101 (same zip as
+-- Estelle), Derek 91915, Evelyn 92104. traits are the caregiver-side tags client
+-- `preferences` match against.
+insert into public.resources (id, tenant_id, name, phone, email, qualification_ids, region_ids, availability, address, zip, languages, traits) values
   ('55555555-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 'Alicia Moreno', '+16195550201', 'alicia.m@example.com',
      '{22222222-0000-0000-0000-000000000001,22222222-0000-0000-0000-000000000004}',
      '{11111111-0000-0000-0000-000000000001,11111111-0000-0000-0000-000000000002}',
-     '{"mon":["08:00-16:00"],"tue":["08:00-16:00"],"wed":["08:00-16:00"]}'),
+     '{"mon":["08:00-16:00"],"tue":["08:00-16:00"],"wed":["08:00-16:00"]}',
+     '780 Elm Court, Carlsbad', '92008', '{en,es}', '{"female caregiver"}'),
   ('55555555-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'Brian Okafor',  '+16195550202', 'brian.o@example.com',
      '{22222222-0000-0000-0000-000000000002,22222222-0000-0000-0000-000000000005}',
      '{11111111-0000-0000-0000-000000000002,11111111-0000-0000-0000-000000000003}',
-     '{"thu":["09:00-17:00"],"fri":["09:00-17:00"],"sat":["10:00-14:00"]}'),
+     '{"thu":["09:00-17:00"],"fri":["09:00-17:00"],"sat":["10:00-14:00"]}',
+     '210 Market Street, San Diego', '92101', '{en}', '{}'),
   ('55555555-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'Carmen Ruiz',   '+16195550203', 'carmen.r@example.com',
      '{22222222-0000-0000-0000-000000000001,22222222-0000-0000-0000-000000000003,22222222-0000-0000-0000-000000000005}',
      '{11111111-0000-0000-0000-000000000001}',
-     '{"mon":["12:00-20:00"],"wed":["12:00-20:00"],"fri":["12:00-20:00"]}'),
+     '{"mon":["12:00-20:00"],"wed":["12:00-20:00"],"fri":["12:00-20:00"]}',
+     '55 Ridgeline Drive, Oceanside', '92009', '{en,es}', '{"female caregiver","speaks spanish"}'),
   ('55555555-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000001', 'Derek Hsu',     '+16195550204', 'derek.h@example.com',
      '{22222222-0000-0000-0000-000000000002,22222222-0000-0000-0000-000000000004}',
      '{11111111-0000-0000-0000-000000000003}',
-     '{"tue":["07:00-15:00"],"thu":["07:00-15:00"]}'),
+     '{"tue":["07:00-15:00"],"thu":["07:00-15:00"]}',
+     '18 Harbor Lane, Chula Vista', '91915', '{en,tl}', '{}'),
   ('55555555-0000-0000-0000-000000000005', '00000000-0000-0000-0000-000000000001', 'Evelyn Park',   '+16195550205', 'evelyn.p@example.com',
      '{22222222-0000-0000-0000-000000000003,22222222-0000-0000-0000-000000000005}',
      '{11111111-0000-0000-0000-000000000002,11111111-0000-0000-0000-000000000003}',
-     '{"sat":["08:00-18:00"],"sun":["08:00-18:00"]}')
-on conflict do nothing;
-
--- Schedules (past + upcoming, mixed statuses)
-insert into public.schedules (id, tenant_id, resource_id, client_id, start_time, end_time, status) values
-  ('66666666-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000001', '44444444-0000-0000-0000-000000000001', now() - interval '7 days'  + interval '8 hours', now() - interval '7 days'  + interval '12 hours', 'completed'),
-  ('66666666-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000001', '44444444-0000-0000-0000-000000000001', now() - interval '5 days'  + interval '8 hours', now() - interval '5 days'  + interval '12 hours', 'completed'),
-  ('66666666-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000002', '44444444-0000-0000-0000-000000000002', now() - interval '3 days'  + interval '9 hours', now() - interval '3 days'  + interval '14 hours', 'completed'),
-  ('66666666-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000004', '44444444-0000-0000-0000-000000000002', now() - interval '2 days'  + interval '7 hours', now() - interval '2 days'  + interval '11 hours', 'no_show'),
-  ('66666666-0000-0000-0000-000000000005', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000003', '44444444-0000-0000-0000-000000000001', now() - interval '1 days'  + interval '12 hours', now() - interval '1 days' + interval '16 hours', 'cancelled'),
-  ('66666666-0000-0000-0000-000000000006', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000001', '44444444-0000-0000-0000-000000000001', now() + interval '1 days'  + interval '8 hours', now() + interval '1 days'  + interval '12 hours', 'scheduled'),
-  ('66666666-0000-0000-0000-000000000007', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000002', '44444444-0000-0000-0000-000000000002', now() + interval '2 days'  + interval '9 hours', now() + interval '2 days'  + interval '14 hours', 'scheduled'),
-  ('66666666-0000-0000-0000-000000000008', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000005', '44444444-0000-0000-0000-000000000003', now() + interval '4 days'  + interval '8 hours', now() + interval '4 days'  + interval '18 hours', 'scheduled')
--- Schedule times are relative to now(): refresh them on re-seed so the demo
--- always has past (completed/cancelled) and upcoming (scheduled) visits, rather
--- than freezing at first-seed time and drifting into the past.
+     '{"sat":["08:00-18:00"],"sun":["08:00-18:00"]}',
+     '404 Cedar Way, San Diego', '92104', '{en,tl}', '{"female caregiver"}')
 on conflict (id) do update set
-  start_time = excluded.start_time,
-  end_time   = excluded.end_time,
-  status     = excluded.status;
+  address   = excluded.address,
+  zip       = excluded.zip,
+  languages = excluded.languages,
+  traits    = excluded.traits;
+
+-- Schedules (past + upcoming, mixed statuses). 12a adds required_qualification_ids
+-- (visit-level skill requirements the matcher disqualifies on), plus two shapes the
+-- board needs demo data for: an OPEN shift (unfilled, resource_id null) and a
+-- CALLED-OUT visit with its linked OPEN replacement (replaces_schedule_id). Two
+-- scheduled visits (…06/…07) carry required quals so the board resolves them to names.
+insert into public.schedules (id, tenant_id, resource_id, client_id, start_time, end_time, status, required_qualification_ids, replaces_schedule_id, notes) values
+  ('66666666-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000001', '44444444-0000-0000-0000-000000000001', now() - interval '7 days'  + interval '8 hours', now() - interval '7 days'  + interval '12 hours', 'completed', '{}', null, null),
+  ('66666666-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000001', '44444444-0000-0000-0000-000000000001', now() - interval '5 days'  + interval '8 hours', now() - interval '5 days'  + interval '12 hours', 'completed', '{}', null, null),
+  ('66666666-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000002', '44444444-0000-0000-0000-000000000002', now() - interval '3 days'  + interval '9 hours', now() - interval '3 days'  + interval '14 hours', 'completed', '{}', null, null),
+  ('66666666-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000004', '44444444-0000-0000-0000-000000000002', now() - interval '2 days'  + interval '7 hours', now() - interval '2 days'  + interval '11 hours', 'no_show', '{}', null, null),
+  ('66666666-0000-0000-0000-000000000005', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000003', '44444444-0000-0000-0000-000000000001', now() - interval '1 days'  + interval '12 hours', now() - interval '1 days' + interval '16 hours', 'cancelled', '{}', null, null),
+  ('66666666-0000-0000-0000-000000000006', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000001', '44444444-0000-0000-0000-000000000001', now() + interval '1 days'  + interval '8 hours', now() + interval '1 days'  + interval '12 hours', 'scheduled', '{22222222-0000-0000-0000-000000000001}', null, null),
+  ('66666666-0000-0000-0000-000000000007', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000002', '44444444-0000-0000-0000-000000000002', now() + interval '2 days'  + interval '9 hours', now() + interval '2 days'  + interval '14 hours', 'scheduled', '{22222222-0000-0000-0000-000000000002}', null, null),
+  ('66666666-0000-0000-0000-000000000008', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000005', '44444444-0000-0000-0000-000000000003', now() + interval '4 days'  + interval '8 hours', now() + interval '4 days'  + interval '18 hours', 'scheduled', '{}', null, null),
+  -- Open shift: unfilled, requires a CNA (resource_id null ⇒ status 'open').
+  ('66666666-0000-0000-0000-000000000009', '00000000-0000-0000-0000-000000000001', null,                                    '44444444-0000-0000-0000-000000000001', now() + interval '3 days'  + interval '8 hours', now() + interval '3 days'  + interval '12 hours', 'open', '{22222222-0000-0000-0000-000000000001}', null, 'Needs a CNA — morning shift'),
+  -- Called-out visit (…0A) + its linked open replacement (…0B). Alicia dropped a
+  -- Walter visit; the replacement carries the same window / required quals.
+  ('66666666-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000001', '44444444-0000-0000-0000-000000000001', now() + interval '2 days'  + interval '8 hours', now() + interval '2 days'  + interval '12 hours', 'called_out', '{22222222-0000-0000-0000-000000000001}', null, null),
+  ('66666666-0000-0000-0000-00000000000b', '00000000-0000-0000-0000-000000000001', null,                                    '44444444-0000-0000-0000-000000000001', now() + interval '2 days'  + interval '8 hours', now() + interval '2 days'  + interval '12 hours', 'open', '{22222222-0000-0000-0000-000000000001}', '66666666-0000-0000-0000-00000000000a', 'Replacement for Alicia Moreno call-out')
+-- Schedule times are relative to now(): refresh them on re-seed so the demo
+-- always has past (completed/cancelled) and upcoming (scheduled/open) visits,
+-- rather than freezing at first-seed time and drifting into the past.
+on conflict (id) do update set
+  resource_id                = excluded.resource_id,
+  start_time                 = excluded.start_time,
+  end_time                   = excluded.end_time,
+  status                     = excluded.status,
+  required_qualification_ids = excluded.required_qualification_ids,
+  replaces_schedule_id       = excluded.replaces_schedule_id,
+  notes                      = excluded.notes;
 
 -- external_ids (two leads + one client mapped to fake CRM ids)
 insert into public.external_ids (id, tenant_id, entity_type, entity_id, source_system, external_id, last_synced_at) values

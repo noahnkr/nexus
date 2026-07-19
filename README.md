@@ -593,6 +593,74 @@ New agent tools: `list_applicants`, `get_applicant` (read), and gated
 `update_applicant_stage` (delegates to `move_stage()`). No new frontend deps or env
 vars. Smart summaries need `ANTHROPIC_API_KEY`.
 
+### Smart Staffing — Scheduling backend (Module 12a)
+
+The scheduling API turns the one `schedules` table into an operational board. A visit
+is a caregiver–client assignment over a window; the same table now also holds
+**open shifts** (`status='open'`, `resource_id` null — a visit nobody holds yet) and
+**called-out** visits (`status='called_out'` — the original is retained so "who called
+out" stays queryable, and a linked `open` replacement is created via
+`replaces_schedule_id`). Coherence CHECKs keep status and caregiver-presence honest:
+`open ⇒ no caregiver`, `scheduled/called_out/completed/no_show ⇒ a caregiver`.
+
+Every status change goes through one transition seam
+(`services/views/schedule.py`) — REST routes and gated tools both delegate, so a board
+click and a chat/MCP-approved action leave the same events
+(`schedule.created` / `assigned` / `called_out` / `cancelled` / `updated`). Nothing
+else writes schedule state.
+
+Matching (`services/views/matching.py`) is deterministic and explainable — no LLM in
+the ranking. `rank_candidates` disqualifies caregivers missing a required
+qualification, holding an overlapping visit, or being the one who just called out,
+then scores the rest with plain-language reasons/warnings:
+
+| Signal | Weight |
+| --- | --- |
+| Availability fit (window inside a declared weekday range) | +30 |
+| Same ZIP as the client | +20 |
+| Client ZIP within one of the caregiver's regions | +12 |
+| Continuity (per completed past visit with this client, capped) | +5 each, cap +20 |
+| Shares a language with the client | +10 |
+| Matches a client preference tag (per match, capped) | +5 each, cap +10 |
+| Light schedule this week (< 20h) | +5 |
+| Would push the caregiver over 40h this week | −15 |
+
+Weights are constants in the seam file (one client, explainability over tunability —
+a re-template swaps the file wholesale). ISO-week hours (`hours_this_week`, the load
+component) share one SQL definition between the roster payload and the matcher.
+
+```
+GET   /api/schedule?week=YYYY-MM-DD   board for the Mon–Sun window:
+        {week_start, visits[] (client/resource + resolved qual names), caregivers[]
+         (full roster + hours_this_week)}; cancelled visits omitted
+POST  /api/schedules {client_id,resource_id?,start_time,end_time,
+        required_qualification_ids?,notes?,repeat_weekly_until?}
+        create a visit (assigned) or open shift; repeat weekly (≤12 extra rows,
+        all-or-nothing); 201 with every created row
+PATCH /api/schedules/{id}             edit window/notes/required-quals on open/scheduled,
+        or record an outcome (completed|no_show via set_outcome); other statuses refused
+POST  /api/schedules/{id}/call-out    scheduled → called_out + linked open replacement
+POST  /api/schedules/{id}/assign {resource_id}   fill/reassign; warnings on qual/
+        availability gaps (non-blocking), 409 on a hard time conflict
+POST  /api/schedules/{id}/cancel      terminal verb (there is NO delete)
+GET   /api/schedules/{id}/candidates  ranked caregivers for an open shift; 409 otherwise
+GET   /api/roster?week=YYYY-MM-DD     caregiver roster + hours_this_week
+PATCH /api/roster/{id}                edit contact/address/zip/languages/traits/
+        availability; emits one resource.updated naming changed fields
+POST  /api/schedules/{id}/notify {resource_id,message}   text a caregiver
+```
+
+`notify` is **gated even from a human click**: `send_sms` is a system-executed
+external effect, so it runs through `execute_tool` and its approval gate (one seam,
+one audit trail) and returns the queued action id — the human-UI exemption covers
+entity record writes, not outbound messaging.
+
+New agent tools: safe `find_available_caregivers` (ranks for a shift or an ad-hoc
+window — usable from chat/MCP and as an automation step), gated `record_call_out` and
+`assign_caregiver`; `create_schedule`/`cancel_schedule` now delegate to the seam. The
+`schedule.called_out` event (payload carries `replacement_schedule_id`) is the trigger
+for call-out automations. No new frontend deps or env vars.
+
 ## Notes on Templating
 
 This repo is designed so that a second deployment, in a different vertical, requires:

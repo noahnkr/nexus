@@ -1,6 +1,6 @@
 # Progress
 
-Module-by-module build status for the Nexus Control Center. Claude Code reads this file at the start of a session to understand where the project stands; update the relevant tasks as work completes. Module numbering follows the PRD's module list (0–12; renumbered 2026-07-16 when Module 7 was expanded into Modules 7–10 and n8n was dropped).
+Module-by-module build status for the Nexus Control Center. Claude Code reads this file at the start of a session to understand where the project stands; update the relevant tasks as work completes. Module numbering follows the PRD's module list (0–14; renumbered 2026-07-16 when Module 7 was expanded into Modules 7–10 and n8n was dropped).
 
 ## Convention
 - `[ ]` = Not started
@@ -192,8 +192,57 @@ Module-by-module build status for the Nexus Control Center. Claude Code reads th
 - `[x]` Task 4 — "Run a calculation": `CalculationEditor` for `weighted_score` (field × weight rows, auto-slugged keys, live formula, `isSimpleWeightedScore` raw-JSON fallback), add-menu relabel + `FUNCTION_LABELS`; build clean
 - `[x]` Task 5 — Read-mode token labels (`describeStep`/`describeCondition`/`readDetail` labelized via the catalog on the detail page) + README `npm run test` note; vitest/build/pytest green *(live draft→builder→run regression walk pending running stack)*
 
-### Module 12: Smart Staffing and Scheduling
-`[ ]` Not started.
+### Module 12: Smart Staffing & Scheduling
+`[-]` Planned (2026-07-18) — 🔴 Complex, split per the planning rule into two sub-plans. Parent: `.agent/plans/12.smart-staffing-scheduling.md`. Build order 12a → 12b (12b renders 12a's API). User-locked: week-board UI (caregivers as rows, pinned Open-shifts row); address/zip/languages/trait fields added to clients+resources for the match score (zip-level geography — no geocoding); call-out flow = owner picks from ranked candidates, then gated `send_sms` notify approved in Tasks; repeat-weekly visit creation expanded server-side (≤12 weeks). The generic decision-harness stays deferred — matching is a deterministic seam service + safe tool. Requires Modules 7–11 built.
 
-### Module 13: Advanced RAG & Scale-Up
-`[ ]` Not started.
+**12a — Scheduling backend & matching engine** (`.agent/plans/12a.scheduling-backend-matching.md`): `[x]` Code complete (2026-07-18) — migration pushed live + re-seeded; full pytest green (226), frontend build clean.
+- `[x]` Task 1 — Migration `20260723000000_entities_scheduling.sql` (nullable `resource_id`, `open`/`called_out` statuses + coherence CHECKs, `required_qualification_ids`/`replaces_schedule_id`/`notes`, client/resource address+zip+languages+traits, Realtime) pushed live + re-seeded (open shift `…0009`, called-out pair `…000a`/`…000b`); seam threading (`ENTITY_TABLES["schedule"]` already present, `SQL_SCHEMA_DOC`, `_KNOWN_EVENT_TYPES` + `EVENT_ENTITY_TYPES` gain the five `schedule.*` types, `SCHEDULE_STATUSES`). Coherence/RLS/vocabulary tests green (`test_schedule_api.py::test_schedule_schema_and_seeds`/`test_schedule_in_vocabulary`)
+- `[x]` Task 2 — Transition seam `services/views/schedule.py` (`create_visits` w/ ≤12-week expansion + all-or-nothing overlap reject, `assign` w/ soft qual/availability warnings, `call_out` → linked replacement row + `replacement_schedule_id` payload, `cancel`, `set_outcome`; one event per transition, caller's tx; `ScheduleError` w/ `not_found`/`conflict` flags). `test_schedule_seam` green
+- `[x]` Task 3 — Matching engine `services/views/matching.py` (`rank_candidates`: disqualifiers + weighted components w/ plain-language reasons/warnings, top 10, deterministic; shared `availability_covers`/`missing_qualification_names`/`week_hours*` helpers). `test_matching` green
+- `[x]` Task 4 — Tools: safe `find_available_caregivers`, gated `record_call_out`/`assign_caregiver`, `create_schedule`/`cancel_schedule` rewired to the seam (create gains optional `resource_id`/`required_qualification_ids`/`repeat_weekly_until`/`notes`); labels; read-tool joins left-joined so open shifts surface. `test_schedule_tools` green
+- `[x]` Task 5 — REST `routers/schedule.py` (wired in `main.py`): week board feed, visit create/expand + PATCH (edits/outcomes) + call-out/assign/cancel/candidates, roster list/PATCH (`resource.updated`), gated `notify` via `execute_tool`. `test_schedule_api` green (401 + RLS isolation covered)
+- `[x]` Task 6 — Wrap-up: README Scheduling section; full pytest green (226 passed), frontend `npm run build` clean
+
+**12b — Schedule board & call-out flow** (`.agent/plans/12b.schedule-board.md`):
+- `[ ]` Task 1 — `lib/schedule.ts` + `/schedule` page shell (week nav ↔ URL, feed fetch, Realtime, nav entry)
+- `[ ]` Task 2 — `ScheduleBoard` grid + `VisitBlock` chips (pinned Open-shifts row, status tones both themes, day columns — no hour geometry)
+- `[ ]` Task 3 — `VisitDrawer` (call-out confirm → follows to replacement, `CandidateList` w/ reason chips, assign → gated-SMS prompt → queued chip) + `VisitCreateDialog` (repeat weekly)
+- `[ ]` Task 4 — `CaregiverDrawer` roster editing + Home `open_shifts` StatCard (+ `home.py` count + test)
+- `[ ]` Task 5 — Wrap-up: README board + call-out recipe docs; live call-out → automation → LangSmith walk
+
+### Module 13: Automation Builder Enhancements
+`[-]` Planned (2026-07-18) — ⚠️ Medium, single plan: `.agent/plans/13.automation-builder-enhancements.md` (fallback split: Tasks 1–4 builder work / Tasks 5–6 app sweep). Builds **after** Module 12 (user decision 2026-07-18) so the dropdown sweep also covers the schedule board's selects. User-locked: gate the entry IF section on event triggers; plain-language event labels (raw type as secondary text); verify-and-fix the reported empty IF-field-dropdown bug live; hand-rolled `ui/Select` (no new deps); full sweep of every native `<select>` (~28 sites incl. ScheduleBuilder, SchemaForm enums, DateTimePicker). No migrations, no env vars, no engine/recipe-format changes.
+
+- `[ ]` Task 1 — `ui/Select.tsx` (options/groups, search, clearable, icons/dots/descriptions/mono, listbox ARIA + keyboard nav) + `eventTypeLabel`/`operatorLabel` in `lib/recipe.ts`; vitest `recipe.test.ts` + build clean
+- `[ ]` Task 2 — Field-scope verify & fix: extract `fieldGroups` → `lib/fields.ts` + vitest scope suite; gated catalog-content pytest on the vocabulary; `FieldCombobox` hints + empty state; **live browser check of the IF field dropdown** (the reported bug) with root-cause fix if it reproduces
+- `[ ]` Task 3 — Entry IF gated on event triggers (confirm-and-clear on trigger-type switch, hint line, edit-mode warning for saved non-event conditions) + `TriggerSentence`/`ScheduleBuilder` selects → `Select`
+- `[ ]` Task 4 — Builder step sweep: `StepCard` (tool grouped Safe/Requires-approval, delay unit, function, wait event, model), `ConditionChips` operator plain labels, `SchemaForm` enum; `rg '<select'` clean in builder files
+- `[ ]` Task 5 — App-wide sweep: tasks (priority dots), event log (labeled filters), leads/caregivers (filters, dialogs, info cards, stage dots), `DateTimePicker` month/year, Module 12b schedule components; `rg '<select' frontend/src` → zero
+- `[ ]` Task 6 — Wrap-up: full pytest + vitest + build green; live draft→builder→save→run regression walk
+
+### Module 14: External Services Connectors
+`[-]` Planned (2026-07-18) — 🔴 Complex, split per the planning rule into three sub-plans. Parent: `.agent/plans/14.external-connectors.md`. Build order 14a → 14b → 14c (14a lands the shared sync loop + ingest seam). Planning-time research ran against the **live APIs**: WelcomeHome token verified (`/api/ping` 200, account 18754), full OpenAPI spec reviewed (no webhooks — export-CSV polling confirmed; live stage list captured for the stage map); GoTo client verified to reject `client_credentials` (auth-code bootstrap required). User-locked: WelcomeHome + GoTo + Gmail/GCal in scope, WellSky direct adapter deferred (data arrives via the WelcomeHome sync); one-way inbound + gated outbound actions only; in-app connector sync loop; GoTo via WebSocket bridge; Google via polling with sync cursors; creds in root `.env` (`WELCOMEHOME_API_KEY`, `GOTO_CONNECT_CLIENT_ID/SECRET` present).
+
+**14a — WelcomeHome CRM sync** (`.agent/plans/14a.welcomehome-sync.md`):
+- `[ ]` Task 1 — Config + `wh_client.py` (export CSV pager w/ Link cursors + rate respect, JSON reference endpoints) + offline fixtures; gated live ping test
+- `[ ]` Task 2 — Migration `20260724000000_entities_crm_sync.sql` (leads `zip`/`address`/`background`, `lead_contacts` + RLS) + seam threading; gated schema tests
+- `[ ]` Task 3 — Ingest-seam refactor (`ingest.py::ingest_payload`; route = verify → ingest); existing connector tests pass unmodified
+- `[ ]` Task 4 — Connector sync loop (`sync.py`, SyncRunner registry, cursors in `connector_state`, `connector.sync_failed` isolation, lifespan + `NEXUS_CONNECTORS_*`); gated loop tests + uvicorn smoke
+- `[ ]` Task 5 — WH mapping (`wh_map.py`: stage map, prospect/resident/influencer/activity mapping) + resolution update path (`updates_entity`, `UPDATERS`, stage moves via `update_lead_status`); offline + gated tests
+- `[ ]` Task 6 — WH runner + `backfill_welcomehome.py` (idempotent, resumable) + `ingest_text` transcription ingestion; offline runner tests + **live backfill against the real account**
+- `[ ]` Task 7 — Wrap-up: README/.env.example; full pytest; **live incremental walk** (WH stage change → lead status + `lead.stage_changed` + sequence fires within one poll)
+
+**14b — GoTo Connect** (`.agent/plans/14b.goto-connect.md`):
+- `[ ]` Task 1 — OAuth bootstrap (`scripts/goto_oauth.py`) + shared `oauth.py` refresh helper; **blocking ops: one-time browser consent → `GOTO_CONNECT_REFRESH_TOKEN` in .env**; gated live token test
+- `[ ]` Task 2 — WS channel + call-events subscription manager (state/renewal in `connector_state`); empirically settle SMS-on-channel vs Messaging-API-poll fallback
+- `[ ]` Task 3 — WebSocket bridge runner (`websockets` dep, reconnect/backoff → `ingest_payload`); fake-WS offline test + **live call → `call.completed` on the lead timeline**
+- `[ ]` Task 4 — Real `send_sms` (`services/messaging/goto_sms.py`, gate unchanged); mocked tests + **live approved SMS delivery**
+- `[ ]` Task 5 — Wrap-up: README bootstrap runbook; full pytest; live walks recorded
+
+**14c — Gmail & Google Calendar** (`.agent/plans/14c.google-workspace.md`):
+- `[ ]` Task 1 — Google OAuth bootstrap + `google_client.py` (httpx, shared TokenSource); **blocking ops: GCP OAuth client + consent → `GOOGLE_*` in .env**; gated live profile test
+- `[ ]` Task 2 — Gmail poll runner (historyId cursor, no backfill, SENT filtered) + attributed-sender attachments → ingestion; offline + **live email w/ PDF → timeline + RAG**
+- `[ ]` Task 3 — Real `send_email` (`gmail_send.py`, gate unchanged, `email.sent` event); mocked + live approved delivery
+- `[ ]` Task 4 — Calendar poll runner (syncToken, 410 resync); offline + live event-change walk
+- `[ ]` Task 5 — Calendar tools: safe `list_calendar_events`, gated `create_calendar_event` (+ `calendar.event.created`, calendar `external_ids`); gated tool tests + live chat-scheduled tour
+- `[ ]` Task 6 — Wrap-up: README Google runbook; full pytest; LangSmith `connector_sync` spans verified

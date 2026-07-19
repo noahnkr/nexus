@@ -18,12 +18,14 @@ from psycopg.rows import dict_row
 
 from ..events import log_event
 from ..views.leads import stage_label
+from ..views.matching import rank_candidates
+from ..views.schedule import ScheduleError, assign, call_out, cancel, create_visits
 from .core import ToolDef, ToolInputError, ToolResult, _jsonable, current_invocation
 from .registry import register
 
 LEAD_STATUSES = ["new", "contacted", "qualified", "converted", "lost"]
 CLIENT_STATUSES = ["active", "paused", "ended"]
-SCHEDULE_STATUSES = ["scheduled", "completed", "cancelled", "no_show"]
+SCHEDULE_STATUSES = ["open", "scheduled", "called_out", "completed", "cancelled", "no_show"]
 # Caregiver-recruiting pipeline stages (Module 10); mirrors views/caregivers.py
 # STAGE_KEYS and the applicants.stage CHECK.
 APPLICANT_STAGES = ["applied", "screening", "interview", "offer", "hired", "rejected"]
@@ -185,7 +187,7 @@ async def _get_client(conn, args: dict) -> ToolResult:
         conn,
         """select s.id, s.start_time, s.end_time, s.status, r.name as resource
              from public.schedules s
-             join public.resources r on r.id = s.resource_id
+             left join public.resources r on r.id = s.resource_id
             where s.client_id = %s and s.start_time >= now()
             order by s.start_time
             limit 5""",
@@ -343,7 +345,7 @@ async def _list_schedules(conn, args: dict) -> ToolResult:
                   c.name as client, r.name as resource
              from public.schedules s
              join public.clients c on c.id = s.client_id
-             join public.resources r on r.id = s.resource_id
+             left join public.resources r on r.id = s.resource_id
             where (%(client_id)s::uuid is null or s.client_id = %(client_id)s::uuid)
               and (%(resource_id)s::uuid is null or s.resource_id = %(resource_id)s::uuid)
               and (%(status)s::text is null or s.status = %(status)s)
@@ -391,6 +393,15 @@ def _require_iso(args: dict, key: str) -> datetime:
 async def _lookup_name(conn, table: str, entity_id: str) -> str | None:
     row = await _fetch_one(conn, f"select name from public.{table} where id=%s", (entity_id,))
     return row["name"] if row else None
+
+
+def _fmt_time(start, end) -> str:
+    """'Tue Jul 21 8:00–12:00' from either datetimes or _jsonable ISO strings — the
+    gate_describe helpers read rows through _fetch_one, which coerces timestamps to
+    strings."""
+    s = start if isinstance(start, datetime) else datetime.fromisoformat(str(start))
+    e = end if isinstance(end, datetime) else datetime.fromisoformat(str(end))
+    return f"{s.strftime('%a %b')} {s.day} {s.hour}:{s.minute:02d}–{e.hour}:{e.minute:02d}"
 
 
 # --- update_lead_status ---
@@ -471,45 +482,84 @@ async def _update_client_status(conn, args: dict) -> ToolResult:
     )
 
 
-# --- create_schedule ---
+def _source_system() -> str:
+    """source_system for the in-flight tool call (chat/mcp/automation), for the seam's
+    event attribution. Falls back to 'chat' outside execute_tool (never in practice)."""
+    inv = current_invocation()
+    return inv["source_system"] if inv else "chat"
+
+
+def _opt_uuids(args: dict, key: str) -> list[str]:
+    """Validate an optional list of uuids (e.g. required_qualification_ids). Absent
+    -> []. Any malformed member is a clean tool error."""
+    raw = args.get(key)
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ToolInputError(f"'{key}' must be a list of ids.")
+    out = []
+    for item in raw:
+        try:
+            out.append(str(uuid.UUID(str(item))))
+        except (ValueError, AttributeError, TypeError):
+            raise ToolInputError(f"'{key}' must contain valid ids.")
+    return out
+
+
+# --- create_schedule (delegates to the create_visits seam) ---
 async def _describe_create_schedule(conn, args: dict) -> str:
     client_id = _require_uuid(args, "client_id")
-    resource_id = _require_uuid(args, "resource_id")
     client = await _lookup_name(conn, "clients", client_id) or "a client"
-    resource = await _lookup_name(conn, "resources", resource_id) or "a caregiver"
     when = str(args.get("start_time", "")).strip()
     tail = f" starting {when}" if when else ""
+    resource_raw = args.get("resource_id")
+    if resource_raw is None or str(resource_raw).strip() == "":
+        return f"Create an open shift for {client}{tail}"
+    resource_id = _require_uuid(args, "resource_id")
+    resource = await _lookup_name(conn, "resources", resource_id) or "a caregiver"
     return f"Schedule a visit for {client} with {resource}{tail}"
 
 
 async def _create_schedule(conn, args: dict) -> ToolResult:
-    resource_id = _require_uuid(args, "resource_id")
+    """Create a visit (assigned) or an open shift (no caregiver), optionally repeated
+    weekly. The single writer is views/schedule.create_visits — no schedule INSERT
+    lives here, so a chat/MCP-approved create emits the same schedule.created events
+    a board create does."""
     client_id = _require_uuid(args, "client_id")
     start_time = _require_iso(args, "start_time")
     end_time = _require_iso(args, "end_time")
-    if end_time <= start_time:
-        raise ToolInputError("'end_time' must be after 'start_time'.")
-    resource = await _lookup_name(conn, "resources", resource_id)
-    if resource is None:
-        raise ToolInputError("No caregiver found with that id.")
-    client = await _lookup_name(conn, "clients", client_id)
-    if client is None:
-        raise ToolInputError("No client found with that id.")
-    row = await _fetch_one(
-        conn,
-        """insert into public.schedules
-             (tenant_id, resource_id, client_id, start_time, end_time)
-           values (app.current_tenant_id(), %s, %s, %s, %s)
-           returning id""",
-        (resource_id, client_id, start_time, end_time),
-    )
+    resource_id = None
+    if args.get("resource_id") not in (None, ""):
+        resource_id = _require_uuid(args, "resource_id")
+    quals = _opt_uuids(args, "required_qualification_ids")
+    repeat_until = None
+    if args.get("repeat_weekly_until") not in (None, ""):
+        repeat_until = _require_iso(args, "repeat_weekly_until")
+    try:
+        rows = await create_visits(
+            conn,
+            client_id=client_id,
+            resource_id=resource_id,
+            start=start_time,
+            end=end_time,
+            required_qualification_ids=quals,
+            notes=args.get("notes"),
+            repeat_weekly_until=repeat_until,
+            source_system=_source_system(),
+        )
+    except ScheduleError as exc:
+        raise ToolInputError(str(exc))
+
+    kind = "visit" if resource_id else "open shift"
+    plural = "" if len(rows) == 1 else "s"
     return ToolResult(
-        f"Scheduled a visit for {client} with {resource}.",
-        {"schedule_id": row["id"], "client": client, "resource": resource},
+        f"Created {len(rows)} {kind}{plural}.",
+        {"schedule_ids": [str(r["id"]) for r in rows], "count": len(rows),
+         "status": rows[0]["status"] if rows else None},
     )
 
 
-# --- cancel_schedule ---
+# --- cancel_schedule (delegates to the cancel seam) ---
 async def _describe_cancel_schedule(conn, args: dict) -> str:
     schedule_id = _require_uuid(args, "schedule_id")
     row = await _fetch_one(
@@ -527,24 +577,134 @@ async def _describe_cancel_schedule(conn, args: dict) -> str:
 
 async def _cancel_schedule(conn, args: dict) -> ToolResult:
     schedule_id = _require_uuid(args, "schedule_id")
+    client = await _fetch_one(
+        conn,
+        "select c.name from public.schedules s join public.clients c on c.id = s.client_id "
+        "where s.id = %s",
+        (schedule_id,),
+    )
+    try:
+        await cancel(conn, schedule_id, _source_system())
+    except ScheduleError as exc:
+        raise ToolInputError(str(exc))
+    who = client["name"] if client else "the client"
+    return ToolResult(
+        f"Cancelled the visit for {who}.",
+        {"schedule_id": schedule_id, "status": "cancelled"},
+    )
+
+
+# --- find_available_caregivers (SAFE — ranks the roster for a shift) ---
+async def _find_available_caregivers(conn, args: dict) -> ToolResult:
+    """Rank caregivers for an open shift (by schedule_id) or an ad-hoc window (client
+    + start/end [+ required quals]). Safe: it reads and ranks, changing nothing, so
+    chat/MCP and automation steps can call it and drop the result into run context."""
+    if args.get("schedule_id") not in (None, ""):
+        schedule_id = _require_uuid(args, "schedule_id")
+        row = await _fetch_one(
+            conn, "select * from public.schedules where id = %s", (schedule_id,)
+        )
+        if row is None:
+            raise ToolInputError("No visit found with that id.")
+        schedule_row = row
+    else:
+        client_id = _require_uuid(args, "client_id")
+        if await _lookup_name(conn, "clients", client_id) is None:
+            raise ToolInputError("No client found with that id.")
+        schedule_row = {
+            "client_id": client_id,
+            "start_time": _require_iso(args, "start_time"),
+            "end_time": _require_iso(args, "end_time"),
+            "required_qualification_ids": _opt_uuids(args, "required_qualification_ids"),
+        }
+        if schedule_row["end_time"] <= schedule_row["start_time"]:
+            raise ToolInputError("'end_time' must be after 'start_time'.")
+
+    candidates = await rank_candidates(conn, schedule_row)
+    if not candidates:
+        return ToolResult(
+            "No eligible caregivers found for that shift.",
+            {"candidates": [], "count": 0},
+        )
+    top = candidates[:3]
+    parts = []
+    for c in top:
+        reason = c["reasons"][0] if c["reasons"] else "meets the basic requirements"
+        parts.append(f"{c['name']} (score {c['score']}: {reason.lower()})")
+    summary = f"Top {len(top)} of {len(candidates)} caregiver(s): " + "; ".join(parts) + "."
+    return ToolResult(summary, {"candidates": candidates, "count": len(candidates)})
+
+
+# --- record_call_out (gated — delegates to call_out) ---
+async def _describe_record_call_out(conn, args: dict) -> str:
+    schedule_id = _require_uuid(args, "schedule_id")
     row = await _fetch_one(
         conn,
-        """select s.status, c.name as client
+        """select s.start_time, s.end_time, c.name as client, r.name as resource
+             from public.schedules s
+             join public.clients c on c.id = s.client_id
+             left join public.resources r on r.id = s.resource_id
+            where s.id = %s""",
+        (schedule_id,),
+    )
+    if row is None:
+        return f"Record a call-out for visit id {schedule_id[:8]}"
+    who = row["resource"] or "the caregiver"
+    return (
+        f"Record a call-out for {who}'s {_fmt_time(row['start_time'], row['end_time'])} "
+        f"visit with {row['client']} and open a replacement shift"
+    )
+
+
+async def _record_call_out(conn, args: dict) -> ToolResult:
+    schedule_id = _require_uuid(args, "schedule_id")
+    try:
+        result = await call_out(conn, schedule_id, _source_system())
+    except ScheduleError as exc:
+        raise ToolInputError(str(exc))
+    return ToolResult(
+        "Recorded the call-out and opened a replacement shift.",
+        {
+            "schedule_id": schedule_id,
+            "replacement_schedule_id": result["replacement_schedule_id"],
+        },
+    )
+
+
+# --- assign_caregiver (gated — delegates to assign) ---
+async def _describe_assign_caregiver(conn, args: dict) -> str:
+    schedule_id = _require_uuid(args, "schedule_id")
+    resource_id = _require_uuid(args, "resource_id")
+    resource = await _lookup_name(conn, "resources", resource_id) or "a caregiver"
+    row = await _fetch_one(
+        conn,
+        """select s.start_time, s.end_time, c.name as client
              from public.schedules s
              join public.clients c on c.id = s.client_id
             where s.id = %s""",
         (schedule_id,),
     )
     if row is None:
-        raise ToolInputError("No visit found with that id.")
-    if row["status"] in ("completed", "cancelled"):
-        raise ToolInputError(f"That visit is already {row['status']} and can't be cancelled.")
-    await conn.execute(
-        "update public.schedules set status='cancelled' where id=%s", (schedule_id,)
+        return f"Assign {resource} to visit id {schedule_id[:8]}"
+    return (
+        f"Assign {resource} to {row['client']}'s "
+        f"{_fmt_time(row['start_time'], row['end_time'])} visit"
     )
+
+
+async def _assign_caregiver(conn, args: dict) -> ToolResult:
+    schedule_id = _require_uuid(args, "schedule_id")
+    resource_id = _require_uuid(args, "resource_id")
+    try:
+        result = await assign(conn, schedule_id, resource_id, _source_system())
+    except ScheduleError as exc:
+        raise ToolInputError(str(exc))
+    resource = await _lookup_name(conn, "resources", resource_id) or "the caregiver"
+    warnings = result["warnings"]
+    tail = f" ({'; '.join(warnings)})" if warnings else ""
     return ToolResult(
-        f"Cancelled the visit for {row['client']}.",
-        {"schedule_id": schedule_id, "status": "cancelled"},
+        f"Assigned {resource} to the visit.{tail}",
+        {"schedule_id": schedule_id, "resource_id": resource_id, "warnings": warnings},
     )
 
 
@@ -752,16 +912,27 @@ register(ToolDef(
 register(ToolDef(
     name="create_schedule",
     description=(
-        "Schedule a visit assigning a caregiver to a client over a time window "
-        "(ISO-8601 start/end; end must be after start). This creates a record and "
-        "requires human approval before it takes effect."
+        "Schedule a visit over a time window (ISO-8601 start/end; end after start). "
+        "Assign a caregiver by passing resource_id, or omit it to create an unfilled "
+        "'open' shift to staff later. Optionally require qualifications, add notes, or "
+        "repeat weekly through a date (up to 12 extra visits). This creates a record "
+        "and requires human approval before it takes effect."
     ),
     input_schema=_obj({
-        "resource_id": {"type": "string", "description": "The caregiver's id."},
         "client_id": {"type": "string", "description": "The client's id."},
+        "resource_id": {"type": "string", "description": "The caregiver's id. Omit for an open (unfilled) shift."},
         "start_time": {"type": "string", "description": "Visit start (ISO-8601)."},
         "end_time": {"type": "string", "description": "Visit end (ISO-8601), after start."},
-    }, ["resource_id", "client_id", "start_time", "end_time"]),
+        "required_qualification_ids": {
+            "type": "array", "items": {"type": "string"},
+            "description": "Qualification ids the caregiver must hold for this visit.",
+        },
+        "notes": {"type": "string", "description": "Optional free-text note on the visit."},
+        "repeat_weekly_until": {
+            "type": "string",
+            "description": "Repeat weekly through this date (ISO-8601); up to 12 extra visits.",
+        },
+    }, ["client_id", "start_time", "end_time"]),
     handler=_create_schedule,
     safe=False,
     gate_describe=_describe_create_schedule,
@@ -770,8 +941,8 @@ register(ToolDef(
 register(ToolDef(
     name="cancel_schedule",
     description=(
-        "Cancel a scheduled visit by its id (only visits that aren't already "
-        "completed or cancelled). This changes a record and requires human "
+        "Cancel a scheduled or open visit by its id (not one already completed, "
+        "called out, or cancelled). This changes a record and requires human "
         "approval before it takes effect."
     ),
     input_schema=_obj({
@@ -780,6 +951,60 @@ register(ToolDef(
     handler=_cancel_schedule,
     safe=False,
     gate_describe=_describe_cancel_schedule,
+))
+
+register(ToolDef(
+    name="find_available_caregivers",
+    description=(
+        "Rank caregivers for a shift, with a plain-language reason and any warnings "
+        "for each. Pass an open shift's schedule_id, or describe an ad-hoc window "
+        "with client_id + start_time + end_time (ISO-8601) and optional "
+        "required_qualification_ids. Read-only — it suggests, it does not assign."
+    ),
+    input_schema=_obj({
+        "schedule_id": {"type": "string", "description": "An open shift to rank caregivers for."},
+        "client_id": {"type": "string", "description": "Client for an ad-hoc window (with start/end)."},
+        "start_time": {"type": "string", "description": "Window start (ISO-8601), for an ad-hoc rank."},
+        "end_time": {"type": "string", "description": "Window end (ISO-8601), for an ad-hoc rank."},
+        "required_qualification_ids": {
+            "type": "array", "items": {"type": "string"},
+            "description": "Qualification ids required for an ad-hoc window.",
+        },
+    }),
+    handler=_find_available_caregivers,
+    safe=True,
+))
+
+register(ToolDef(
+    name="record_call_out",
+    description=(
+        "Record that the caregiver on a scheduled visit has called out. The visit is "
+        "kept as 'called out' and a replacement open shift is created for the same "
+        "window. This changes records and requires human approval before it takes effect."
+    ),
+    input_schema=_obj({
+        "schedule_id": {"type": "string", "description": "The scheduled visit that was called out."},
+    }, ["schedule_id"]),
+    handler=_record_call_out,
+    safe=False,
+    gate_describe=_describe_record_call_out,
+))
+
+register(ToolDef(
+    name="assign_caregiver",
+    description=(
+        "Assign a caregiver to an open or scheduled visit (filling or reassigning it). "
+        "Qualification gaps and availability mismatches are returned as warnings, not "
+        "blocks; a hard time conflict is refused. This changes a record and requires "
+        "human approval before it takes effect."
+    ),
+    input_schema=_obj({
+        "schedule_id": {"type": "string", "description": "The visit to assign."},
+        "resource_id": {"type": "string", "description": "The caregiver to assign."},
+    }, ["schedule_id", "resource_id"]),
+    handler=_assign_caregiver,
+    safe=False,
+    gate_describe=_describe_assign_caregiver,
 ))
 
 register(ToolDef(
@@ -812,17 +1037,21 @@ leads(id uuid, name text, phone text, email text, source text,
       status text {new|contacted|qualified|converted|lost},
       region_id uuid -> regions.id, requirements jsonb, created_at timestamptz)
 clients(id uuid, lead_id uuid -> leads.id, name text, phone text, email text,
-        status text {active|paused|ended}, requirements jsonb, created_at timestamptz)
+        status text {active|paused|ended}, requirements jsonb, address text, zip text,
+        languages text[], preferences text[], created_at timestamptz)
 resources(id uuid, name text, phone text, email text, qualification_ids uuid[],
-          region_ids uuid[], availability jsonb, applicant_id uuid -> applicants.id,
+          region_ids uuid[], availability jsonb, address text, zip text,
+          languages text[], traits text[], applicant_id uuid -> applicants.id,
           created_at timestamptz)  -- caregivers (applicant_id set when hired from an applicant)
 applicants(id uuid, name text, phone text, email text, source text,
            stage text {applied|screening|interview|offer|hired|rejected},
            qualification_ids uuid[], region_ids uuid[], availability jsonb,
            notes text, created_at timestamptz)  -- caregiver-recruiting pipeline
-schedules(id uuid, resource_id uuid -> resources.id, client_id uuid -> clients.id,
-          start_time timestamptz, end_time timestamptz,
-          status text {scheduled|completed|cancelled|no_show}, created_at timestamptz)
+schedules(id uuid, resource_id uuid -> resources.id (NULL for an unfilled 'open' shift),
+          client_id uuid -> clients.id, start_time timestamptz, end_time timestamptz,
+          status text {open|scheduled|called_out|completed|cancelled|no_show},
+          required_qualification_ids uuid[], replaces_schedule_id uuid -> schedules.id,
+          notes text, created_at timestamptz)
 regions(id uuid, name text, zip_codes text[])
 qualifications(id uuid, name text, description text)
 events(id uuid, source_system text, event_type text, entity_type text,
