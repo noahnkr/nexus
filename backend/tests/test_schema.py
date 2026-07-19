@@ -15,7 +15,10 @@ CORE_TABLES = [
     "tasks",
     "pending_actions",
 ]
-ENTITY_TABLES = ["regions", "qualifications", "leads", "clients", "resources", "schedules"]
+ENTITY_TABLES = [
+    "regions", "qualifications", "leads", "clients", "resources", "schedules",
+    "referral_partners",
+]
 
 
 @pytest.mark.parametrize("table", CORE_TABLES + ENTITY_TABLES)

@@ -34,12 +34,30 @@ on conflict do nothing;
 -- Leads (all five statuses represented)
 insert into public.leads (id, tenant_id, name, phone, email, source, status, region_id, requirements) values
   ('33333333-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 'Margaret Ellison', '+16195550101', 'margaret.e@example.com', 'website',   'new',       '11111111-0000-0000-0000-000000000001', '{"hours_per_week": 20, "needed_qualifications": ["CNA"], "notes": "Morning visits preferred"}'),
-  ('33333333-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'Harold Byrne',     '+16195550102', 'hbyrne@example.com',      'referral',  'contacted', '11111111-0000-0000-0000-000000000002', '{"hours_per_week": 15, "needed_qualifications": ["HHA"]}'),
+  ('33333333-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'Harold Byrne',     '+16195550102', 'hbyrne@example.com',      'St. Mary''s Hospital',  'contacted', '11111111-0000-0000-0000-000000000002', '{"hours_per_week": 15, "needed_qualifications": ["HHA"]}'),
   ('33333333-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'Doris Nakamura',   '+16195550103', 'doris.n@example.com',     'phone',     'qualified', '11111111-0000-0000-0000-000000000003', '{"hours_per_week": 30, "needed_qualifications": ["Dementia Care","Medication Management"]}'),
   ('33333333-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000001', 'Walter Grimes',    '+16195550104', 'wgrimes@example.com',     'website',   'converted', '11111111-0000-0000-0000-000000000001', '{"hours_per_week": 40, "needed_qualifications": ["CNA","Hoyer Lift Certified"]}'),
-  ('33333333-0000-0000-0000-000000000005', '00000000-0000-0000-0000-000000000001', 'Estelle Ferraro',  '+16195550105', 'estelle.f@example.com',   'referral',  'converted', '11111111-0000-0000-0000-000000000002', '{"hours_per_week": 25, "needed_qualifications": ["HHA","Medication Management"]}'),
+  ('33333333-0000-0000-0000-000000000005', '00000000-0000-0000-0000-000000000001', 'Estelle Ferraro',  '+16195550105', 'estelle.f@example.com',   'Sunrise Senior Living',  'converted', '11111111-0000-0000-0000-000000000002', '{"hours_per_week": 25, "needed_qualifications": ["HHA","Medication Management"]}'),
   ('33333333-0000-0000-0000-000000000006', '00000000-0000-0000-0000-000000000001', 'Raymond Cho',      '+16195550106', 'rcho@example.com',        'website',   'lost',      '11111111-0000-0000-0000-000000000003', '{"hours_per_week": 10}')
-on conflict do nothing;
+-- source is refreshed on re-seed so the Module 17 referral-partner enrichment
+-- (join-by-name) lands on already-seeded rows (Harold -> St. Mary's Hospital,
+-- Estelle -> Sunrise Senior Living) rather than freezing at the old 'referral'.
+on conflict (id) do update set source = excluded.source;
+
+-- Referral partners (Module 17) — ENRICH two existing lead sources by exact name
+-- match (no FK, no backfill). St. Mary's Hospital -> Harold Byrne's source; Sunrise
+-- Senior Living -> Estelle Ferraro's source (a converted lead linked to an active
+-- client with authorized hours, so the hours-won revenue proxy demos immediately).
+-- Idempotent update-in-place so a re-seed refreshes category/contact fields.
+insert into public.referral_partners (id, tenant_id, name, category, contact_name, phone, email, notes) values
+  ('ee000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 'St. Mary''s Hospital',   'hospital',       'Diane Prewitt', '+16195550701', 'dprewitt@stmarys.example.com', 'Discharge planning desk; sends post-acute referrals.'),
+  ('ee000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'Sunrise Senior Living', 'senior_living', 'Tom Alvarez',   '+16195550702', 'talvarez@sunrise.example.com', 'Assisted-living community; refers residents needing in-home hours.')
+on conflict (id) do update set
+  category     = excluded.category,
+  contact_name = excluded.contact_name,
+  phone        = excluded.phone,
+  email        = excluded.email,
+  notes        = excluded.notes;
 
 -- Clients (two converted from leads, one standalone). address/zip/languages/
 -- preferences feed the matching engine (12a); update-in-place so a re-seed

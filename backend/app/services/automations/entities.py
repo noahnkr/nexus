@@ -26,6 +26,7 @@ ENTITY_TABLES: dict[str, str] = {
     "resource": "resources",
     "schedule": "schedules",
     "applicant": "applicants",
+    "referral_partner": "referral_partners",
 }
 
 # Plain-language name for each entity type — vertical content the field catalog
@@ -37,6 +38,7 @@ ENTITY_LABELS: dict[str, str] = {
     "resource": "Caregiver",
     "schedule": "Visit",
     "applicant": "Applicant",
+    "referral_partner": "Referral partner",
 }
 
 
@@ -77,6 +79,9 @@ EVENT_ENTITY_TYPES: dict[str, str] = {
     "applicant.created": "applicant",
     "applicant.updated": "applicant",
     "applicant.stage_changed": "applicant",
+    "referral_partner.created": "referral_partner",
+    "referral_partner.updated": "referral_partner",
+    "referral_partner.deleted": "referral_partner",
     "tour.scheduled": "lead",
     "call.received": "lead",
     "call.completed": "lead",

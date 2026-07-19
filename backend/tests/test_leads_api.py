@@ -156,7 +156,9 @@ def test_leads_api():
     assert out["noauth_code"] == 401  # fails closed without a token
 
     # facets reflect seed data
-    assert "website" in out["facet_sources"] and "referral" in out["facet_sources"]
+    # Harold's/Estelle's seed sources are now referral-partner names (Module 17
+    # renamed them from the old flat "referral" so the enrichment join has a target).
+    assert "website" in out["facet_sources"] and "St. Mary's Hospital" in out["facet_sources"]
     assert "North County" in out["facet_region_names"]
 
     # create

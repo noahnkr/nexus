@@ -1260,6 +1260,14 @@ schedules(id uuid, resource_id uuid -> resources.id (NULL for an unfilled 'open'
           -- check_in_at/check_out_at are the EVV clock stamps. Delivered hours for a
           -- completed visit = the clocked duration when both stamps exist, else the
           -- scheduled window (end_time - start_time).
+referral_partners(id uuid, name text, category text
+                  {hospital|senior_living|discharge_planner|home_health|community|other}
+                  (NULL = untyped), contact_name text, phone text, email text,
+                  notes text, created_at timestamptz)
+                  -- tracked referral sources. Join to leads by EXACT name:
+                  -- `join referral_partners p on p.name = l.source` — which partners
+                  -- send leads that convert. leads.source is free text; an untracked
+                  -- source simply has no matching partner row.
 regions(id uuid, name text, zip_codes text[])
 qualifications(id uuid, name text, description text)
 events(id uuid, source_system text, event_type text, entity_type text,

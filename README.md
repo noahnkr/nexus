@@ -951,6 +951,63 @@ upcoming and last past visits in the board's `ScheduleVisitOut` shape (same reso
 names, same read-time `evv` flag). It reuses the schedule router's visit shaping and is
 RLS-scoped like every `/api` route; both routers are vertical-seam members.
 
+### Referrals dashboard (Module 17)
+
+Which referral partners (hospitals, senior-living communities, discharge planners)
+send leads that actually convert — referral ROI drives where the owner spends
+relationship time. The dashboard **rides the Leads surface** (it is not a fifth
+sanctioned vertical surface): its seam is `services/views/referrals.py` +
+`routers/referrals.py` on the backend and `lib/referrals.ts` +
+`components/referrals/*` + `pages/ReferralsPage.tsx` on the frontend. Nav entry
+**Referrals** (`Handshake`) sits between Leads and Caregivers.
+
+**Enrichment by name (no FK, no backfill).** A referral *source* is just the
+free-text `leads.source` written by every lead path. A `referral_partners` row
+(`entities_referral_partners` migration — the vertical seam; name unique per
+tenant) enriches a source by **exact name match** — `join referral_partners p on
+p.name = l.source`. Nothing links leads to partners: connector adapters keep
+writing plain source strings, a rename simply re-joins, and deleting a partner
+only un-enriches its source (the leads keep their `source` and funnel history).
+An unmatched source shows as *untracked* and can be promoted in one click.
+
+**Metrics** (`GET /api/referrals/metrics?months=6`, deterministic seam SQL — no
+LLM near the numbers): one row per distinct non-empty `leads.source` **unioned
+with every tracked partner** (so a tracked-but-quiet partner still shows — that
+silence is itself the relationship signal), each with leads / in-pipeline /
+converted / lost, conversion rate, avg days-to-convert, `last_lead_at`, a
+zero-filled monthly lead-count series, and **`hours_won`** — the summed
+`authorized_hours_per_week` of every client whose `lead_id` traces to that source
+(all linked clients; a discharged client was still won business). `totals` carries
+tracked-partner count, leads in the last 30 days, total hours-won, and the
+best-converter (highest conversion rate among sources with ≥ 3 leads; null below
+the bar). `?months=` is clamped 1–24, not rejected.
+
+**Partner CRUD** (`GET/POST /api/referrals/partners`, `PATCH`/`DELETE
+/api/referrals/partners/{id}`) is human REST (`source_system='user'` — an owner
+curating their own list is the approver, so no approval gate), emitting
+`referral_partner.created` / `updated` / `deleted` with plain-language summaries
+(`updated` names the changed fields; a no-op PATCH emits nothing; a duplicate name
+is a 409). No new agent tools — chat answers referral questions through the
+existing read-only `run_report`, since `referral_partners` joins `SQL_SCHEMA_DOC`.
+
+**UI** (`/referrals`): a metrics strip (Tracked partners, Leads last 30 days, Best
+converter, Hours/wk won), a hand-rolled monthly lead-volume bar row (no chart
+library — user decision; `MonthlyTrendBars`, theme-token bars, reused per-partner
+in the drawer), and a client-side sortable partner table — one row per source with
+its category chip (tracked) or a muted **Track** button (opens the create dialog
+prefilled with the source name), leads / converted / conversion / hours-won / last
+lead, and a 6-month sparkline. Row click opens the `PartnerDrawer` (contact card +
+Edit/Delete for tracked, a Track CTA for untracked, per-partner trend, and that
+source's recent leads linking to `/leads/{id}`). Realtime on `referral_partners` +
+`leads` debounce-refetches the single metrics call. `lib/referrals.ts` (category
+meta + dot tones, `fmtHoursWon`/`fmtRate`, month-bucket fill, sort helpers) is
+vitest-covered.
+
+**Note (best-converter threshold).** The demo seed has three `website` leads, so
+the ≥ 3-lead bar surfaces `website` (33.3%) as the best converter — the plan's note
+that it would stay null on the seed was a miscount; the code follows the explicit
+≥ 3 contract.
+
 ## Notes on Templating
 
 This repo is designed so that a second deployment, in a different vertical, requires:
