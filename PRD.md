@@ -443,27 +443,110 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 ---
 
+## Module 15: Finishing Touches
+
+**Goal**: the usability pass collected from real use — chat becomes interruptible and better at document-style answers, tasks become completable without leaving the app (edit a drafted text/email right in the approval, no raw JSON anywhere), the shell grows up (collapsible sidebar, mobile, a real Settings page), the agent becomes customizable per tenant (Ingestion → Knowledge with an Instructions tab), and two automations rough edges get finished (manual automations get a Run button + an agent tool; "calculate a score" becomes a real formula builder).
+
+**Chat & task completion (15a)**:
+
+- Stop/cancel a streaming chat response (abort mid-stream with a cancellation-safe persistence contract — partial answers persist with a `stopped` marker so thread replay stays valid), send button/input alignment fixed, and output-formatting guidance + GFM table rendering for document-style answers (care plans, comparisons). PDF/export is deferred to Future Plans (user decision 2026-07-19)
+- Approve-with-edits: gated tools declare `editable_fields` (SMS body, email subject/body); the approval surface renders the drafted message as editable text and the approve endpoint executes the edited version through the same `services/approvals.py` seam, with the edit audited on the `action.approved` event
+- A task detail drawer (VisitDrawer pattern) renders action data as clean labeled fields — the raw-JSON "Technical detail" toggle leaves the cards; task-type icons/labels (text message, email, scheduling, record update); the metadata-line separator-dot bug fixed
+- Event log readability: type icons, plain-language type labels (reusing M13's label maps), and per-source color accents
+
+**Shell, settings & knowledge (15b)**:
+
+- New core table `tenant_settings` (one jsonb row per tenant, 4-policy RLS) for user-facing preferences — whitelisted keys through a `services/settings.py` seam + `GET/PATCH /api/settings`; env vars remain the only home for infra config and credentials
+- Agent customization: per-tenant instructions + tone injected as a second system block after the core persona (instructions shape tone/content, never the gating rules); Ingestion renames to **Knowledge** with a Documents tab (existing upload/list + a detail drawer with chunk previews and delete) and an Instructions tab (free-text instructions + tone dropdown)
+- Sidebar collapses to an icon rail (persisted); mobile-friendly core pages (Home, Chat, Tasks, Leads, Caregivers, Event Log, Settings, Knowledge) behind a drawer nav — the schedule board and builder stay desktop-first with horizontal scroll (mobile layouts for them in Future Plans)
+- A `/settings` page (from the user menu): profile edit (display name, password via Supabase), workspace name, appearance
+
+**Automations touches (15c)**:
+
+- Manual-trigger automations drop the meaningless Active/Paused toggle for a **Run** button (the run-now endpoint already ignores status), and a safe `run_automation` tool lets chat/MCP agents start manual automations — restricted to manual triggers, refused for `source_system='automation'` (the no-self-trigger rule extended to the tool layer), starting the run deferred (`waiting` + `wake_at=now()`) for the M7b waker to advance
+- "Calculate a score" becomes a real formula builder: a new `formula` function (hand-rolled safe expression parser — numbers, `+ − × ÷`, parentheses, `round()`; field values via the existing `{{token}}` templates; no eval, no LLM) with a token-aware `FormulaEditor` in the builder; the result saves to run context via the existing save-as. `weighted_score` stays registered for existing recipes
+
+**Infrastructure introduced**: `tenant_settings` core table + settings seam/API, `ToolDef.editable_fields` + approve-with-edits, chat cancellation persistence, `formula` function + parser, safe `run_automation` tool, `start_run(defer=True)`.
+
+**Deliverable for this module**: the office user stops a rambling answer mid-stream and the thread stays healthy; a queued "text the caregiver" task is opened, its message fixed up, and approved without touching another app; the whole app works on a phone for the core surfaces; the assistant follows the tenant's written instructions; a manual "score this lead" automation runs from a button or by asking the agent, its score computed by a formula the user built from field tokens. Plans: `.agent/plans/15.finishing-touches.md` (+ `15a.chat-and-tasks.md`, `15b.shell-settings-knowledge.md`, `15c.automation-touches.md`)
+
+
+## Module 16: Client & Care Oversight
+
+**Goal**: make the operational heart of the business visible — who we serve, who serves them, and whether we're delivering the hours we're paid for. Clients become the fourth sanctioned vertical surface (the Leads/Caregivers/Schedule pattern): a directory with an **active census** on top, a per-client **care overview** profile, and in-app **visit verification (EVV)** — clock-in/out on visits with read-time late/missed flags. EVV is legally mandated for Medicaid-funded home care in most states; this module lands the in-app version, and connector-fed EVV (telephony clock-ins via GoTo, WellSky) later fills the same columns through Module 14's ingest path.
+
+**Client oversight backend (16a)**:
+
+- One small core migration — `documents` gains nullable `entity_type`/`entity_id` (chunks already carry them; the parent must too so "this client's documents" is one query). Upload accepts an optional canonical-entity tag, validated against the entity map; chunks inherit it, so tagged care plans are RAG-searchable and listable per client
+- One vertical migration — clients gain `region_id`, `payer` (private-pay / Medicaid / LTC-insurance / VA / other), `authorized_hours_per_week`, `care_summary`; statuses become `active` / `hospital_hold` / `discharged` (data-migrated from paused/ended); a new `client_contacts` table (family contacts, 4-policy RLS); schedules gain `check_in_at`/`check_out_at` with coherence CHECKs
+- A clients view seam (`services/views/clients.py`): `change_status` as the one writer of client status (emits `client.status_changed`), deterministic Monday-week **census math** (authorized = Σ authorized hrs/wk over active clients; scheduled = planned visit hours; delivered = actual clock durations falling back to scheduled durations for completed visits; leakage = authorized − delivered), and rule-based read-time EVV flags (late after a 15-minute grace, missed after end — no detector loop, no stored flag)
+- Schedule seam gains `check_in`/`check_out` transitions (check-out completes the visit; events `schedule.checked_in`/`schedule.checked_out` join the automation-triggerable set)
+- Tools through the registry: `update_client_status` rewired to the seam, gated `record_visit_check_in`/`record_visit_check_out`, safe `get_census`; `get_client` enriched with care fields, contacts, and week hours
+- REST: `/api/clients` directory (filters/facets/metrics/create/detail/patch), family-contacts CRUD, cached client smart summary (entity-summaries precedent), schedule check-in/out routes (board feed carries the EVV flag), document list/upload entity filters
+
+**Clients view frontend (16b)**:
+
+- `/clients` directory: census strip (active clients; authorized vs scheduled vs delivered hours with the leakage number in warning tone; by-payer and by-region breakdowns as clickable filter chips) over a filterable client table, create dialog, Realtime
+- `/clients/{id}` care overview: smart summary, info + care cards (status with discharge confirm, payer, authorized hours, region, care summary), this-week hours bars, family contacts, assigned caregivers, upcoming/past visits with EVV badges, client documents card (tagged upload — care plans searchable in chat), entity timeline
+- Schedule board: late/missed badges on visit blocks (server-computed), check-in/check-out actions in the visit drawer with actual times and durations shown once recorded
+
+**Infrastructure introduced**: `documents` entity tagging (core), `client_contacts` table, EVV columns + `schedule.checked_in`/`checked_out`/`client.status_changed` events, census seam, three new tools, the fourth vertical surface.
+
+**Deliverable for this module**: the owner opens `/clients` and sees at a glance how many clients are active, by payer and region, and whether delivered hours are tracking authorized hours — the revenue-leakage gap in one number; opening a client shows their care plan documents (searchable in chat), family contacts, caregivers, and visit history with late/missed flags; a caregiver's visit is checked in and out from the board and the census's delivered hours move accordingly; asking chat "how's our delivery this week?" answers through the safe census tool. Plans: `.agent/plans/16.client-care-oversight.md` (+ `16a.client-oversight-backend.md`, `16b.clients-view-frontend.md`)
+
+## Module 17: Referral-Source Dashboard
+
+**Goal**: show which partners (hospitals, senior-living communities, discharge planners) send leads that actually convert. Referral ROI drives where the owner spends relationship time — this view answers "who's worth a coffee visit" with conversion rates and a revenue proxy, not gut feel. Partners are an *enrichment* over the free-text `leads.source` every lead path already writes (manual, webhook, the future WelcomeHome sync): a `referral_partners` table joined by exact source-name match — no lead schema change, no backfill, no connector linking logic.
+
+**Referral backend**:
+
+- One vertical migration: `referral_partners` (name unique per tenant; category — hospital / senior-living / discharge-planner / home-health / community / other; contact person, phone, email, notes; 4-policy RLS, Realtime)
+- A referrals seam (`services/views/referrals.py`): one deterministic metrics pass — per-source rows (leads, in-pipeline, converted, lost, conversion rate, avg days to convert, **hours/week won** = the Module 16 `authorized_hours_per_week` of clients traced back through `clients.lead_id`, last lead, zero-filled monthly trend buckets) left-joined to tracked partners, plus top-line totals (tracked partners, leads last 30 days, best converter above a ≥3-lead threshold, total hours won)
+- REST: `GET /api/referrals/metrics` + partner CRUD (`referral_partner.created/updated/deleted` events with plain summaries; delete only un-enriches the source string — lead history untouched)
+- No new agent tools: `referral_partners` joins `SQL_SCHEMA_DOC` so chat answers referral questions through the existing read-only `run_report`
+
+**Referral dashboard frontend**:
+
+- `/referrals` page (nav entry between Leads and Caregivers): metrics strip, hand-rolled monthly trend bars (no chart library), and a sortable partner table — tracked sources show their category chip, untracked sources get a one-click **Track** button that promotes the source string to a partner record
+- Partner detail drawer: editable contact info + category + notes, per-partner monthly bars, that source's recent leads linking into the Leads view, delete with confirm
+
+**Infrastructure introduced**: `referral_partners` table + referrals seam/router, `referral_partner` entity + event types in the automation vocabulary, shared hand-rolled trend-bar component.
+
+**Deliverable for this module**: the owner opens `/referrals` and sees every lead source ranked by hours-per-week won and conversion rate — tracked partners with their contact details one click away, quiet partners visible by their zero rows; an unfamiliar source string arriving from a webhook is promoted to a tracked partner in one click; asking chat "which referral partners actually convert?" answers through read-only reporting. Plan: `.agent/plans/17.referral-dashboard.md`
+
+## Module 18: Workforce & Compliance
+
+**Goal**: the caregiver side of oversight — a roster that answers "who do I actually have and how loaded are they," and a credential tracker that surfaces an expiring CPR/TB/license *before* it means a caregiver legally can't work a shift. The credential watch is the flagship automations use case: the engine, cron triggers, and task queue already exist, so a daily digest automation costs one safe read tool.
+
+**Workforce backend (18a)**:
+
+- One vertical migration: `resources.status` (`active`/`inactive`) and a `resource_credentials` table — one dated row per (caregiver, qualification) with issued/expires dates + notes (null expiry = doesn't expire); `resources.qualification_ids` stays the matching input, credentials add dated evidence on top. Seeded with relative dates (valid / expiring / expired / no-expiry) so nothing drifts
+- Workforce seam (`services/views/workforce.py`): read-time credential status (valid / expiring ≤60d / expired — in-seam constant, no stored state, no detector loop), availability-hours parsing, per-caregiver utilization % (scheduled ÷ available; null without declared availability), roster metrics (headcount, average utilization, expiring/expired counts scoped to active caregivers), soonest-first expiring-credentials query
+- Inactive exclusion: deactivated caregivers disappear from matching candidates and the schedule-board roster (the Roster tab is the one surface listing everyone); status changes emit `resource.status_changed` through the existing single roster PATCH
+- Safe `list_expiring_credentials` tool (days-ahead arg, plain-language result) — the only tool this module; credential CRUD is human REST (`credential.added/updated/removed` events on the caregiver's timeline)
+- The daily credential-digest recipe (WHEN cron daily → tool → IF count > 0 → digest task) published in the README and proven by a pytest that creates it through the standard API and drives the real engine to a created task — never seeded into `automations`
+
+**Roster frontend (18b)**:
+
+- `/caregivers` grows Pipeline | Roster tabs (`?tab=`, no new nav entry): the hiring funnel moves unmodified into the Pipeline tab; the Roster tab gets a compliance strip (active headcount, average utilization, expiring/expired counts in warning/destructive tones), a roster table (hours vs available, hand-rolled utilization bars, per-credential status badges, status filter + search), and Realtime
+- The shared caregiver drawer (board + roster, one component) gains a credentials editor (add/edit/delete with qualification picker and dates) and an active/inactive toggle with a confirm explaining the board/matching consequences
+
+**Infrastructure introduced**: `resource_credentials` table, `resources.status` + inactive-exclusion rule, workforce seam/router, safe `list_expiring_credentials` tool, `resource.status_changed`/`credential.*` event types, the documented digest recipe.
+
+**Deliverable for this module**: the owner opens the Roster tab and sees headcount, utilization, and every credential's state at a glance — expiring ones flagged weeks ahead; a daily automation files a digest task naming exactly whose credentials need attention; asking chat "whose credentials are expiring?" answers through the safe tool; deactivating a caregiver removes them from the board and matching in one click while their history stays. Plans: `.agent/plans/18.workforce-compliance.md` (+ `18a.workforce-backend.md`, `18b.roster-frontend.md`)
+
 ## Subsequent Modules (summary)
 
-*(none currently queued — candidate future work is tracked under Future Plans below)*
+All summarized modules have been promoted to full sections (Modules 0–18 above). Remaining ideas live in Future Plans below.
 
 ### Future Plans
-* Additional automation calculation functions (brainstormed at M11 planning, not built): `count_events` (entity engagement counts), `calculate` (binary arithmetic), `tier` (threshold → label bucketing), `hours_between`.
-* Score persistence/display (M11 kept scores context-only by user decision): score column + profile/directory badges if a real need appears.
-* Settings View
-* Task drafting/modifications inside the task drawer i.e., emails and sms. Remove technical detail dropdown and render data cleanly. Also dot inbetween View history and Originating event is not centered.
-* Content generation and output files e.g., formatted dynamic care plan
-* Stop / cancel streaming. Abort chat strea mid rresponse. Also fix send button positioning and text box. Button height does not match text input and text input not centered.
-* Sidebar collapse to icons
-* Home page dashboard with census, billable hours week-over-week, new starts, caregiver headcount, coverage rate (% of visits filled), AR/unbilled, and the top open alerts.
-* Referral-source dashboard — which partners (hospitals, senior-living, discharge planners) send leads that actually convert. Referral ROI drives where the owner spends relationship time; this is the highest-value net-new growth view not already on the roadmap.
-* Run manually button for manual triggered automations. Also able to be triggered via chat. 
-* Client & care oversight: 
-    * Active census — count of active clients, by region/payer, plus authorized hours vs scheduled vs delivered. The gap between authorized and delivered is direct revenue leakage — owners obsess over it.
-    * Per-client care overview — care plan, assigned caregivers, schedule, family contacts, status (active / hospital-hold / discharged). Care plans and visit notes flow through your ingestion + RAG so they're searchable in chat.
-    * Visit verification (EVV) — worth flagging even if you hadn't considered it: Electronic Visit Verification (clock-in/out, missed/late visits) is legally mandated for Medicaid-funded home care in most states. It's connector-shaped and you already have telephony/EHR placeholder adapters (GoTo Connect, WellSky) to hang it on.
-* Workforce & Compliance 
-    * Caregiver roster / utilization — headcount, active vs inactive, hours-this-week, utilization %, availability. Overlaps M10.
-    * Credential expiry tracker — CPR, TB test, background check, license, all with expiry dates on qualifications. This is a killer automations use case: WHEN a credential is within 30/60 days of expiry, THEN queue a task + notify. In this industry an expired credential can mean a caregiver legally can't work a shift — surfacing it before it bites is high-value and cheap given the engine exists.
-    * Retention / at-risk view — turnover in home care runs 70–80%/yr; a view flagging declining hours, missed shifts, or short tenure lets the owner intervene before someone quits.
-    The scheduling system (your example, built out)
+* Retention / at-risk view — rule-based flags (declining hours vs 4-week average, repeated no-shows, short tenure via a new `hire_date`) on the roster; deferred from Module 18 (user decision 2026-07-19).
+* Per-credential `credential.expiring` events — a flagging tool with dedup state so automations can trigger per credential with entity context; Module 18 ships the daily digest instead.
+* Credential-based scheduling blocks — matching/assign currently warn on qualification gaps; hard-blocking on expired credentials is a policy change deferred until asked for.
+* Fuzzy/alias referral-source matching — Module 17 joins partners to `leads.source` by exact name; revisit when the WelcomeHome sync (14a) surfaces messy real-world source strings.
+* `leads.referral_partner_id` FK — only if partner-rename stability becomes a real problem; the enrichment-by-name join is deliberate (user decision 2026-07-19).
+* Structured care-plan editor (goals, ADLs, care tasks) — Module 16 ships care plans as tagged documents + RAG plus a free-text care summary (user decision 2026-07-19); a structured editor waits for a real need.
+* Billing/payroll export of delivered hours — the Module 16 census computes delivered vs authorized; exporting it to a billing system is connector-shaped future work.
+* Home census StatCard — surface Module 16's leakage number on the Home page.
+* Chat document export — PDF/print export of document-style chat answers (e.g. a generated care plan); deferred from Module 15 (user decision 2026-07-19, formatting-only shipped there).
+* Mobile layouts for the schedule board and automation builder — Module 15 makes the core pages responsive; these two dense surfaces stay desktop-first with horizontal scroll until a real mobile need appears.

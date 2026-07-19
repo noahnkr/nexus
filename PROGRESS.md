@@ -246,3 +246,76 @@ Module-by-module build status for the Nexus Control Center. Claude Code reads th
 - `[ ]` Task 4 — Calendar poll runner (syncToken, 410 resync); offline + live event-change walk
 - `[ ]` Task 5 — Calendar tools: safe `list_calendar_events`, gated `create_calendar_event` (+ `calendar.event.created`, calendar `external_ids`); gated tool tests + live chat-scheduled tour
 - `[ ]` Task 6 — Wrap-up: README Google runbook; full pytest; LangSmith `connector_sync` spans verified
+
+### Module 15: Finishing Touches
+`[-]` Planned (2026-07-19) — 🔴 Complex, split per the planning rule into three sub-plans. Parent: `.agent/plans/15.finishing-touches.md`. Build order 15a → 15b → 15c (15b's mobile sweep covers 15a's task drawer; 15c is framework-adjacent and lands last). User-locked: three sub-plans; rich output = formatting only (PDF export → Future Plans); Ingestion → Knowledge page with Documents + Instructions tabs (per-tenant `tenant_settings` core table, instructions injected into the chat prompt); mobile = responsive core pages + drawer nav (board/builder stay desktop-first). Planning found the M11b `CalculationEditor` credited below was never actually committed — 15c builds the formula editor from the SchemaForm raw-JSON reality.
+
+**15a — Chat & task completion** (`.agent/plans/15a.chat-and-tasks.md`):
+- `[ ]` Task 1 — Stop/cancel streaming (cancellation-safe partial persistence, `metadata.stopped`, `chat.message.stopped` event; AbortController + stop-button morph) + input alignment fix; gated `test_chat_stop.py`
+- `[ ]` Task 2 — Document-style output: PERSONA formatting guidance + GFM table styling/overflow in `Markdown.tsx`
+- `[ ]` Task 3 — Approve-with-edits backend: `ToolDef.editable_fields` (sms body, email subject/body), approve body validation, `approve_action(edited_input=…)`, edit audit on event/result; `test_approval_gate.py` cases
+- `[ ]` Task 4 — `TaskDrawer` (clean labeled action rendering, editable drafts, tech detail demoted to drawer expander), `lib/tasks.ts` type icons/labels, card JSON removed, separator-dot fix
+- `[ ]` Task 5 — Event-log readability: type icons + plain labels + source accents in `EventRow`
+- `[ ]` Task 6 — Wrap-up: README notes; full pytest/vitest/build; live edit-and-approve + stop-stream walk
+
+**15b — Shell, settings & knowledge** (`.agent/plans/15b.shell-settings-knowledge.md`):
+- `[ ]` Task 1 — Core migration `20260726000000_core_tenant_settings.sql` (`tenant_settings` + RLS) + `services/settings.py` seam (whitelist keys, key-only `settings.updated` event) + `GET/PATCH /api/settings`; gated `test_settings_api.py`
+- `[ ]` Task 2 — Chat instructions/tone injection as second system block (`build_system` helper, PERSONA first, cache_control on last); offline + gated-live tests
+- `[ ]` Task 3 — Sidebar collapse to icon rail (persisted) + mobile drawer nav/topbar
+- `[ ]` Task 4 — `/settings` page (profile display name + password via Supabase, workspace name → Home greeting, appearance) from UserMenu
+- `[ ]` Task 5 — Knowledge page: `/knowledge` (+ `/ingestion` redirect, nav rename), Documents tab w/ `DocumentDrawer` (chunks, delete), Instructions tab (textarea + tone Select)
+- `[ ]` Task 6 — Mobile core-page sweep (incl. 15a drawer) + wrap-up: README; full pytest/build; 375px/768px browser pass
+
+**15c — Automation touches** (`.agent/plans/15c.automation-touches.md`):
+- `[ ]` Task 1 — `formula` function (`formula.py` recursive-descent parser — no eval; `+ − × ÷`, parens, unary minus, `round`) registered beside kept `weighted_score`; `test_functions.py` grammar/error cases
+- `[ ]` Task 2 — `start_run(defer=True)` (`waiting` + `wake_at=now()`) + safe `run_automation` tool (manual-trigger only, automation-source refusal, deferred start, waker advances) + label + vocabulary exclusion; gated engine/scheduler/tool tests
+- `[ ]` Task 3 — `FormulaEditor` (TokenText input, operator buttons, live validation via mirrored `lib/formula.ts` parser) + builder wiring + read-mode labels; vitest `formula.test.ts`
+- `[ ]` Task 4 — Manual-run UX: "Manual" badge + Run button on card/detail (pause toggle hidden), 409 toast
+- `[ ]` Task 5 — Wrap-up: README (formula grammar, `run_automation`, manual runs); full pytest/vitest/build; live manual-run-via-chat walk; correct the M11b CalculationEditor note
+
+### Module 16: Client & Care Oversight
+`[-]` Planned (2026-07-19) — 🔴 Complex, split per the planning rule into two sub-plans. Parent: `.agent/plans/16.client-care-oversight.md`. Build order 16a → 16b (16b renders 16a's API). Clients become the fourth sanctioned vertical surface. User-locked: in-app EVV-lite (check-in/out columns, read-time late/missed flags, no detector loop — connector-fed EVV plugs in via M14+); care plans = entity-tagged documents + RAG + one `care_summary` field (structured editor → Future Plans); delivered hours = actual clock durations falling back to scheduled for completed visits; two sub-plans backend → frontend. Requires Modules 0–12 built; independent of Modules 14–15.
+
+**16a — Client oversight backend** (`.agent/plans/16a.client-oversight-backend.md`):
+- `[ ]` Task 1 — Migrations pushed (`20260727000000_core_document_entity.sql`: documents entity tag; `20260727000001_entities_client_oversight.sql`: client oversight fields + status rename active/hospital_hold/discharged, `client_contacts` + RLS, schedules EVV columns + CHECKs, Realtime) + seed updates + event-type/schema-doc threading; gated schema/RLS tests
+- `[ ]` Task 2 — Clients seam `services/views/clients.py` (`change_status` single writer → `client.status_changed`, Monday-week `census_metrics` + `client_week_hours`, `evv_flag` + grace constant) + schedule seam `check_in`/`check_out` (check-out completes; `schedule.checked_in`/`checked_out`); gated seam tests
+- `[ ]` Task 3 — Tools: `update_client_status` rewired to the seam, gated `record_visit_check_in`/`record_visit_check_out`, safe `get_census`, enriched `get_client`, labels; gated `test_client_tools.py` (incl. approved-execution path)
+- `[ ]` Task 4 — REST `routers/clients.py` (list/facets/metrics/create/detail/patch + contacts CRUD) + schedule check-in/out routes (feed carries `evv`) + document upload/list entity tagging (chunks stamped); gated API tests (401 + RLS covered)
+- `[ ]` Task 5 — Client smart summary endpoints (shared `views/summary.py` cache, `client_summary` span, 503 without key); `test_client_summary.py` offline + gated-live
+- `[ ]` Task 6 — Wrap-up: README Clients/census/EVV section; full pytest green; build clean; stale-status sweep
+
+**16b — Clients view frontend** (`.agent/plans/16b.clients-view-frontend.md`):
+- `[ ]` Task 1 — `lib/api.ts` types/calls + `lib/clients.ts` (status/payer meta, hours fmt + vitest) + `/clients` directory page (filters ↔ URL, table, create dialog, Realtime, nav entry)
+- `[ ]` Task 2 — `CensusStrip` (four StatCards incl. leakage warning tone + payer/region filter chips, all numbers from `/api/clients/metrics`)
+- `[ ]` Task 3 — `/clients/{id}` care overview (SmartSummary, info + care cards w/ discharge confirm, hours bars, contacts CRUD w/ primary star, caregivers, visits w/ EVV badges, EntityTimeline)
+- `[ ]` Task 4 — `ClientDocumentsCard` (tagged upload preset to the client, list/delete; chat-searchable; Ingestion page untouched)
+- `[ ]` Task 5 — Schedule board EVV surfaces (`VisitBlock` late/missed badge from server `evv`; `VisitDrawer` check-in/check-out + actual duration display)
+- `[ ]` Task 6 — Wrap-up: README Clients view section; pytest/vitest/build green; live census + care-plan-RAG + check-in/out walk
+
+### Module 17: Referral-Source Dashboard
+`[-]` Planned (2026-07-19) — ⚠️ Medium, single plan: `.agent/plans/17.referral-dashboard.md`. No tool-layer/gate/automations involvement (no new agent tools — `referral_partners` joins `SQL_SCHEMA_DOC` so chat uses read-only `run_report`). User-locked: partners = enrichment-by-name table over `leads.source` (exact match, no FK, no backfill); hours-won revenue proxy via `clients.lead_id` → M16 `authorized_hours_per_week`; own `/referrals` page + nav; hand-rolled trend bars (no chart library). **Build after Module 16** (16a Task 1 at minimum — hours-won reads its column). Fallback split: Tasks 1–3 backend / 4–6 frontend.
+
+- `[ ]` Task 1 — Migration pushed (`20260728000000_entities_referral_partners.sql`: `referral_partners` + RLS + Realtime, unique (tenant, name)) + seed (two partners; two existing lead sources renamed to match — no new clients, census assertions stay green) + threading (`SQL_SCHEMA_DOC`, `ENTITY_TABLES`/labels, known event types); gated schema/RLS test
+- `[ ]` Task 2 — Referrals seam `services/views/referrals.py` (`PARTNER_CATEGORIES`, `referral_metrics`: per-source rows w/ conversion/days/hours-won/monthly buckets left-joined to partners + totals w/ ≥3-lead best-converter threshold); gated hand-computed seam cases
+- `[ ]` Task 3 — REST `routers/referrals.py` (metrics + partner CRUD, `referral_partner.*` events, 409 duplicate name, delete un-enriches only); gated API tests (401 + RLS covered)
+- `[ ]` Task 4 — `/referrals` page shell: `lib/referrals.ts` (+ vitest), `ReferralMetricsStrip`, `MonthlyTrendBars` (hand-rolled), sortable `PartnerTable` w/ Track buttons, nav entry
+- `[ ]` Task 5 — `PartnerDrawer` + `PartnerDialog` (Track prefills source name), delete confirm, Realtime on `referral_partners` + `leads`
+- `[ ]` Task 6 — Wrap-up: README Referrals section; full pytest/vitest/build; live track→convert→hours-won walk + chat `run_report` referral question in LangSmith
+
+### Module 18: Workforce & Compliance
+`[-]` Planned (2026-07-19) — 🔴 Complex (tool-layer involvement: safe `list_expiring_credentials`), split per the planning rule into two sub-plans. Parent: `.agent/plans/18.workforce-compliance.md`. Build order 18a → 18b (18b renders 18a's API). User-locked: Roster as a Pipeline | Roster tab on `/caregivers` (no new nav entry); credentials = dated rows per (caregiver, qualification) over the existing qualifications vocabulary (read-time valid/expiring≤60d/expired status); **retention/at-risk view deferred to Future Plans** (incl. `hire_date`); expiry automation = safe tool + documented daily-cron digest recipe proven by an engine-run pytest. Locked at planning: `resources.status` active/inactive with inactive excluded from matching + board (Roster tab lists everyone); `resource.status_changed` + `credential.added/updated/removed` events. Requires Modules 7–13 built; independent of Modules 14–17 (no key needed anywhere in 18a — the digest recipe uses no `generate` step).
+
+**18a — Workforce backend** (`.agent/plans/18a.workforce-backend.md`):
+- `[ ]` Task 1 — Migration pushed (`20260729000000_entities_workforce.sql`: `resources.status`, `resource_credentials` + unique (tenant, resource, qualification) + RLS + Realtime) + relative-date credential seeds (valid/expiring/expired/no-expiry) + threading (`SQL_SCHEMA_DOC`, event types, `credential.` → resource prefix map); gated schema/RLS/cascade tests
+- `[ ]` Task 2 — Workforce seam `services/views/workforce.py` (`credential_status` + `EXPIRING_DAYS=60`, `available_week_hours`, `roster_rows` w/ utilization, `roster_metrics` scoped to active, `expiring_credentials` soonest-first) + inactive exclusion in `matching.rank_candidates` and the board `_roster`; gated seam + matching/board exclusion tests
+- `[ ]` Task 3 — Safe `list_expiring_credentials` tool (days_ahead clamped, plain content line) + label; gated no-gate execution test
+- `[ ]` Task 4 — REST `routers/workforce.py` (roster feed, credentials CRUD w/ 409 duplicate + `credential.*` events) + roster PATCH gains `status` → `resource.status_changed`; gated API tests (401 + RLS covered)
+- `[ ]` Task 5 — `test_credential_digest.py`: README digest recipe created via the standard API, forced cron fire through the real engine → exactly one digest task naming the seeded expiring credential; no-duplicate on re-cycle; empty tenant → no task
+- `[ ]` Task 6 — Wrap-up: README Workforce section (endpoints, credential semantics, curl-runnable digest recipe JSON); full pytest green; build clean
+
+**18b — Roster frontend** (`.agent/plans/18b.roster-frontend.md`):
+- `[ ]` Task 1 — `lib/api.ts` + `lib/workforce.ts` (status/credential meta, utilization fmt + vitest) + `/caregivers` Pipeline | Roster tab shell (`?tab=`, pipeline content moved unmodified)
+- `[ ]` Task 2 — `ComplianceStrip` (active headcount, avg utilization, expiring/expired tones) + `RosterTable` (hours vs available, utilization bars, `CredentialBadges`, status filter + search) + Realtime on `resources`/`resource_credentials`
+- `[ ]` Task 3 — Shared `CaregiverDrawer` extension: credentials editor (add/edit/delete, 409 inline) + active/inactive toggle w/ deactivate confirm
+- `[ ]` Task 4 — Board/pipeline regression pass (drawer sections render from board; deactivated caregiver gone from board + candidates; pipeline untouched)
+- `[ ]` Task 5 — Wrap-up: README Roster tab note; pytest/vitest/build green; live walk (credential add → strip moves → digest recipe built in the builder → fires → task; chat expiring-credentials question via the safe tool; deactivate walk)
