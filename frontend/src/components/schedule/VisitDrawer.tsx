@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowRight, Check, MessageSquarePlus, X } from "lucide-react";
+import { ArrowRight, Check, Clock, LogIn, LogOut, MessageSquarePlus, X } from "lucide-react";
 import { api, type Candidate, type ScheduleBoard, type ScheduleVisit } from "@/lib/api";
-import { formatDayTime, formatRange, statusMeta } from "@/lib/schedule";
+import { formatDayTime, formatRange, formatTime, statusMeta } from "@/lib/schedule";
+import { fmtDuration } from "@/lib/clients";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ConfirmDialog } from "@/components/automations/ConfirmDialog";
+import { EvvBadge } from "./EvvBadge";
 import { CandidateList } from "./CandidateList";
 
 // Right-side sheet for one visit. Read-only header/body + state-driven actions:
@@ -153,6 +155,32 @@ export function VisitDrawer({
     }
   };
 
+  const doCheckIn = async () => {
+    setBusy(true);
+    try {
+      await api.checkInVisit(visit.id);
+      await onRefresh();
+      toast.success("Checked in");
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doCheckOut = async () => {
+    setBusy(true);
+    try {
+      await api.checkOutVisit(visit.id);
+      await onRefresh();
+      toast.success("Checked out — visit completed");
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const queueText = async () => {
     if (!notify) return;
     setBusy(true);
@@ -180,6 +208,7 @@ export function VisitDrawer({
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <EvvBadge evv={visit.evv} />
             <Badge variant={meta.badge}>{meta.label}</Badge>
             <button
               onClick={onClose}
@@ -206,6 +235,20 @@ export function VisitDrawer({
                     </Badge>
                   ))}
                 </div>
+              </Field>
+            )}
+            {visit.check_in_at && (
+              <Field label="EVV clock">
+                <span className="inline-flex items-center gap-1.5 text-foreground">
+                  <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                  Checked in {formatTime(visit.check_in_at)}
+                  {visit.check_out_at && <> · out {formatTime(visit.check_out_at)}</>}
+                  {fmtDuration(visit.check_in_at, visit.check_out_at) && (
+                    <span className="text-muted-foreground">
+                      · {fmtDuration(visit.check_in_at, visit.check_out_at)}
+                    </span>
+                  )}
+                </span>
               </Field>
             )}
             {visit.notes && <Field label="Notes">{visit.notes}</Field>}
@@ -269,6 +312,24 @@ export function VisitDrawer({
           {/* Actions by state (hidden while the notify prompt is up) */}
           {!notify && (
             <div className="space-y-3">
+              {/* EVV clock — check in on arrival, check out to complete the visit.
+                  Disappears once checked out (the visit becomes completed). */}
+              {visit.status === "scheduled" && !reassigning && !visit.check_out_at && (
+                <Section title="EVV clock">
+                  <div className="flex gap-2">
+                    {!visit.check_in_at ? (
+                      <Button size="sm" onClick={doCheckIn} disabled={busy}>
+                        <LogIn className="h-4 w-4" /> Check in
+                      </Button>
+                    ) : (
+                      <Button size="sm" onClick={doCheckOut} disabled={busy}>
+                        <LogOut className="h-4 w-4" /> Check out
+                      </Button>
+                    )}
+                  </div>
+                </Section>
+              )}
+
               {visit.status === "open" && (
                 <Section title="Assign a caregiver">
                   <CandidateList

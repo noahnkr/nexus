@@ -316,6 +316,16 @@ async def _api_scenario():
                 (v["evv"] for v in board["visits"] if v["id"] == overdue), "ABSENT"
             )
 
+            # --- client visits card feed (16b): the profile's upcoming/past rows.
+            # The 2029 `live` visit (now completed) is upcoming (start in the future);
+            # the `overdue` one is past and carries the read-time 'missed' flag.
+            out["live_id"] = live
+            out["overdue_id"] = overdue
+            out["visits"] = (await ac.get(f"/api/clients/{cid}/visits")).json()
+            out["visits_missing_code"] = (
+                await ac.get(f"/api/clients/{uuid.uuid4()}/visits")
+            ).status_code
+
         # --- RLS isolation: the probe tenant sees none of this ---
         async with httpx.AsyncClient(
             transport=transport, base_url="http://t",
@@ -460,3 +470,19 @@ def test_evv_routes_and_board_flag(api):
     # A scheduled visit whose window has passed with nobody clocked in reads as
     # 'missed' — derived per request, never stored.
     assert api["overdue_evv"] == "missed"
+
+
+def test_client_visits_feed(api):
+    v = api["visits"]
+    up_ids = [x["id"] for x in v["upcoming"]]
+    past_ids = [x["id"] for x in v["past"]]
+    # The future (2029) live visit is upcoming; the overdue one is past.
+    assert api["live_id"] in up_ids
+    assert api["overdue_id"] in past_ids
+    # The past overdue row carries the same read-time 'missed' flag the board shows.
+    overdue = next(x for x in v["past"] if x["id"] == api["overdue_id"])
+    assert overdue["evv"] == "missed"
+    # Rows are the board's shape (EVV stamps + flag present as keys).
+    for row in v["upcoming"] + v["past"]:
+        assert "evv" in row and "check_in_at" in row and "check_out_at" in row
+    assert api["visits_missing_code"] == 404

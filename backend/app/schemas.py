@@ -426,6 +426,14 @@ class CheckTimeBody(BaseModel):
     time: datetime | None = None
 
 
+class ClientVisits(BaseModel):
+    """The client profile's visits card: the next few upcoming visits and the last
+    few past ones, in the board's own ScheduleVisitOut shape (so the same EVV flag
+    and status meta render identically on the profile and the board)."""
+    upcoming: list[ScheduleVisitOut] = []
+    past: list[ScheduleVisitOut] = []
+
+
 class CaregiverRosterOut(BaseModel):
     """One roster row for the board's caregiver rail + the 12b edit drawer."""
     id: str

@@ -10,6 +10,8 @@ import { LeadProfilePage } from "@/pages/LeadProfilePage";
 import { CaregiversPage } from "@/pages/CaregiversPage";
 import { CaregiverProfilePage } from "@/pages/CaregiverProfilePage";
 import { SchedulePage } from "@/pages/SchedulePage";
+import { ClientsPage } from "@/pages/ClientsPage";
+import { ClientProfilePage } from "@/pages/ClientProfilePage";
 import { StageSequencePage } from "@/pages/StageSequencePage";
 import { EventLogPage } from "@/pages/EventLogPage";
 import { AutomationsPage } from "@/pages/AutomationsPage";
@@ -43,6 +45,8 @@ const router = createBrowserRouter([
       { path: "caregivers/stages/:stage/sequence", element: <StageSequencePage view="caregivers" /> },
       { path: "caregivers/:id", element: <CaregiverProfilePage /> },
       { path: "schedule", element: <SchedulePage /> },
+      { path: "clients", element: <ClientsPage /> },
+      { path: "clients/:id", element: <ClientProfilePage /> },
       { path: "automations", element: <AutomationsPage /> },
       { path: "automations/new", element: <AutomationBuilderPage /> },
       { path: "automations/:id", element: <AutomationDetailPage /> },

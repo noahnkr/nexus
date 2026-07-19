@@ -900,6 +900,57 @@ on "WHEN a visit is checked out".
 
 No new environment variables.
 
+### Clients view — frontend (Module 16b)
+
+The `/clients` directory and `/clients/{id}` care overview are the fourth vertical
+surface's UI, reusing the Leads/Caregivers directory + profile patterns and the M12b
+schedule drawer wholesale. Frontend seam: `lib/clients.ts` (status/payer meta,
+`fmtHours`/`fmtDuration`, vitest-covered) + `components/clients/*` +
+`pages/ClientsPage.tsx` / `ClientProfilePage.tsx`. Nav entry **Clients**
+(`HeartPulse`) sits between Caregivers and Schedule.
+
+**Directory** (`/clients`): a **census strip** on top — four stat tiles (Active
+clients, Authorized/wk, Scheduled this week with unfilled hours as the subline, and
+Delivered this week which turns **amber whenever `leakage_hours > 0`**, because the
+revenue-leakage gap is the point of the census) plus by-payer / by-region chip rows
+that apply the filter on click. Below: status filter chips (from the status meta),
+payer + region `Select`s, search — all round-tripped through the URL — and a table
+(name, status pill, payer, region, authorized/wk, contact) with row-click to the
+profile. Realtime on `clients` refetches the directory + census; Realtime on
+`schedules` refetches just the census (delivered/open hours move as visits do). Every
+number comes straight from `GET /api/clients/metrics` — no client-side census math.
+
+**Care overview** (`/clients/{id}`): SmartSummary (shared component, `client`
+entity), then cards — contact/address/zip inline edit with languages/preferences tag
+editors; a Care card (status/payer/region `Select`s with a **discharge-confirm**
+dialog, authorized hours, care-summary textarea); an hours card (authorized /
+scheduled / delivered bars, delivered amber when short, the leakage line); family
+contacts (primary-star first, add/edit/delete, one-primary swap); assigned caregivers
+linking to the board on their next visit's week; a visits card (next 5 upcoming + last
+5 past, status pills + amber EVV badges, actual clocked duration once checked out,
+"open in schedule"); a documents card; and the `client` EntityTimeline.
+
+**Care plans** (`ClientDocumentsCard`): reuses the ingestion upload with
+`entity_type='client'`/`entity_id` **preset invisibly** — the coordinator just picks a
+file — with live status via Realtime and a confirmed delete. The Knowledge/Ingestion
+page is untouched; this is the only place the tag is set from the UI.
+
+**Schedule board EVV surfaces.** `VisitBlock` shows a compact amber `late`/`missed`
+badge from the feed's server-computed `evv` field (no client-side rule math).
+`VisitDrawer` gains state-driven **Check in** / **Check out** actions on scheduled
+visits (check-out completes the visit and the drawer reflects the transition), shows
+the clocked line ("Checked in 8:04 · out 12:14 · 4h 10m") once recorded, and keeps the
+existing outcome buttons for unclocked bookkeeping. The EVV badge + `evvLabel` live in
+`lib/schedule.ts` / `components/schedule/EvvBadge.tsx`, shared by the board and the
+profile's visits card so the two never disagree.
+
+**One backend addition (deviation from the plan's "no backend work" note).** The
+visits card needs a client-scoped visit list, which 16a did not ship, so 16b adds one
+read-only seam route: `GET /api/clients/{id}/visits?upcoming=&past=` returns the next
+upcoming and last past visits in the board's `ScheduleVisitOut` shape (same resolved
+names, same read-time `evv` flag). It reuses the schedule router's visit shaping and is
+RLS-scoped like every `/api` route; both routers are vertical-seam members.
+
 ## Notes on Templating
 
 This repo is designed so that a second deployment, in a different vertical, requires:

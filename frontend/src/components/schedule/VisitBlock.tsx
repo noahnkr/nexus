@@ -1,6 +1,7 @@
 import type { ScheduleVisit } from "@/lib/api";
 import { formatRange, statusMeta } from "@/lib/schedule";
 import { cn } from "@/lib/utils";
+import { EvvBadge } from "./EvvBadge";
 
 // One visit chip in a board cell: time range + client name, tinted by status. A
 // replacement (covering a call-out) carries a small "covering" hint. Day-column
@@ -26,6 +27,11 @@ export function VisitBlock({
     >
       <div className="font-medium tabular-nums">{formatRange(visit)}</div>
       <div className="truncate">{visit.client_name}</div>
+      {visit.evv && (
+        <div className="mt-0.5">
+          <EvvBadge evv={visit.evv} compact className="text-[10px]" />
+        </div>
+      )}
       {visit.replaces_schedule_id && (
         <div className="mt-0.5 text-[10px] font-medium uppercase tracking-wide opacity-80">
           Covering

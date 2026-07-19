@@ -42,6 +42,7 @@ from ..schemas import (
     ClientPage,
     ClientPatch,
     ClientSummaryOut,
+    ClientVisits,
     RegionRef,
 )
 from ..services.events import log_event
@@ -61,6 +62,10 @@ from ..services.views.summary import (
     get_or_generate_entity_summary,
     regenerate_entity_summary,
 )
+# Reuse the Schedule board's visit shaping so the profile's visit rows are byte-for-
+# byte the same as the board's (same resolved names, same server-computed EVV flag).
+# Both routers are vertical-seam members; core never imports either.
+from .schedule import _VISIT_JOIN_SQL, _qual_names, _visit_out
 
 router = APIRouter(prefix="/api", tags=["clients"])
 
@@ -363,6 +368,40 @@ async def get_client(client_id: str, conn=Depends(tenant_conn)):
         hours_this_week=ClientHours(**await client_week_hours(conn, client_id)),
         documents=await _documents(conn, client_id),
     )
+
+
+@router.get("/clients/{client_id}/visits", response_model=ClientVisits)
+async def client_visits(
+    client_id: str,
+    conn=Depends(tenant_conn),
+    upcoming: int = Query(5, ge=0, le=50),
+    past: int = Query(5, ge=0, le=50),
+):
+    """This client's visits for the profile's visits card: the next `upcoming`
+    starting from now (soonest first) and the last `past` before now (most recent
+    first). Cancelled visits are omitted. Rows carry the board's resolved names and
+    the read-time EVV flag, so the profile and the board never disagree."""
+    client_id = _valid_uuid(client_id, "client_id")
+    await _require_client(conn, client_id)
+    qmap = await _qual_names(conn)
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            _VISIT_JOIN_SQL
+            + """ where s.client_id = %s and s.start_time >= now()
+                   and s.status <> 'cancelled'
+                 order by s.start_time asc limit %s""",
+            (client_id, upcoming),
+        )
+        up = [_visit_out(r, qmap) for r in await cur.fetchall()]
+        await cur.execute(
+            _VISIT_JOIN_SQL
+            + """ where s.client_id = %s and s.start_time < now()
+                   and s.status <> 'cancelled'
+                 order by s.start_time desc limit %s""",
+            (client_id, past),
+        )
+        pst = [_visit_out(r, qmap) for r in await cur.fetchall()]
+    return ClientVisits(upcoming=up, past=pst)
 
 
 @router.patch("/clients/{client_id}", response_model=ClientDetail)
