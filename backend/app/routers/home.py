@@ -28,6 +28,8 @@ async def home_summary(conn=Depends(tenant_conn)):
                  where status in ('pending', 'in_progress'))            as open_tasks,
               (select count(*) from public.pending_actions
                  where status = 'pending')                              as pending_approvals,
+              (select count(*) from public.schedules
+                 where status = 'open' and start_time >= now())         as open_shifts,
               (select count(*) from public.documents
                  where status = 'ready')                                as docs_ready,
               (select count(*) from public.documents
@@ -50,6 +52,7 @@ async def home_summary(conn=Depends(tenant_conn)):
     return HomeSummary(
         open_tasks=r["open_tasks"],
         pending_approvals=r["pending_approvals"],
+        open_shifts=r["open_shifts"],
         documents=DocumentCounts(
             ready=r["docs_ready"],
             processing=r["docs_processing"],

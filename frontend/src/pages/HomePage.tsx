@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, FileText, ListTodo, ScrollText, Zap } from "lucide-react";
+import { CalendarDays, CheckCircle2, FileText, ListTodo, ScrollText, Zap } from "lucide-react";
 import { api, type EventOut, type HomeSummary } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { StatCard } from "@/components/home/StatCard";
@@ -86,7 +86,7 @@ export function HomePage() {
         </header>
 
         {/* At-a-glance counts */}
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
           <StatCard
             to="/tasks"
             label="Open tasks"
@@ -102,6 +102,15 @@ export function HomePage() {
             icon={CheckCircle2}
             sublabel="Actions to review"
             tone={summary?.pending_approvals ? "warning" : "default"}
+            loading={loading}
+          />
+          <StatCard
+            to="/schedule"
+            label="Open shifts"
+            count={summary?.open_shifts ?? 0}
+            icon={CalendarDays}
+            sublabel="Unfilled visits to staff"
+            tone={summary?.open_shifts ? "warning" : "default"}
             loading={loading}
           />
           <StatCard

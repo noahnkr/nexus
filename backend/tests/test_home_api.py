@@ -27,7 +27,9 @@ async def _scenario():
     from app.services.tools import execute_tool
 
     token = uuid.uuid4().hex[:8]
-    out = {"task_ids": [], "doc_ids": [], "gate_task_ids": []}
+    out: dict = {"task_ids": [], "doc_ids": [], "gate_task_ids": [], "sched_ids": []}
+    WALTER = "44444444-0000-0000-0000-000000000001"
+    ALICIA = "55555555-0000-0000-0000-000000000001"
 
     await db.open_pool()
     try:
@@ -62,6 +64,32 @@ async def _scenario():
                             (DEMO_TENANT, f"hometest_{token}_{st}.md", st),
                         )
                         out["doc_ids"].append(str((await cur.fetchone())[0]))
+                    # open_shifts counts FUTURE open visits only: +1 future open counts;
+                    # a past open shift and a future filled (scheduled) visit do not.
+                    await cur.execute(
+                        "insert into public.schedules (tenant_id, resource_id, client_id, "
+                        "start_time, end_time, status) values "
+                        "(%s, null, %s, now() + interval '1 day', now() + interval '1 day 4 hours', 'open') "
+                        "returning id",
+                        (DEMO_TENANT, WALTER),
+                    )
+                    out["sched_ids"].append(str((await cur.fetchone())[0]))
+                    await cur.execute(
+                        "insert into public.schedules (tenant_id, resource_id, client_id, "
+                        "start_time, end_time, status) values "
+                        "(%s, null, %s, now() - interval '2 days', now() - interval '2 days' + interval '4 hours', 'open') "
+                        "returning id",
+                        (DEMO_TENANT, WALTER),
+                    )
+                    out["sched_ids"].append(str((await cur.fetchone())[0]))
+                    await cur.execute(
+                        "insert into public.schedules (tenant_id, resource_id, client_id, "
+                        "start_time, end_time, status) values "
+                        "(%s, %s, %s, now() + interval '3 days', now() + interval '3 days 4 hours', 'scheduled') "
+                        "returning id",
+                        (DEMO_TENANT, ALICIA, WALTER),
+                    )
+                    out["sched_ids"].append(str((await cur.fetchone())[0]))
 
             # 1 pending approval (via a gated tool -> queues an action + task)
             async with db.tenant_tx(DEMO_TENANT) as conn:
@@ -87,6 +115,8 @@ async def _scenario():
                 await conn.execute("delete from public.tasks where id=%s", (tid,))
             for did in out["doc_ids"]:
                 await conn.execute("delete from public.documents where id=%s", (did,))
+            for sid in out["sched_ids"]:
+                await conn.execute("delete from public.schedules where id=%s", (sid,))
         return out
     finally:
         await db.close_pool()
@@ -103,6 +133,8 @@ def test_home_summary():
     assert a["open_tasks"] - b["open_tasks"] == 3
     # the gated send_sms queued exactly one pending approval
     assert a["pending_approvals"] - b["pending_approvals"] == 1
+    # only the one FUTURE open shift counts (past-open + future-scheduled excluded)
+    assert a["open_shifts"] - b["open_shifts"] == 1
     # documents by status
     assert a["documents"]["ready"] - b["documents"]["ready"] == 1
     assert a["documents"]["processing"] - b["documents"]["processing"] == 1
@@ -116,4 +148,5 @@ def test_home_summary():
         out["probe_after"]["pending_approvals"]
         == out["probe_before"]["pending_approvals"]
     )
+    assert out["probe_after"]["open_shifts"] == out["probe_before"]["open_shifts"]
     assert out["probe_after"]["documents"] == out["probe_before"]["documents"]

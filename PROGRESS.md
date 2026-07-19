@@ -203,12 +203,12 @@ Module-by-module build status for the Nexus Control Center. Claude Code reads th
 - `[x]` Task 5 — REST `routers/schedule.py` (wired in `main.py`): week board feed, visit create/expand + PATCH (edits/outcomes) + call-out/assign/cancel/candidates, roster list/PATCH (`resource.updated`), gated `notify` via `execute_tool`. `test_schedule_api` green (401 + RLS isolation covered)
 - `[x]` Task 6 — Wrap-up: README Scheduling section; full pytest green (226 passed), frontend `npm run build` clean
 
-**12b — Schedule board & call-out flow** (`.agent/plans/12b.schedule-board.md`):
-- `[ ]` Task 1 — `lib/schedule.ts` + `/schedule` page shell (week nav ↔ URL, feed fetch, Realtime, nav entry)
-- `[ ]` Task 2 — `ScheduleBoard` grid + `VisitBlock` chips (pinned Open-shifts row, status tones both themes, day columns — no hour geometry)
-- `[ ]` Task 3 — `VisitDrawer` (call-out confirm → follows to replacement, `CandidateList` w/ reason chips, assign → gated-SMS prompt → queued chip) + `VisitCreateDialog` (repeat weekly)
-- `[ ]` Task 4 — `CaregiverDrawer` roster editing + Home `open_shifts` StatCard (+ `home.py` count + test)
-- `[ ]` Task 5 — Wrap-up: README board + call-out recipe docs; live call-out → automation → LangSmith walk
+**12b — Schedule board & call-out flow** (`.agent/plans/12b.schedule-board.md`): `[x]` Code complete (2026-07-18) — full pytest green (226), frontend build clean. Live browser + automation-run walk pending a running stack.
+- `[x]` Task 1 — `lib/schedule.ts` (status meta, Monday week math, time fmt) + `lib/api.ts` types/methods + `/schedule` page shell (week nav ↔ `?week=`, one-fetch feed, Realtime debounce, nav entry `CalendarDays`, empty state)
+- `[x]` Task 2 — `ScheduleBoard` grid (sticky name column + Mon–Sun, pinned Open-shifts row, hours-this-week, horizontal scroll) + `VisitBlock` chips (status tones from semantic tokens, "covering" hint) — day columns, no hour geometry
+- `[x]` Task 3 — `VisitDrawer` (state-driven actions: call-out confirm → follows to replacement, `CandidateList` w/ reason chips + amber warnings, assign → gated-SMS notify prompt → queued chip → `/tasks`; reassign, cancel, outcomes; related-visit links; technical expander) + `VisitCreateDialog` (client/caregiver picker, date+times, required-qual chips, notes, repeat-weekly w/ client-side ≤12 cap)
+- `[x]` Task 4 — `CaregiverDrawer` (contact/address/zip, language/trait tag editors, per-day availability editor, hours readout → `patchRosterMember` → one `resource.updated`) + Home `open_shifts` StatCard; `home.py` count + `test_home_api.py` delta/RLS case
+- `[x]` Task 5 — Wrap-up: README Schedule board section + call-out recipe (WHEN `schedule.called_out` → `find_available_caregivers` → `create_task`/gated `send_sms`). Backend extension: `/candidates` now ranks `scheduled` visits too (reassign) — 409 only on terminal/called-out; `ScheduleBoard` payload gains `clients` for the create picker. Live automation-run + LangSmith walk pending a running stack
 
 ### Module 13: Automation Builder Enhancements
 `[-]` Planned (2026-07-18) — ⚠️ Medium, single plan: `.agent/plans/13.automation-builder-enhancements.md` (fallback split: Tasks 1–4 builder work / Tasks 5–6 app sweep). Builds **after** Module 12 (user decision 2026-07-18) so the dropdown sweep also covers the schedule board's selects. User-locked: gate the entry IF section on event triggers; plain-language event labels (raw type as secondary text); verify-and-fix the reported empty IF-field-dropdown bug live; hand-rolled `ui/Select` (no new deps); full sweep of every native `<select>` (~28 sites incl. ScheduleBuilder, SchemaForm enums, DateTimePicker). No migrations, no env vars, no engine/recipe-format changes.

@@ -661,6 +661,49 @@ window — usable from chat/MCP and as an automation step), gated `record_call_o
 `schedule.called_out` event (payload carries `replacement_schedule_id`) is the trigger
 for call-out automations. No new frontend deps or env vars.
 
+### Schedule board (Module 12b)
+
+`/schedule` (nav **Schedule**) is the week board over the 12a API — caregivers as
+rows, a pinned **Open shifts** row on top, visits as status-tinted day-column chips
+(no hour-scaled geometry — visits are 2–10h). The week round-trips to
+`?week=YYYY-MM-DD` (Monday-normalized) and refetches on Supabase Realtime `schedules`
+changes. Everything reads from one `GET /api/schedule?week=` fetch.
+
+Clicking a visit opens the **visit drawer**, whose actions follow the visit's state:
+
+- **Open shift** → a ranked **candidate list** (name, score badge, plain reason
+  chips, amber warnings). *Assign* fills it, then offers a prefilled **"Text ⟨name⟩
+  about this shift?"** prompt → *Queue text* runs `send_sms` through the approval gate
+  and shows an amber "queued for approval" chip linking to `/tasks`.
+- **Scheduled (future)** → **Call out** (confirm → opens a replacement shift and the
+  drawer follows to it), **Reassign** (same candidate list), **Cancel**.
+- **Scheduled (past)** → **Mark completed** / **No-show**.
+- **Called-out / terminal** → read-only, with a link chip to the replacement (or the
+  original it covers).
+
+The **New visit** dialog creates an assigned visit or, with the caregiver left blank,
+an open shift; **Repeat weekly until** expands the series server-side (≤12 extra
+visits, mirrored with a client-side cap). Clicking a caregiver's name opens the
+**caregiver drawer** — the one roster-editing surface (contact, address/ZIP,
+languages/traits tags, and per-day availability in the `{"mon":["08:00-16:00"]}`
+shape); saving emits one `resource.updated`. Home gains an **Open shifts** stat card
+(`open_shifts` = future unfilled visits) deep-linking to the board.
+
+**Call-out automation recipe** (build it in the M8 builder — recipes aren't seeded).
+The `schedule.called_out` event fires when a caregiver drops a visit, and its payload
+carries `replacement_schedule_id` (the new open shift). A basic dispatch recipe:
+
+- **WHEN** event `schedule.called_out`
+- **THEN** ①  tool `find_available_caregivers` with `schedule_id` =
+  `{{trigger.payload.replacement_schedule_id}}` (safe — its result lands in run
+  context), then ②  `create_task` titled e.g. *"Cover {{entity.client_id}}'s shift —
+  try {{steps.1.candidates.0.name}}"* so a coordinator sees the top candidate.
+
+The "AI dispatch" extension swaps step ②'s `create_task` for a gated `send_sms` to
+`{{steps.1.candidates.0.phone}}` — still queued for approval, so a human confirms
+before any text goes out. The M11 token picker resolves the
+`{{trigger.payload.replacement_schedule_id}}` and `{{steps.N.candidates.0.*}}` paths.
+
 ## Notes on Templating
 
 This repo is designed so that a second deployment, in a different vertical, requires:

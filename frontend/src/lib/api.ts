@@ -498,10 +498,132 @@ export interface ApplicantQuery {
   offset?: number;
 }
 
+// --- Schedule board (Module 12, vertical seam) -------------------------------
+export type VisitStatus =
+  | "open"
+  | "scheduled"
+  | "called_out"
+  | "completed"
+  | "cancelled"
+  | "no_show";
+
+export interface ScheduleVisit {
+  id: string;
+  client_id: string;
+  client_name: string;
+  resource_id: string | null; // null for an unfilled 'open' shift
+  resource_name: string | null;
+  start_time: string;
+  end_time: string;
+  status: VisitStatus;
+  required_qualification_ids: string[];
+  required_qualification_names: string[];
+  replaces_schedule_id: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// A weekday -> time-range list, e.g. { mon: ["08:00-16:00"] }.
+export type Availability = Record<string, string[]>;
+
+export interface CaregiverRoster {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  zip: string | null;
+  languages: string[];
+  traits: string[];
+  qualification_ids: string[];
+  region_ids: string[];
+  availability: Availability;
+  hours_this_week: number;
+}
+
+export interface ClientRef {
+  id: string;
+  name: string;
+}
+
+export interface ScheduleBoard {
+  week_start: string; // Monday of the requested week (YYYY-MM-DD)
+  visits: ScheduleVisit[];
+  caregivers: CaregiverRoster[];
+  clients: ClientRef[]; // for the create dialog's client picker
+}
+
+export interface ScheduleCreate {
+  client_id: string;
+  resource_id?: string | null; // omit for an open shift
+  start_time: string;
+  end_time: string;
+  required_qualification_ids?: string[];
+  notes?: string | null;
+  repeat_weekly_until?: string | null; // YYYY-MM-DD
+}
+
+export interface SchedulesCreated {
+  visits: ScheduleVisit[]; // every row created (a weekly series expands)
+}
+
+export interface SchedulePatch {
+  start_time?: string;
+  end_time?: string;
+  notes?: string | null;
+  required_qualification_ids?: string[];
+  status?: "completed" | "no_show"; // outcome only; transitions have their own verbs
+}
+
+export interface AssignResult {
+  schedule_id: string;
+  resource_id: string;
+  status: string;
+  warnings: string[]; // qualification/availability gaps (non-blocking)
+}
+
+export interface CallOutResult {
+  schedule_id: string;
+  replacement_schedule_id: string;
+}
+
+export interface Candidate {
+  resource_id: string;
+  name: string;
+  phone: string | null;
+  score: number;
+  reasons: string[];
+  warnings: string[];
+}
+
+export interface CandidatesOut {
+  candidates: Candidate[];
+}
+
+export interface RosterPatch {
+  name?: string;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  zip?: string | null;
+  languages?: string[];
+  traits?: string[];
+  availability?: Availability;
+}
+
+export interface NotifyResult {
+  status: string; // "queued"
+  task_id: string | null;
+  pending_action_id: string | null;
+  summary: string;
+}
+
 // --- Home summary ------------------------------------------------------------
 export interface HomeSummary {
   open_tasks: number;
   pending_approvals: number;
+  open_shifts: number;
   documents: { ready: number; processing: number; failed: number };
   events_today: number;
   automations: { active: number; runs_today: number; failed_today: number };
@@ -697,4 +819,50 @@ export const api = {
     ),
   getApplicantMetrics: () =>
     authFetch("/api/applicants/metrics").then(json<ApplicantMetrics>),
+
+  // Schedule board (Module 12)
+  getScheduleWeek: (week: string) =>
+    authFetch(`/api/schedule${queryString({ week })}`).then(json<ScheduleBoard>),
+  createVisits: (body: ScheduleCreate) =>
+    authFetch("/api/schedules", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<SchedulesCreated>),
+  patchVisit: (id: string, body: SchedulePatch) =>
+    authFetch(`/api/schedules/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<ScheduleVisit>),
+  callOutVisit: (id: string) =>
+    authFetch(`/api/schedules/${id}/call-out`, { method: "POST" }).then(
+      json<CallOutResult>,
+    ),
+  assignVisit: (id: string, resourceId: string) =>
+    authFetch(`/api/schedules/${id}/assign`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ resource_id: resourceId }),
+    }).then(json<AssignResult>),
+  cancelVisit: (id: string) =>
+    authFetch(`/api/schedules/${id}/cancel`, { method: "POST" }).then(
+      json<ScheduleVisit>,
+    ),
+  getCandidates: (id: string) =>
+    authFetch(`/api/schedules/${id}/candidates`).then(json<CandidatesOut>),
+  getRoster: (week?: string) =>
+    authFetch(`/api/roster${queryString({ week })}`).then(json<CaregiverRoster[]>),
+  patchRosterMember: (id: string, body: RosterPatch) =>
+    authFetch(`/api/roster/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<CaregiverRoster>),
+  notifyCaregiver: (id: string, resourceId: string, message: string) =>
+    authFetch(`/api/schedules/${id}/notify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ resource_id: resourceId, message }),
+    }).then(json<NotifyResult>),
 };
