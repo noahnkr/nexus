@@ -17,7 +17,8 @@ export function PageHeader({
   return (
     <div
       className={cn(
-        "flex items-start justify-between gap-4 border-b px-6 py-4",
+        // Tighter gutters on phones so titles and actions don't crowd the edge.
+        "flex items-start justify-between gap-3 border-b px-4 py-3 sm:gap-4 sm:px-6 sm:py-4",
         className,
       )}
     >

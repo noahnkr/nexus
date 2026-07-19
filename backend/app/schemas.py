@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 # --- Documents / ingestion ---------------------------------------------------
@@ -597,3 +597,23 @@ class AutomationDraft(BaseModel):
     conditions: list[dict[str, Any]] = []
     steps: list[dict[str, Any]] = []
     explanation: str
+
+
+# --- Tenant settings (Module 15b) --------------------------------------------
+class SettingsOut(BaseModel):
+    """Every whitelisted preference, defaults filled in by services/settings.py."""
+    workspace_name: str = ""
+    agent_instructions: str = ""
+    agent_tone: str = "balanced"
+
+
+class SettingsPatch(BaseModel):
+    """Partial update — only the fields actually sent are applied (exclude_unset).
+    `extra="forbid"` turns a typo'd or retired key into a 422 at the edge rather
+    than a silently ignored write; the seam keeps its own unknown-key guard for
+    non-HTTP callers."""
+    model_config = ConfigDict(extra="forbid")
+
+    workspace_name: str | None = None
+    agent_instructions: str | None = None
+    agent_tone: str | None = None

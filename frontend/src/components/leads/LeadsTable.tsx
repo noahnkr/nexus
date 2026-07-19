@@ -18,7 +18,7 @@ import type { Lead } from "@/lib/api";
 export function LeadsTable({ leads }: { leads: Lead[] }) {
   const navigate = useNavigate();
   return (
-    <div className="rounded-lg border">
+    <div className="overflow-x-auto rounded-lg border">
       <Table>
         <TableHeader>
           <TableRow>

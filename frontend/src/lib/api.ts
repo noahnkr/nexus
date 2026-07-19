@@ -190,6 +190,17 @@ export interface ActionResolution {
   task: Task;
 }
 
+// --- Settings ----------------------------------------------------------------
+export type AgentTone = "balanced" | "professional" | "friendly" | "concise";
+
+// Per-tenant, user-facing preferences. Infra config and credentials are env-only
+// and never appear here.
+export interface TenantSettings {
+  workspace_name: string;
+  agent_instructions: string;
+  agent_tone: AgentTone;
+}
+
 // --- Automations -------------------------------------------------------------
 export interface LastRun {
   status: RunStatus;
@@ -663,6 +674,15 @@ async function json<T>(res: Response): Promise<T> {
 export const api = {
   // Home
   getHomeSummary: () => authFetch("/api/home/summary").then(json<HomeSummary>),
+
+  // Settings (per-tenant workspace + agent preferences)
+  getSettings: () => authFetch("/api/settings").then(json<TenantSettings>),
+  updateSettings: (patch: Partial<TenantSettings>) =>
+    authFetch("/api/settings", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    }).then(json<TenantSettings>),
 
   // Documents
   listDocuments: () => authFetch("/api/documents").then(json<DocumentOut[]>),

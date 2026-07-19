@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { MessagesSquare } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   api,
   type ContentBlock,
@@ -37,6 +39,7 @@ export function ChatPage() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
+  const [threadsOpen, setThreadsOpen] = useState(false);
   const localId = useRef(0);
   const nextId = () => `local-${localId.current++}`;
   // Aborts the in-flight turn. The backend sees the disconnect and persists the
@@ -218,17 +221,54 @@ export function ChatPage() {
 
   return (
     <div className="flex min-h-0 flex-1">
+      {/* Desktop: a permanent rail. On phones it would eat most of the width, so
+          it moves behind the "Threads" button below as an overlay panel. */}
       <ThreadList
+        className="hidden md:flex"
         threads={threads}
         activeId={activeId}
         onSelect={selectThread}
         onNew={newThread}
         onDelete={deleteThread}
       />
+
+      {threadsOpen && (
+        <div className="fixed inset-0 z-40 md:hidden">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setThreadsOpen(false)}
+          />
+          <ThreadList
+            className="absolute left-0 top-0 h-full w-64 shadow-xl"
+            threads={threads}
+            activeId={activeId}
+            onSelect={(id) => {
+              selectThread(id);
+              setThreadsOpen(false);
+            }}
+            onNew={() => {
+              newThread();
+              setThreadsOpen(false);
+            }}
+            onDelete={deleteThread}
+          />
+        </div>
+      )}
+
       <div className="flex min-w-0 flex-1 flex-col">
         <PageHeader
           title="Chat"
           description="Ask questions and draft actions — grounded in your documents and data."
+          action={
+            <Button
+              size="sm"
+              variant="outline"
+              className="md:hidden"
+              onClick={() => setThreadsOpen(true)}
+            >
+              <MessagesSquare className="h-4 w-4" /> Threads
+            </Button>
+          }
         />
         <MessageList messages={messages} />
         <MessageInput onSend={send} onStop={stop} streaming={streaming} />

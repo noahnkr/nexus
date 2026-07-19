@@ -42,6 +42,7 @@ from ..config import settings
 from ..db import tenant_tx
 from ..llm import get_anthropic, traceable
 from .events import log_event
+from .settings import get_settings
 from .tools import anthropic_tool_defs, execute_tool
 
 MAX_TOKENS = 2048
@@ -83,6 +84,49 @@ PERSONA = (
     "plain language. If the tools return nothing relevant, say so plainly rather "
     "than guessing."
 )
+
+# Tenant preferences (M15b) reach the model as a SECOND system block, appended
+# after PERSONA — never merged into it. The ordering is the safety property: the
+# core persona (which carries the approval-gate rules and the no-raw-JSON rule)
+# is always the model's first and highest-priority instruction, and the tenant's
+# text is explicitly framed as subordinate to it. An owner can shape how the
+# assistant sounds; they cannot talk it out of the gate.
+TONE_SENTENCES = {
+    "professional": "Keep your tone professional and businesslike.",
+    "friendly": "Keep your tone warm and conversational.",
+    "concise": "Be brief — short answers, minimal preamble.",
+    "balanced": "",  # the default: no tone sentence at all
+}
+
+INSTRUCTIONS_PREAMBLE = (
+    "The business owner has customized how you should respond. Follow these "
+    "preferences where they don't conflict with the rules above:"
+)
+
+
+def build_system(tenant_settings: dict | None) -> list[dict]:
+    """The system array for a turn: PERSONA, optionally followed by the tenant's
+    preferences. `cache_control` sits on the LAST block so the whole system prefix
+    is cached (the API caches up to each breakpoint; two text blocks plus the tools
+    array stays well inside the 4-breakpoint budget)."""
+    blocks: list[dict] = [{"type": "text", "text": PERSONA}]
+
+    settings_dict = tenant_settings or {}
+    instructions = (settings_dict.get("agent_instructions") or "").strip()
+    tone = settings_dict.get("agent_tone") or "balanced"
+    tone_sentence = TONE_SENTENCES.get(tone, "")
+
+    if instructions or tone_sentence:
+        parts = [INSTRUCTIONS_PREAMBLE]
+        if tone_sentence:
+            parts.append(tone_sentence)
+        if instructions:
+            parts.append(instructions)
+        blocks.append({"type": "text", "text": "\n\n".join(parts)})
+
+    blocks[-1]["cache_control"] = {"type": "ephemeral"}
+    return blocks
+
 
 # Plain-language progress labels (D8). Args are only used to append a short,
 # already-plain string (a search query or a report purpose) — never raw JSON.
@@ -244,10 +288,13 @@ async def stream_chat_turn(tenant_id: str, thread_id: str, user_text: str):
         await conn.execute(
             "update public.chat_threads set updated_at=now() where id=%s", (thread_id,)
         )
+        # Preferences are read once per turn, on the transaction we already have
+        # open — they can't change mid-turn, and the tool loop shouldn't re-query.
+        tenant_settings = await get_settings(conn)
 
     # 2. Agentic loop.
     client = get_anthropic()
-    system = [{"type": "text", "text": PERSONA, "cache_control": {"type": "ephemeral"}}]
+    system = build_system(tenant_settings)
     tool_defs = anthropic_tool_defs()
 
     agg_sources: list[dict] = []  # turn-global, public shape (UI + persistence)

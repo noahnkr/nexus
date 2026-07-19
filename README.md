@@ -9,7 +9,7 @@ See [`PRD.md`](./PRD.md) for full scope, target users, and success criteria. See
 ## What's Here
 
 - **Chat** — threaded conversations with an AI agent that has retrieval access to unstructured business context (via RAG) and structured business data (via parameterized tools), and can take gated actions (send a message, create a task, trigger an automation)
-- **Ingestion** — manual document upload with chunking/embedding status
+- **Knowledge** — manual document upload with chunking/embedding status, plus the free-text instructions that shape how the assistant writes
 - **Control Center Home** — landing dashboard: at-a-glance counts, recent activity, quick actions
 - **Tasks** — anything needing a human decision, created automatically or manually
 - **Event Log** — an immutable audit trail of everything that happened across every connected system and every agent action
@@ -178,9 +178,18 @@ document-style answers (headings, lists, tables) when you ask for one, with wide
 tables scrolling inside the bubble. The send button becomes a **stop** button while a
 reply streams; stopping keeps whatever was written (annotated "— stopped") and
 persists it, so the conversation stays valid and the next question answers normally.
-Ingestion
-(`/ingestion`) is drag-and-drop upload with live status via Supabase Realtime; Tasks
-(`/tasks`) and Event Log (`/events`) round out the shell.
+Knowledge
+(`/knowledge`, formerly `/ingestion`, which now redirects) is drag-and-drop upload
+with live status via Supabase Realtime; Tasks (`/tasks`), Event Log (`/events`), and
+Settings (`/settings`) round out the shell.
+
+The sidebar collapses to an icon rail (remembered per browser in
+`localStorage["nexus.sidebar"]`). Below `md` it becomes an overlay drawer behind a
+hamburger in a slim top bar, and the core pages — Home, Chat, Tasks, Leads,
+Caregivers, Event Log, Knowledge, Settings — lay out for small screens: grids
+collapse, filter rows wrap, tables scroll inside their own containers, and drawers
+go full-width. The schedule board and automation builder stay desktop-first; they
+scroll horizontally rather than reflow.
 
 ### Auth Setup (Module 6)
 
@@ -210,6 +219,40 @@ dashboard (a one-time ops step):
 Then sign in at `/login`; the app redirects there automatically when signed out.
 `NEXUS_TENANT_ID` is no longer read for the user surface — it remains only for the
 machine paths (webhooks, `/mcp`), the seed, and the test harness.
+
+### Workspace Settings & Agent Instructions (Module 15b)
+
+`tenant_settings` is a core table holding one jsonb row per tenant of *user-facing*
+preferences. It is deliberately not a config store: infra config and credentials
+stay in env vars, nothing here is a secret, and the machine paths (`/mcp`, webhooks)
+never read it.
+
+```
+GET   /api/settings     every whitelisted key, defaults filled in
+PATCH /api/settings     partial update; 422 on an unknown key or invalid value
+```
+
+Keys are whitelisted in `services/settings.py`, which owns each one's default,
+validation, and audit label — adding a preference needs no migration:
+
+| key | v1 rule |
+| --- | --- |
+| `workspace_name` | text ≤ 80; shown in the Home greeting |
+| `agent_instructions` | text ≤ 4000; appended to the chat system prompt |
+| `agent_tone` | `balanced` (default) \| `professional` \| `friendly` \| `concise` |
+
+Every write logs a `settings.updated` event naming the changed **keys only** —
+never their values, since instructions are free text an owner may treat as private.
+
+**How instructions reach the model.** `build_system()` returns the system array for
+a turn: `PERSONA` first and unmodified, then — only when instructions or a
+non-balanced tone are set — a second block framed as *"Follow these preferences
+where they don't conflict with the rules above"*. `cache_control` sits on the last
+block so the whole prefix is cached. The ordering is the safety property: tenant
+text can shape tone and content, never the approval gate or tool semantics.
+
+Edit instructions at `/knowledge?tab=instructions`; `/settings` covers profile
+(display name and password, both via Supabase Auth), workspace name, and theme.
 
 ### Connecting an MCP Client (Module 3a)
 

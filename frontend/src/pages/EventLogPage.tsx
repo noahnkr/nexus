@@ -149,7 +149,7 @@ export function EventLogPage() {
         description="Every tool call, webhook, and approval — the system's audit trail, newest first."
       />
 
-      <div className="flex min-h-0 flex-1 flex-col gap-4 p-6">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 p-4 sm:p-6">
         <EventFilters facets={facets} filters={filters} onChange={patchFilters} />
 
         <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border">

@@ -33,10 +33,17 @@ export function HomePage() {
 
   const [summary, setSummary] = useState<HomeSummary | null>(null);
   const [events, setEvents] = useState<EventOut[]>([]);
+  const [workspace, setWorkspace] = useState("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
+    // Settings ride along with the existing mount fetches. A failure here must not
+    // blank the page, so it degrades to the default greeting.
+    api
+      .getSettings()
+      .then((s) => !cancelled && setWorkspace(s.workspace_name))
+      .catch(() => {});
     Promise.all([api.getHomeSummary(), api.listEvents({ limit: 6 })])
       .then(([s, page]) => {
         if (cancelled) return;
@@ -70,7 +77,7 @@ export function HomePage() {
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto w-full max-w-6xl px-6 py-8 md:px-8 md:py-10">
+      <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-8 md:px-8 md:py-10">
         {/* Greeting */}
         <header className="mb-8">
           <p className="text-[13px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
@@ -81,7 +88,9 @@ export function HomePage() {
             <span className="text-primary">{name}</span>
           </h1>
           <p className="mt-1 text-[14px] text-muted-foreground">
-            Here's what's happening across the Control Center.
+            {workspace
+              ? `Here's what's happening across ${workspace}.`
+              : "Here's what's happening across the Control Center."}
           </p>
         </header>
 
@@ -114,7 +123,7 @@ export function HomePage() {
             loading={loading}
           />
           <StatCard
-            to="/ingestion"
+            to="/knowledge"
             label="Documents ready"
             count={docs?.ready ?? 0}
             icon={FileText}

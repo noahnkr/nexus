@@ -18,7 +18,7 @@ import type { Applicant } from "@/lib/api";
 export function ApplicantsTable({ applicants }: { applicants: Applicant[] }) {
   const navigate = useNavigate();
   return (
-    <div className="rounded-lg border">
+    <div className="overflow-x-auto rounded-lg border">
       <Table>
         <TableHeader>
           <TableRow>
