@@ -91,7 +91,35 @@
   .prose-chat :where(a) {
     @apply font-medium text-primary underline underline-offset-2;
   }
+  /* The scroll container is the wrapper div in Markdown.tsx, so the table itself
+     stays a real table (display:block would collapse column alignment). Borders
+     use palette tokens so document-style answers read the same in both themes. */
   .prose-chat :where(table) {
-    @apply block w-full overflow-x-auto text-sm;
+    @apply m-0 w-full border-collapse text-sm;
+  }
+  .prose-chat :where(thead) {
+    @apply bg-muted/60;
+  }
+  .prose-chat :where(th) {
+    @apply whitespace-nowrap px-3 py-2 text-left font-semibold text-foreground;
+  }
+  .prose-chat :where(td) {
+    @apply border-t px-3 py-2 align-top text-foreground;
+  }
+  /* Headings in a document-style answer: present but not shouty inside a bubble. */
+  .prose-chat :where(h1, h2, h3) {
+    @apply mb-2 mt-4 font-semibold text-foreground;
+  }
+  .prose-chat :where(h1) {
+    @apply text-base;
+  }
+  .prose-chat :where(h2) {
+    @apply text-[0.9375rem];
+  }
+  .prose-chat :where(h3) {
+    @apply text-sm;
+  }
+  .prose-chat > :where(:first-child) {
+    @apply mt-0;
   }
 }

@@ -14,6 +14,9 @@ export interface UIMessage {
   citations: Source[];
   tools?: UITool[];
   streaming?: boolean;
+  // The user stopped this turn mid-stream (live, or derived from the persisted
+  // message's `metadata.stopped` when the thread is reloaded).
+  stopped?: boolean;
 }
 
 const PIN_THRESHOLD = 80; // px from the bottom that still counts as "following"
@@ -91,6 +94,11 @@ export function MessageList({ messages }: { messages: UIMessage[] }) {
                   {m.streaming && (
                     <span className="ml-0.5 inline-block animate-pulse align-baseline">
                       ▍
+                    </span>
+                  )}
+                  {m.stopped && !m.streaming && (
+                    <span className="ml-1 text-xs italic text-muted-foreground">
+                      — stopped
                     </span>
                   )}
                 </div>

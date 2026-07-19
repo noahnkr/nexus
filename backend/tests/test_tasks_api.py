@@ -210,3 +210,112 @@ def test_tasks_api():
 
     assert out["capped_ok"]
     assert out["probe_invisible"]  # RLS isolates the probe tenant through the API
+
+
+# ---------------------------------------------------------------------------
+# Module 15a — approve-with-edits through the API
+# ---------------------------------------------------------------------------
+async def _edit_api_scenario():
+    from app import db
+    from app.main import app
+    from app.services.tools import execute_tool
+
+    out: dict = {"task_ids": []}
+    await db.open_pool()
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test", headers=bearer_headers(DEMO_TENANT)
+        ) as ac:
+            draft = {"to": "+16195550101", "body": "Hi Margret, are you free Tuesady?"}
+            async with db.tenant_tx(DEMO_TENANT) as conn:
+                queued = await execute_tool(conn, DEMO_TENANT, "send_sms", draft)
+            action_id = queued.data["pending_action_id"]
+            out["task_ids"].append(queued.data["task_id"])
+
+            # The list response tells the UI which fields it may offer for editing.
+            listing = (await ac.get("/api/tasks", params={"limit": 100})).json()
+            action = next(
+                a
+                for t in listing["tasks"]
+                for a in t["pending_actions"]
+                if a["id"] == action_id
+            )
+            out["editable_fields"] = action["editable_fields"]
+
+            # Editing a non-editable key is refused and changes nothing.
+            bad = await ac.post(
+                f"/api/pending-actions/{action_id}/approve",
+                json={"tool_input": {"to": "+16195559999"}},
+            )
+            out["bad_code"] = bad.status_code
+            async with db.tenant_tx(DEMO_TENANT) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "select status, tool_input from public.pending_actions where id=%s",
+                        (action_id,),
+                    )
+                    row = await cur.fetchone()
+            out["after_bad_status"], out["after_bad_input"] = row[0], row[1]
+
+            # Blank text is refused too.
+            out["blank_code"] = (await ac.post(
+                f"/api/pending-actions/{action_id}/approve",
+                json={"tool_input": {"body": "   "}},
+            )).status_code
+
+            # A reworded body is accepted and executed.
+            fixed = "Hi Margaret, are you free Tuesday?"
+            good = await ac.post(
+                f"/api/pending-actions/{action_id}/approve",
+                json={"tool_input": {"body": fixed}},
+            )
+            out["good_code"] = good.status_code
+            out["good_body"] = good.json()
+            out["fixed"] = fixed
+
+            # A plain approve (no body at all) still works — the common path.
+            async with db.tenant_tx(DEMO_TENANT) as conn:
+                q2 = await execute_tool(
+                    conn, DEMO_TENANT, "send_sms", {"to": "+16195550102", "body": "as drafted"}
+                )
+            out["task_ids"].append(q2.data["task_id"])
+            plain = await ac.post(
+                f"/api/pending-actions/{q2.data['pending_action_id']}/approve"
+            )
+            out["plain_code"] = plain.status_code
+            out["plain_body"] = plain.json()
+
+        async with db.tenant_tx(DEMO_TENANT) as conn:
+            for tid in out["task_ids"]:
+                await conn.execute("delete from public.pending_actions where task_id=%s", (tid,))
+                await conn.execute("delete from public.tasks where id=%s", (tid,))
+        return out
+    finally:
+        await db.close_pool()
+
+
+def test_approve_with_edits_api():
+    out = asyncio.run(_edit_api_scenario())
+
+    assert out["editable_fields"] == ["body"]
+
+    # Non-editable key -> 422, action untouched and still approvable.
+    assert out["bad_code"] == 422
+    assert out["after_bad_status"] == "pending"
+    assert out["after_bad_input"]["to"] == "+16195550101"
+    assert out["blank_code"] == 422
+
+    # The edit executed with the corrected text.
+    assert out["good_code"] == 200
+    action = out["good_body"]["action"]
+    assert action["status"] == "executed"
+    assert action["tool_input"]["body"] == out["fixed"]
+    assert action["result"]["edited"] is True
+    assert action["result"]["edited_fields"] == ["body"]
+    assert out["good_body"]["task"]["status"] == "done"
+
+    # Approving without a body is unchanged behavior (not flagged as edited).
+    assert out["plain_code"] == 200
+    assert out["plain_body"]["action"]["status"] == "executed"
+    assert "edited" not in out["plain_body"]["action"]["result"]

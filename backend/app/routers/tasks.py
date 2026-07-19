@@ -2,9 +2,11 @@
 
 Read + manage tasks and resolve queued approvals. Tenant-scoped via the standard
 `tenant_conn` dependency — RLS does all filtering, so no query mentions tenant_id.
-Each task embeds its `pending_actions` (0..n); `tool_input` rides along for the
-UI's expandable technical detail only. Approve/reject route through
-`services/approvals.py`, the sole caller of `execute_tool`'s approval bypass.
+Each task embeds its `pending_actions` (0..n); `tool_input` rides along so the task
+drawer can render it as labeled fields, with `editable_fields` (resolved from the
+tool registry at read time) naming the ones an approver may reword first.
+Approve/reject route through `services/approvals.py`, the sole caller of
+`execute_tool`'s approval bypass.
 
 Every mutation writes an `events` row with a plain-language `payload.summary`
 (manual creation, status changes) — the gate lifecycle events are written by the
@@ -23,6 +25,7 @@ from ..db import tenant_conn
 from ..deps import get_current_user, get_tenant_id
 from ..schemas import (
     ActionResolution,
+    ApproveBody,
     PendingActionOut,
     RejectBody,
     TaskCreate,
@@ -37,6 +40,7 @@ from ..services.approvals import (
     reject_action,
 )
 from ..services.events import log_event
+from ..services.tools.registry import get_tool
 
 router = APIRouter(prefix="/api", tags=["tasks"])
 
@@ -66,6 +70,13 @@ def _decode_cursor(cursor: str) -> tuple[str, str]:
         raise HTTPException(status_code=400, detail="Invalid cursor")
 
 
+def _editable_fields(tool_name: str) -> list[str]:
+    """What a human may edit on this action before approving — read from the tool
+    registry every time, never stored on the row."""
+    tool = get_tool(tool_name)
+    return list(tool.editable_fields or []) if tool is not None else []
+
+
 def _action_out(r: dict) -> PendingActionOut:
     return PendingActionOut(
         id=str(r["id"]),
@@ -73,6 +84,7 @@ def _action_out(r: dict) -> PendingActionOut:
         tool_input=r["tool_input"] or {},
         status=r["status"],
         source_system=r["source_system"],
+        editable_fields=_editable_fields(r["tool_name"]),
         result=r["result"],
         created_at=r["created_at"],
         resolved_at=r["resolved_at"],
@@ -304,17 +316,57 @@ def _validate_action_id(action_id: str) -> str:
         raise HTTPException(status_code=400, detail="action id must be a valid id")
 
 
+async def _validated_edits(conn, action_id: str, proposed: dict | None) -> dict | None:
+    """Reduce an approve request's `tool_input` to the changes this tool allows.
+
+    Guards the meaning of the approval: an approver may reword a draft, never
+    redirect it. Anything outside the tool's `editable_fields`, or a value that
+    isn't a non-empty string, is a 422 — the action stays pending and nothing runs.
+    """
+    if not proposed:
+        return None
+
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            "select tool_name, tool_input, status from public.pending_actions where id=%s",
+            (action_id,),
+        )
+        row = await cur.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="pending action not found")
+
+    allowed = set(_editable_fields(row["tool_name"]))
+    stored = row["tool_input"] or {}
+    edits: dict = {}
+    for key, value in proposed.items():
+        if stored.get(key) == value:
+            continue  # unchanged keys are fine to send back verbatim
+        if key not in allowed:
+            raise HTTPException(
+                status_code=422,
+                detail=f"'{key}' cannot be edited when approving this action",
+            )
+        if not isinstance(value, str) or not value.strip():
+            raise HTTPException(
+                status_code=422, detail=f"'{key}' must be non-empty text"
+            )
+        edits[key] = value.strip()
+    return edits or None
+
+
 @router.post("/pending-actions/{action_id}/approve", response_model=ActionResolution)
 async def approve(
     action_id: str,
+    body: ApproveBody | None = None,
     conn=Depends(tenant_conn),
     tenant_id: str = Depends(get_tenant_id),
     user: dict = Depends(get_current_user),
 ):
     action_id = _validate_action_id(action_id)
+    edits = await _validated_edits(conn, action_id, body.tool_input if body else None)
     try:
         task_id = await approve_action(
-            conn, tenant_id, action_id, resolved_by=user["email"]
+            conn, tenant_id, action_id, resolved_by=user["email"], edited_input=edits
         )
     except ActionNotFound:
         raise HTTPException(status_code=404, detail="pending action not found")

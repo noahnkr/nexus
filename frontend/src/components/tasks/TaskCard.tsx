@@ -1,10 +1,11 @@
-import { Link } from "react-router-dom";
-import { History } from "lucide-react";
+import { Clock, History } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ApprovalCard } from "./ApprovalCard";
-import type { Task, TaskPriority, TaskStatus } from "@/lib/api";
+import { taskKind } from "@/lib/tasks";
+import type { Task } from "@/lib/api";
+import { PRIORITY_VARIANT, STATUS_LABEL, STATUS_VARIANT } from "./taskMeta";
+
+export { PRIORITY_DOT } from "./taskMeta";
 
 function timeAgo(iso: string): string {
   const then = new Date(iso).getTime();
@@ -27,137 +28,70 @@ function dueLabel(iso: string): string {
   });
 }
 
-const PRIORITY_VARIANT: Record<TaskPriority, "default" | "secondary" | "destructive" | "outline"> = {
-  urgent: "destructive",
-  high: "default",
-  normal: "secondary",
-  low: "outline",
-};
-
-// Leading-dot colors for the priority Select (Module 13), mirroring the badge
-// variant tones so priority reads the same in filters, dialogs, and cards.
-export const PRIORITY_DOT: Record<TaskPriority, string> = {
-  urgent: "bg-destructive",
-  high: "bg-primary",
-  normal: "bg-muted-foreground",
-  low: "bg-muted-foreground/40",
-};
-
-const STATUS_VARIANT: Record<
-  TaskStatus,
-  "secondary" | "outline" | "success" | "warning" | "info"
-> = {
-  pending: "warning",
-  in_progress: "info",
-  done: "success",
-  cancelled: "outline",
-};
-
-const STATUS_LABEL: Record<TaskStatus, string> = {
-  pending: "Pending",
-  in_progress: "In progress",
-  done: "Done",
-  cancelled: "Cancelled",
-};
-
-export function TaskCard({
-  task,
-  onTransition,
-  onApprove,
-  onReject,
-}: {
-  task: Task;
-  onTransition: (id: string, status: TaskStatus) => void;
-  onApprove: (id: string) => Promise<void>;
-  onReject: (id: string, note?: string) => Promise<void>;
-}) {
-  const terminal = task.status === "done" || task.status === "cancelled";
-  const hasPendingAction = task.pending_actions.some((a) => a.status === "pending");
-  const closeHint = hasPendingAction
-    ? "Resolve the approval below first"
-    : undefined;
+// The card is now a summary, not a workbench: type, title, status, and whether it
+// needs approval. Reading the drafted message and resolving it happens in the
+// drawer, which is why the raw-JSON expander and the inline approve buttons are
+// gone from here.
+export function TaskCard({ task, onOpen }: { task: Task; onOpen: (task: Task) => void }) {
+  const kind = taskKind(task);
+  const Icon = kind.icon;
+  const awaiting = task.pending_actions.some((a) => a.status === "pending");
 
   return (
-    <Card>
+    <Card
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpen(task)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen(task);
+        }
+      }}
+      className="cursor-pointer transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
       <CardContent className="p-4">
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold">{task.title}</h3>
-            {task.description && (
-              <p className="mt-1 text-sm text-muted-foreground">{task.description}</p>
-            )}
+          <div className="flex min-w-0 gap-3">
+            <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold">{task.title}</h3>
+              {task.description && (
+                <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+                  {task.description}
+                </p>
+              )}
+            </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
             <Badge variant={PRIORITY_VARIANT[task.priority]}>{task.priority}</Badge>
-            <Badge variant={STATUS_VARIANT[task.status]}>
-              {STATUS_LABEL[task.status]}
-            </Badge>
+            <Badge variant={STATUS_VARIANT[task.status]}>{STATUS_LABEL[task.status]}</Badge>
           </div>
         </div>
 
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <span className="rounded-full border px-2 py-0.5">{kind.label}</span>
           <span>Created {timeAgo(task.created_at)}</span>
-          {task.due_at && <span>· Due {dueLabel(task.due_at)}</span>}
-          <Link
-            to={`/events?entity_type=task&entity_id=${task.id}`}
-            className="inline-flex items-center gap-1 hover:text-foreground"
-          >
-            <History className="h-3 w-3" /> View history
-          </Link>
+          {task.due_at && (
+            <>
+              <span aria-hidden>·</span>
+              <span>Due {dueLabel(task.due_at)}</span>
+            </>
+          )}
           {task.originating_event_id && (
-            <Link
-              to={`/events?entity_type=task&entity_id=${task.id}`}
-              className="hover:text-foreground"
-              title="This task was created from an event"
-            >
-              · Originating event
-            </Link>
+            <>
+              <span aria-hidden>·</span>
+              <span className="inline-flex items-center gap-1" title="Created from an event">
+                <History className="h-3 w-3" /> From an event
+              </span>
+            </>
           )}
         </div>
 
-        {task.pending_actions.length > 0 && (
-          <div className="mt-3 space-y-2">
-            {task.pending_actions.map((a) => (
-              <ApprovalCard
-                key={a.id}
-                action={a}
-                description={task.description}
-                onApprove={onApprove}
-                onReject={onReject}
-              />
-            ))}
-          </div>
-        )}
-
-        {!terminal && (
-          <div className="mt-3 flex flex-wrap gap-2">
-            {task.status === "pending" && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => onTransition(task.id, "in_progress")}
-              >
-                Start
-              </Button>
-            )}
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={hasPendingAction}
-              title={closeHint}
-              onClick={() => onTransition(task.id, "done")}
-            >
-              Done
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={hasPendingAction}
-              title={closeHint}
-              onClick={() => onTransition(task.id, "cancelled")}
-            >
-              Cancel
-            </Button>
+        {awaiting && (
+          <div className="mt-3 inline-flex items-center gap-1.5 rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs font-medium text-warning">
+            <Clock className="h-3.5 w-3.5" />
+            Awaiting your approval — open to review
           </div>
         )}
       </CardContent>

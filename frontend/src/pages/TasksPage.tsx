@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { EmptyState } from "@/components/layout/EmptyState";
 import { TaskFilters } from "@/components/tasks/TaskFilters";
 import { TaskCard } from "@/components/tasks/TaskCard";
+import { TaskDrawer } from "@/components/tasks/TaskDrawer";
 import { CreateTaskDialog } from "@/components/tasks/CreateTaskDialog";
 
 const DEFAULT_STATUS = "pending,in_progress"; // the "Open" tab
@@ -34,6 +35,9 @@ export function TasksPage() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [creating, setCreating] = useState(false);
+  // The drawer tracks an id, not a task object, so Realtime refetches flow into
+  // the open drawer instead of freezing it on a stale copy.
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const apiStatus = status === "" ? undefined : status;
   const apiPriority = priority || undefined;
@@ -139,9 +143,9 @@ export function TasksPage() {
     }
   };
 
-  const onApprove = async (id: string) => {
+  const onApprove = async (id: string, edits?: Record<string, string>) => {
     try {
-      const res = await api.approveAction(id);
+      const res = await api.approveAction(id, edits);
       toast[res.action.status === "failed" ? "error" : "success"](
         res.action.result?.summary ?? res.action.result?.error ?? "Resolved",
       );
@@ -170,6 +174,10 @@ export function TasksPage() {
       throw e;
     }
   };
+
+  // A task closed out of the current filter (approved -> done under the Open tab)
+  // drops from `tasks`; closing the drawer then is the right outcome.
+  const openTask = tasks.find((t) => t.id === openId) ?? null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -212,13 +220,7 @@ export function TasksPage() {
           ) : (
             <div className="flex flex-col gap-3">
               {tasks.map((t) => (
-                <TaskCard
-                  key={t.id}
-                  task={t}
-                  onTransition={onTransition}
-                  onApprove={onApprove}
-                  onReject={onReject}
-                />
+                <TaskCard key={t.id} task={t} onOpen={(task) => setOpenId(task.id)} />
               ))}
               {nextCursor && (
                 <div className="flex justify-center py-2">
@@ -236,6 +238,16 @@ export function TasksPage() {
           )}
         </div>
       </div>
+
+      {openTask && (
+        <TaskDrawer
+          task={openTask}
+          onClose={() => setOpenId(null)}
+          onTransition={onTransition}
+          onApprove={onApprove}
+          onReject={onReject}
+        />
+      )}
 
       <CreateTaskDialog
         open={creating}

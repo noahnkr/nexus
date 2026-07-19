@@ -78,6 +78,12 @@ class ToolDef:
     # language ("Update lead 'Margaret Ellison' to contacted", not a UUID) for the
     # task title + action.queued summary. Runs before queueing, in the same tx.
     gate_describe: Callable[[Any, dict], Awaitable[str]] | None = None
+    # Argument names a human may edit at approval time (M15a): the office user can
+    # fix a typo in a drafted message instead of rejecting and re-asking. Only these
+    # keys are accepted from the approve request, and only as non-empty strings —
+    # editing an identifier or a recipient would change WHAT was approved, not how
+    # it reads. Empty/None means approve-verbatim-or-reject, the default.
+    editable_fields: list[str] | None = None
 
 
 def _jsonable(value: Any) -> Any:

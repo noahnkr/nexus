@@ -132,6 +132,8 @@ export type ActionStatus =
 export interface ActionResult {
   summary?: string;
   error?: string;
+  edited?: boolean;
+  edited_fields?: string[];
 }
 
 export interface PendingAction {
@@ -140,6 +142,9 @@ export interface PendingAction {
   tool_input: Record<string, unknown>;
   status: ActionStatus;
   source_system: string;
+  // Input keys the approver may reword before approving (resolved server-side
+  // from the tool registry). Empty means approve-verbatim-or-reject.
+  editable_fields: string[];
   result: ActionResult | null;
   created_at: string;
   resolved_at: string | null;
@@ -710,10 +715,14 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ status }),
     }).then(json<Task>),
-  approveAction: (id: string) =>
-    authFetch(`/api/pending-actions/${id}/approve`, { method: "POST" }).then(
-      json<ActionResolution>,
-    ),
+  // `edits` carries only the fields the approver changed; the server re-validates
+  // them against the tool's editable_fields and 422s anything else.
+  approveAction: (id: string, edits?: Record<string, string>) =>
+    authFetch(`/api/pending-actions/${id}/approve`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tool_input: edits ?? null }),
+    }).then(json<ActionResolution>),
   rejectAction: (id: string, note?: string) =>
     authFetch(`/api/pending-actions/${id}/reject`, {
       method: "POST",

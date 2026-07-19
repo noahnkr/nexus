@@ -173,7 +173,12 @@ npm run test                  # vitest unit tests (the template tokenizer, Modul
 
 Home (default route `/`) is a light landing page — greeting, at-a-glance counts,
 recent activity, and quick actions. Chat moved to `/chat`; it streams responses over
-SSE with RAG citations and renders assistant replies as GFM markdown. Ingestion
+SSE with RAG citations and renders assistant replies as GFM markdown — including
+document-style answers (headings, lists, tables) when you ask for one, with wide
+tables scrolling inside the bubble. The send button becomes a **stop** button while a
+reply streams; stopping keeps whatever was written (annotated "— stopped") and
+persists it, so the conversation stays valid and the next question answers normally.
+Ingestion
 (`/ingestion`) is drag-and-drop upload with live status via Supabase Realtime; Tasks
 (`/tasks`) and Event Log (`/events`) round out the shell.
 
@@ -286,16 +291,31 @@ GET   /api/tasks?status=&priority=&cursor=&limit=50   list tasks (status is a
 POST  /api/tasks                                       create a task {title, description?, priority?, due_at?} → 201
 PATCH /api/tasks/{id}  {status}                        transition a task (pending↔in_progress,
         either → done|cancelled); 409 on terminal states or while an action is pending
-POST  /api/pending-actions/{id}/approve               approve → execute the queued tool
+POST  /api/pending-actions/{id}/approve  {tool_input?}  approve → execute the queued
+        tool; the optional tool_input carries approver edits (see below)
 POST  /api/pending-actions/{id}/reject  {note?}       reject → cancel the task
 ```
 
 No new env vars. `tasks` and `pending_actions` are in the Realtime publication, so
 the **Tasks** page (nav → Tasks) live-updates: it lists tasks with status tabs
-(Open / Done / Cancelled / All) and a priority filter, inline Approve/Reject cards
-for queued actions, status transitions, manual task creation, and a "View history"
-drill-down into the Event Log. In Chat, a gated call shows an amber "queued" chip
-linking to the Tasks page.
+(Open / Done / Cancelled / All) and a priority filter, status transitions, manual
+task creation, and a drill-down into the Event Log. In Chat, a gated call shows an
+amber "queued" chip linking to the Tasks page.
+
+**Task drawer & approve-with-edits (Module 15a).** Task cards are summaries —
+type icon and label ("Text message", "Scheduling"), status, and an "awaiting your
+approval" chip. Clicking one opens a right-side drawer that renders the queued call
+as labeled fields (*To*, *Message*, *Subject*) instead of raw JSON; the payload
+survives only in a collapsed "technical detail" expander at the bottom of the drawer.
+
+A tool may declare `editable_fields` on its `ToolDef` — currently `send_sms.body`
+and `send_email.subject`/`body`. Those fields render as inputs in the drawer, so an
+office user can fix a typo in a drafted message and click **Approve with edits**
+instead of rejecting and re-asking. The API re-validates every edit against the
+tool's `editable_fields` (422 on any other key, or on blank text, with the action
+left pending), applies it to the stored `tool_input` *before* execution — one
+execution path, unchanged — and records the change on the `action.approved` event as
+`edited`, `edited_fields`, and the agent's `original_input`.
 
 ### Automations Engine (Module 7a)
 

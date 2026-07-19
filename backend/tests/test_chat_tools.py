@@ -323,3 +323,17 @@ def test_no_tool_turn_matches_m1_sequence(monkeypatch):
     assert calls == []
     citations = next(d for e, d in events if e == "citations")
     assert citations["sources"] == []
+
+
+# ---------------------------------------------------------------------------
+# Module 15a — output-formatting guidance (cheap regression pin, no model call)
+# ---------------------------------------------------------------------------
+def test_persona_asks_for_document_style_output():
+    """The formatting rules are prompt-only, so pin the load-bearing words: without
+    them the model reverts to flat prose for care plans and comparisons."""
+    persona = cs.PERSONA.lower()
+    assert "tables" in persona
+    assert "markdown" in persona
+    assert "headings" in persona
+    # Conversational answers must NOT get the document treatment.
+    assert "prose" in persona

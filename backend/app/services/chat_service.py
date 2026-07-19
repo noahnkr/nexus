@@ -24,9 +24,15 @@ SSE contract (additive over Module 1):
 search_documents passages this turn (turn-global [n] numbering). No raw JSON,
 SQL, or tool payloads ever reach a user-facing field — only plain-language
 `summary`/`label` strings do.
+
+Cancellation (M15a): the client can stop a turn mid-stream. Because history
+replays verbatim to the Messages API, a thread must never be left ending on a
+`user` message — so an aborted turn persists whatever text streamed (marked
+`metadata.stopped`) on a fresh, shielded transaction before the generator dies.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 
 from psycopg.rows import dict_row
@@ -62,6 +68,15 @@ PERSONA = (
     "action already happened, was sent, or is done — it hasn't run yet. create_task "
     "is the exception: it takes effect immediately (an internal note, no outside "
     "effect).\n\n"
+    "Match the shape of your answer to the request. For a conversational "
+    "question, reply in short prose — no headings, no bullets. When the user asks "
+    "for something document-like (a care plan, a summary they'll share, a "
+    "comparison, a checklist, a breakdown), write it as a structured document in "
+    "markdown: a short lead-in, "
+    "## headings for sections, bullet lists for items, and GFM tables when you are "
+    "presenting the same few attributes across several rows (people, visits, "
+    "options). Keep tables to the columns that matter — narrow tables read well, "
+    "very wide ones do not. Bold sparingly, for genuine labels.\n\n"
     "Choose the smallest set of tools that answers the question. If earlier "
     "conversation already contains the answer, respond directly without calling "
     "tools. Never expose raw JSON, SQL, or tool payloads in your reply — write "
@@ -78,6 +93,18 @@ from .tools.labels import TOOL_LABELS  # noqa: E402
 
 class ThreadNotFound(Exception):
     pass
+
+
+# Text persisted for a turn the user stopped before any text streamed. It is NOT
+# an empty block on purpose: chat history replays verbatim to the Messages API,
+# which rejects empty text blocks in input messages — an empty block would break
+# the very replay the stop contract exists to protect (M15a D4).
+STOPPED_PLACEHOLDER = "(Response stopped.)"
+
+# Strong references to in-flight stop-persistence tasks. The generator is being
+# cancelled when these are spawned, so nothing else holds them; without this the
+# loop may garbage-collect a task mid-write.
+_stop_persists: set[asyncio.Task] = set()
 
 
 def _label(name: str, args: dict) -> str:
@@ -144,6 +171,49 @@ async def _persist_message(
         return str((await cur.fetchone())["id"])
 
 
+async def _persist_stopped(
+    tenant_id: str, thread_id: str, text: str, usage: dict, tool_calls: list[dict]
+) -> None:
+    """Close out a turn the client aborted mid-stream, on a FRESH transaction.
+
+    The generator's own `tenant_tx` may be mid-rollback when cancellation lands, so
+    this opens its own. Persisting here is what keeps the thread replayable: the
+    history must never end on a `user` message, or the next turn's verbatim replay
+    is rejected for non-alternating roles.
+    """
+    content = [{"type": "text", "text": text.strip() or STOPPED_PLACEHOLDER}]
+    metadata = {
+        "usage": usage,
+        "model": settings.chat_model,
+        "tool_calls": tool_calls,
+        "stopped": True,
+    }
+    async with tenant_tx(tenant_id) as conn:
+        message_id = await _persist_message(
+            conn, tenant_id, thread_id, "assistant", content, metadata=metadata
+        )
+        await log_event(
+            conn,
+            tenant_id=tenant_id,
+            source_system="chat",
+            event_type="chat.message.stopped",
+            entity_type="chat_thread",
+            entity_id=thread_id,
+            payload={
+                "summary": "Response stopped by the user",
+                "assistant_message_id": message_id,
+                "usage": usage,
+            },
+        )
+
+
+def _spawn_stop_persist(*args) -> asyncio.Task:
+    task = asyncio.ensure_future(_persist_stopped(*args))
+    _stop_persists.add(task)
+    task.add_done_callback(_stop_persists.discard)
+    return task
+
+
 @traceable(run_type="chain", name="chat_turn")
 async def stream_chat_turn(tenant_id: str, thread_id: str, user_text: str):
     """Async generator yielding (event_name, data_dict) tuples for the router."""
@@ -175,8 +245,6 @@ async def stream_chat_turn(tenant_id: str, thread_id: str, user_text: str):
             "update public.chat_threads set updated_at=now() where id=%s", (thread_id,)
         )
 
-    yield "start", {"thread_id": thread_id, "user_message_id": user_message_id}
-
     # 2. Agentic loop.
     client = get_anthropic()
     system = [{"type": "text", "text": PERSONA, "cache_control": {"type": "ephemeral"}}]
@@ -187,106 +255,144 @@ async def stream_chat_turn(tenant_id: str, thread_id: str, user_text: str):
     usage_in = usage_out = 0
     citations_sent = False
     final = None
+    # Text streamed so far for the CURRENT model response, reset each iteration: a
+    # tool-use iteration's text is persisted with its assistant message at the end
+    # of that iteration, so only the in-flight response is at risk on an abort.
+    streamed_text = ""
 
-    for i in range(MAX_ITERS):
-        is_last = i == MAX_ITERS - 1
-        # Force an answer (no more tool calls) on the last allowed step. Extended
-        # thinking is disabled: this module only needs tool routing, and streamed
-        # thinking blocks are fragile to persist and replay verbatim across the
-        # tool loop (empty-block / signature edge cases).
-        tool_choice = {"type": "none"} if is_last else {"type": "auto"}
-        async with client.messages.stream(
-            model=settings.chat_model,
-            max_tokens=MAX_TOKENS,
-            system=system,
-            tools=tool_defs,
-            tool_choice=tool_choice,
-            messages=messages,
-            # Disabled via extra_body: the pinned SDK (0.44) predates the native
-            # `thinking` param, but these models think by default and the old SDK
-            # drops streamed thinking content, breaking verbatim replay.
-            extra_body={"thinking": {"type": "disabled"}},
-        ) as stream:
-            async for delta in stream.text_stream:
-                if not citations_sent:
-                    yield "citations", {"sources": agg_sources}
-                    citations_sent = True
-                yield "text", {"delta": delta}
-            final = await stream.get_final_message()
+    # The guard opens BEFORE the first yield: the user message is already committed
+    # by this point, so an abort anywhere from here on — including on the very first
+    # frame — would otherwise leave the thread ending on a `user` message.
+    try:
+        yield "start", {"thread_id": thread_id, "user_message_id": user_message_id}
 
-        usage_in += final.usage.input_tokens
-        usage_out += final.usage.output_tokens
+        for i in range(MAX_ITERS):
+            is_last = i == MAX_ITERS - 1
+            streamed_text = ""
+            # Force an answer (no more tool calls) on the last allowed step. Extended
+            # thinking is disabled: this module only needs tool routing, and streamed
+            # thinking blocks are fragile to persist and replay verbatim across the
+            # tool loop (empty-block / signature edge cases).
+            tool_choice = {"type": "none"} if is_last else {"type": "auto"}
+            async with client.messages.stream(
+                model=settings.chat_model,
+                max_tokens=MAX_TOKENS,
+                system=system,
+                tools=tool_defs,
+                tool_choice=tool_choice,
+                messages=messages,
+                # Disabled via extra_body: the pinned SDK (0.44) predates the native
+                # `thinking` param, but these models think by default and the old SDK
+                # drops streamed thinking content, breaking verbatim replay.
+                extra_body={"thinking": {"type": "disabled"}},
+            ) as stream:
+                async for delta in stream.text_stream:
+                    if not citations_sent:
+                        yield "citations", {"sources": agg_sources}
+                        citations_sent = True
+                    streamed_text += delta
+                    yield "text", {"delta": delta}
+                final = await stream.get_final_message()
 
-        if final.stop_reason != "tool_use":
-            break
+            usage_in += final.usage.input_tokens
+            usage_out += final.usage.output_tokens
 
-        # --- tool-use turn: run tools, persist assistant + tool_result messages ---
-        tool_uses = [b for b in final.content if getattr(b, "type", None) == "tool_use"]
-        tool_result_blocks: list[dict] = []
-        async with tenant_tx(tenant_id) as tconn:
-            for b in tool_uses:
-                model_input = b.input if isinstance(b.input, dict) else {}
-                exec_args = dict(model_input)
-                if b.name == "search_documents":
-                    exec_args["start_index"] = len(agg_sources)
+            if final.stop_reason != "tool_use":
+                break
 
-                yield "tool", {
-                    "name": b.name,
-                    "label": _label(b.name, model_input),
-                    "tool_use_id": b.id,
-                }
+            # --- tool-use turn: run tools, persist assistant + tool_result messages ---
+            tool_uses = [b for b in final.content if getattr(b, "type", None) == "tool_use"]
+            tool_result_blocks: list[dict] = []
+            async with tenant_tx(tenant_id) as tconn:
+                for b in tool_uses:
+                    model_input = b.input if isinstance(b.input, dict) else {}
+                    exec_args = dict(model_input)
+                    if b.name == "search_documents":
+                        exec_args["start_index"] = len(agg_sources)
 
-                result = await execute_tool(
-                    tconn, tenant_id, b.name, exec_args, source_system="chat"
-                )
+                    yield "tool", {
+                        "name": b.name,
+                        "label": _label(b.name, model_input),
+                        "tool_use_id": b.id,
+                    }
 
-                ev_sources = None
-                if b.name == "search_documents" and not result.is_error:
-                    pub = [_public_source(s) for s in result.data.get("sources", [])]
-                    agg_sources.extend(pub)
-                    ev_sources = pub
+                    result = await execute_tool(
+                        tconn, tenant_id, b.name, exec_args, source_system="chat"
+                    )
 
-                # A gated call returns a non-error "queued" result; flag it so the
-                # UI can render the chip distinctly (additive SSE field, and stored
-                # on metadata.tool_calls so it survives a history reload).
-                queued = (
-                    isinstance(result.data, dict)
-                    and result.data.get("status") == "queued"
-                )
+                    ev_sources = None
+                    if b.name == "search_documents" and not result.is_error:
+                        pub = [_public_source(s) for s in result.data.get("sources", [])]
+                        agg_sources.extend(pub)
+                        ev_sources = pub
 
-                tool_calls_meta.append({
-                    "name": b.name,
-                    "summary": result.summary,
-                    "is_error": result.is_error,
-                    "queued": queued,
-                })
-                yield "tool_result", {
-                    "tool_use_id": b.id,
-                    "summary": result.summary,
-                    "is_error": result.is_error,
-                    "sources": ev_sources,
-                    "queued": queued,
-                }
+                    # A gated call returns a non-error "queued" result; flag it so the
+                    # UI can render the chip distinctly (additive SSE field, and stored
+                    # on metadata.tool_calls so it survives a history reload).
+                    queued = (
+                        isinstance(result.data, dict)
+                        and result.data.get("status") == "queued"
+                    )
 
-                block = {
-                    "type": "tool_result",
-                    "tool_use_id": b.id,
-                    "content": json.dumps(result.data),
-                }
-                if result.is_error:
-                    block["is_error"] = True
-                tool_result_blocks.append(block)
+                    tool_calls_meta.append({
+                        "name": b.name,
+                        "summary": result.summary,
+                        "is_error": result.is_error,
+                        "queued": queued,
+                    })
+                    yield "tool_result", {
+                        "tool_use_id": b.id,
+                        "summary": result.summary,
+                        "is_error": result.is_error,
+                        "sources": ev_sources,
+                        "queued": queued,
+                    }
 
-            assistant_content = _dump_content(final.content)
-            await _persist_message(tconn, tenant_id, thread_id, "assistant", assistant_content)
-            await _persist_message(tconn, tenant_id, thread_id, "user", tool_result_blocks)
+                    block = {
+                        "type": "tool_result",
+                        "tool_use_id": b.id,
+                        "content": json.dumps(result.data),
+                    }
+                    if result.is_error:
+                        block["is_error"] = True
+                    tool_result_blocks.append(block)
 
-        messages.append({"role": "assistant", "content": assistant_content})
-        messages.append({"role": "user", "content": tool_result_blocks})
+                assistant_content = _dump_content(final.content)
+                await _persist_message(tconn, tenant_id, thread_id, "assistant", assistant_content)
+                await _persist_message(tconn, tenant_id, thread_id, "user", tool_result_blocks)
+
+            # Nothing partial is written mid-iteration: the assistant tool_use message
+            # and its tool_result reply commit together above, so a cancel landing
+            # anywhere in this block still leaves an alternating history.
+            messages.append({"role": "assistant", "content": assistant_content})
+            messages.append({"role": "user", "content": tool_result_blocks})
+    except (asyncio.CancelledError, GeneratorExit):
+        # The client disconnected (Stop button): Starlette either cancels the task
+        # running this generator (CancelledError at the suspended yield) or closes
+        # the generator (GeneratorExit). Both mean "the turn ended early".
+        #
+        # Close the turn out on a fresh transaction — the outer one may be
+        # mid-rollback — so the thread never ends on a `user` message. The await
+        # can itself be cancelled again (anyio re-delivers cancellation at every
+        # checkpoint); the shielded task keeps running on the loop either way.
+        stop_task = _spawn_stop_persist(
+            tenant_id,
+            thread_id,
+            streamed_text,
+            {"input_tokens": usage_in, "output_tokens": usage_out},
+            tool_calls_meta,
+        )
+        try:
+            await asyncio.shield(stop_task)
+        except asyncio.CancelledError:
+            pass
+        raise
 
     # 3. Persist the final assistant answer + audit event.
+    # Never an empty text block: input messages replay verbatim and the Messages
+    # API rejects empty text, which would break every later turn on this thread.
     final_content = _dump_content(final.content) if final and final.content else [
-        {"type": "text", "text": ""}
+        {"type": "text", "text": STOPPED_PLACEHOLDER}
     ]
     usage = {"input_tokens": usage_in, "output_tokens": usage_out}
     metadata = {"usage": usage, "model": settings.chat_model, "tool_calls": tool_calls_meta}

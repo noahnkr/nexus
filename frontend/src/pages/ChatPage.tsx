@@ -39,6 +39,9 @@ export function ChatPage() {
   const [streaming, setStreaming] = useState(false);
   const localId = useRef(0);
   const nextId = () => `local-${localId.current++}`;
+  // Aborts the in-flight turn. The backend sees the disconnect and persists the
+  // partial answer with metadata.stopped, so the thread stays replayable.
+  const abortRef = useRef<AbortController | null>(null);
 
   const refreshThreads = useCallback(async () => {
     const list = await api.listThreads();
@@ -65,6 +68,7 @@ export function ChatPage() {
             text: blocksToText(m.content),
             citations: m.citations ?? [],
             tools: toolsFromMeta(m.id, m.metadata),
+            stopped: m.metadata?.stopped === true,
           })),
       );
     } catch (e) {
@@ -144,6 +148,9 @@ export function ChatPage() {
       flush();
     };
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
       await streamChat(threadId, text, {
         onTool: ({ tool_use_id, label }) =>
@@ -187,17 +194,27 @@ export function ChatPage() {
             streaming: false,
           }));
         },
-      });
+      }, controller.signal);
       flushNow();
       await refreshThreads();
     } catch (e) {
       flushNow();
-      toast.error(String(e));
-      patchLastAssistant((m) => ({ ...m, streaming: false }));
+      // An abort is the user's own Stop click, not a failure — mark the bubble
+      // and stay quiet. Anything else is a real error and gets a toast.
+      if (controller.signal.aborted) {
+        patchLastAssistant((m) => ({ ...m, streaming: false, stopped: true }));
+        await refreshThreads().catch(() => {});
+      } else {
+        toast.error(String(e));
+        patchLastAssistant((m) => ({ ...m, streaming: false }));
+      }
     } finally {
+      abortRef.current = null;
       setStreaming(false);
     }
   };
+
+  const stop = () => abortRef.current?.abort();
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -214,7 +231,7 @@ export function ChatPage() {
           description="Ask questions and draft actions — grounded in your documents and data."
         />
         <MessageList messages={messages} />
-        <MessageInput onSend={send} disabled={streaming} />
+        <MessageInput onSend={send} onStop={stop} streaming={streaming} />
       </div>
     </div>
   );
