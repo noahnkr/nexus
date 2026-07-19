@@ -35,6 +35,7 @@ from ..schemas import (
     CandidateOut,
     CandidatesOut,
     CaregiverRosterOut,
+    ClientRef,
     NotifyBody,
     NotifyResult,
     RosterPatch,
@@ -187,10 +188,13 @@ async def get_board(conn=Depends(tenant_conn), week: str | None = None):
             (ws, we),
         )
         visit_rows = await cur.fetchall()
+        await cur.execute("select id, name from public.clients order by name")
+        clients = [ClientRef(id=str(r["id"]), name=r["name"]) for r in await cur.fetchall()]
     return ScheduleBoard(
         week_start=ws,
         visits=[_visit_out(r, qmap) for r in visit_rows],
         caregivers=await _roster(conn, ws),
+        clients=clients,
     )
 
 
@@ -450,16 +454,20 @@ async def cancel_visit(
 
 @router.get("/schedules/{schedule_id}/candidates", response_model=CandidatesOut)
 async def visit_candidates(schedule_id: str, conn=Depends(tenant_conn)):
-    """Rank caregivers for an open shift. 409 if the visit isn't open (a filled visit
-    has no candidates to rank)."""
+    """Rank caregivers for a fillable shift — an `open` shift (to fill) or a
+    `scheduled` visit (to reassign; the ranker excludes the current holder's own
+    time so they still appear, and the board filters them out). 409 once a visit has
+    reached a terminal/called-out state, where there is nothing to rank."""
     schedule_id = _valid_uuid(schedule_id, "schedule_id")
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute("select * from public.schedules where id = %s", (schedule_id,))
         row = await cur.fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="visit not found")
-    if row["status"] != "open":
-        raise HTTPException(status_code=409, detail="candidates are ranked for open shifts only")
+    if row["status"] not in ("open", "scheduled"):
+        raise HTTPException(
+            status_code=409, detail="candidates are ranked for open or scheduled visits only"
+        )
     candidates = await rank_candidates(conn, row)
     return CandidatesOut(candidates=[CandidateOut(**c) for c in candidates])
 

@@ -266,10 +266,16 @@ class CaregiverRosterOut(BaseModel):
     hours_this_week: float = 0.0  # scheduled hours in the board's ISO week
 
 
+class ClientRef(BaseModel):
+    id: str
+    name: str
+
+
 class ScheduleBoard(BaseModel):
     week_start: date  # Monday of the requested week
     visits: list[ScheduleVisitOut] = []
     caregivers: list[CaregiverRosterOut] = []
+    clients: list[ClientRef] = []  # for the create dialog's client picker
 
 
 class ScheduleCreate(BaseModel):
@@ -421,10 +427,12 @@ class AutomationHomeCounts(BaseModel):
 
 
 class HomeSummary(BaseModel):
-    """At-a-glance counts for the Home landing widgets. Read-only, business-agnostic
-    (core tables only), RLS-scoped."""
+    """At-a-glance counts for the Home landing widgets. Read-only, RLS-scoped. Core
+    counts are business-agnostic; `open_shifts` is the one vertical-seam count (12b) —
+    future unfilled visits needing staffing."""
     open_tasks: int = 0
     pending_approvals: int = 0
+    open_shifts: int = 0
     documents: DocumentCounts = DocumentCounts()
     events_today: int = 0
     automations: AutomationHomeCounts = AutomationHomeCounts()

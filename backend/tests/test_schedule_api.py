@@ -426,7 +426,7 @@ async def _api_scenario():
             out["created_ids"].append(open_id)
             out["open_shift_status"] = open_shift.json()["visits"][0]["status"]
 
-            # candidates on the open shift (200) then 409 once it's filled
+            # candidates rank for open shifts (200) and still for scheduled (reassign)
             cand = await ac.get(f"/api/schedules/{open_id}/candidates")
             out["candidates_code"] = cand.status_code
             out["candidate_count"] = len(cand.json()["candidates"])
@@ -435,8 +435,9 @@ async def _api_scenario():
             out["assign_code"] = assigned.status_code
             out["assign_warnings"] = assigned.json()["warnings"]
 
-            cand_after = await ac.get(f"/api/schedules/{open_id}/candidates")
-            out["candidates_filled_code"] = cand_after.status_code  # 409 now
+            # scheduled visit still ranks (reassign flow); terminal visits 409.
+            cand_scheduled = await ac.get(f"/api/schedules/{open_id}/candidates")
+            out["candidates_scheduled_code"] = cand_scheduled.status_code
 
             # --- call-out round-trips the drawer payload shape ---
             call_shift = await ac.post("/api/schedules", json={
@@ -457,6 +458,10 @@ async def _api_scenario():
             outcome = await ac.patch(f"/api/schedules/{open_id}", json={"status": "completed"})
             out["outcome_code"] = outcome.status_code
             out["outcome_status"] = outcome.json()["status"]
+
+            # a completed (terminal) visit has nothing to rank -> 409
+            cand_terminal = await ac.get(f"/api/schedules/{open_id}/candidates")
+            out["candidates_terminal_code"] = cand_terminal.status_code
 
             # --- roster PATCH emits one resource.updated naming changed fields ---
             rp = await ac.patch(f"/api/roster/{BRIAN}", json={
@@ -549,7 +554,8 @@ def test_schedule_api():
     assert out["candidates_code"] == 200
     assert out["assign_code"] == 200
     assert any("Missing qualification" in w for w in out["assign_warnings"])
-    assert out["candidates_filled_code"] == 409  # no candidates once filled
+    assert out["candidates_scheduled_code"] == 200  # scheduled still ranks (reassign)
+    assert out["candidates_terminal_code"] == 409  # terminal visit has nothing to rank
 
     assert out["callout_code"] == 200
     assert out["callout_body"]["schedule_id"] and out["callout_body"]["replacement_schedule_id"]
