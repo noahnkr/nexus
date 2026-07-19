@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, type SelectOption } from "@/components/ui/Select";
+import { DateTimePicker } from "@/components/ui/DateTimePicker";
 import { PRIORITY_DOT } from "./TaskCard";
 import type { TaskCreate, TaskPriority } from "@/lib/api";
 
@@ -27,7 +28,8 @@ export function CreateTaskDialog({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<TaskPriority>("normal");
-  const [dueAt, setDueAt] = useState("");
+  // ISO string straight from the picker — no local-time parsing step in between.
+  const [dueAt, setDueAt] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
 
   if (!open) return null;
@@ -36,7 +38,7 @@ export function CreateTaskDialog({
     setTitle("");
     setDescription("");
     setPriority("normal");
-    setDueAt("");
+    setDueAt(undefined);
   };
 
   const submit = async () => {
@@ -47,7 +49,7 @@ export function CreateTaskDialog({
         title: title.trim(),
         description: description.trim() || undefined,
         priority,
-        due_at: dueAt ? new Date(dueAt).toISOString() : null,
+        due_at: dueAt ?? null,
       });
       reset();
       onClose();
@@ -114,11 +116,12 @@ export function CreateTaskDialog({
               <label className="mb-1 block text-xs font-medium text-muted-foreground">
                 Due (optional)
               </label>
-              <input
-                type="datetime-local"
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              <DateTimePicker
                 value={dueAt}
-                onChange={(e) => setDueAt(e.target.value)}
+                onChange={setDueAt}
+                placeholder="No due date"
+                className="w-full"
+                align="right"
               />
             </div>
           </div>
