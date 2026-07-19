@@ -50,7 +50,7 @@ The Leads and Caregivers views (interfaces #7–8) are the first *vertical* view
 - ✅ Custom automations framework (WHEN → IF → THEN): event-trigger listeners + cron-scheduled triggers, durable run state across delays/waits, steps executing MCP tools through the audited/gated seam, custom functions, LLM content generation
 - ✅ Automations Center interface (grid of active automations; recipe sentence builder; agent-built automations from a natural-language description)
 - ✅ Entity pipeline views (Leads, Caregivers): pre-defined stage funnels with per-stage outreach sequences, entity directories with event history and AI smart summaries, dashboard metrics
-- ⏸ Deterministic multi-phase harness *pattern* (generic engine: phase → programmatic check → human review on ambiguous cases) — **deferred to the future-plans backlog (user decision 2026-07-17)** together with the scheduling surfaces it was bundled with; in the interim, deterministic scoring/derivation lives in the automations engine's function steps (`weighted_score` et al.)
+- ⏸ Deterministic multi-phase harness *pattern* (generic engine: phase → programmatic check → human review on ambiguous cases) — **deferred to the future-plans backlog (user decision 2026-07-17)** together with the scheduling surfaces it was bundled with; in the interim, deterministic scoring/derivation lives in the automations engine's function steps (`formula` et al.)
 - ✅ LLM observability/tracing (LangSmith)
 - ✅ Prompt caching for repeated system prompt/tool-definition context
 
@@ -464,7 +464,7 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 **Automations touches (15c)**:
 
 - Manual-trigger automations drop the meaningless Active/Paused toggle for a **Run** button (the run-now endpoint already ignores status), and a safe `run_automation` tool lets chat/MCP agents start manual automations — restricted to manual triggers, refused for `source_system='automation'` (the no-self-trigger rule extended to the tool layer), starting the run deferred (`waiting` + `wake_at=now()`) for the M7b waker to advance
-- "Calculate a score" becomes a real formula builder: a new `formula` function (hand-rolled safe expression parser — numbers, `+ − × ÷`, parentheses, `round()`; field values via the existing `{{token}}` templates; no eval, no LLM) with a token-aware `FormulaEditor` in the builder; the result saves to run context via the existing save-as. `weighted_score` stays registered for existing recipes
+- "Calculate a score" becomes a real formula builder: a new `formula` function (hand-rolled safe expression parser — numbers, `+ − × ÷`, parentheses, `round()`; field values via the existing `{{token}}` templates; no eval, no LLM) with a token-aware `FormulaEditor` in the builder; the result saves to run context via the existing save-as. `weighted_score` was retired in the same change (no stored recipe referenced it)
 
 **Infrastructure introduced**: `tenant_settings` core table + settings seam/API, `ToolDef.editable_fields` + approve-with-edits, chat cancellation persistence, `formula` function + parser, safe `run_automation` tool, `start_run(defer=True)`.
 

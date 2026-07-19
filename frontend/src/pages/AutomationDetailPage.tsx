@@ -35,6 +35,7 @@ export function AutomationDetailPage() {
   const [selected, setSelected] = useState<Run | null>(null);
   const [showJson, setShowJson] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [running, setRunning] = useState(false);
   // The field catalog powers read-mode labels ("…to Phone", not "{{...}}").
   const [catalog, setCatalog] = useState<FieldCatalog | undefined>(undefined);
 
@@ -92,6 +93,23 @@ export function AutomationDetailPage() {
     }
   };
 
+  const onRun = async () => {
+    if (!automation) return;
+    setRunning(true);
+    try {
+      await api.runAutomation(automation.id);
+      toast.success(`Started “${automation.name}” — watch its run history below.`);
+      await load();
+    } catch (e) {
+      const message = String(e);
+      toast.error(
+        message.includes("409") ? `“${automation.name}” is already running.` : message,
+      );
+    } finally {
+      setRunning(false);
+    }
+  };
+
   const onDelete = async () => {
     if (!automation) return;
     try {
@@ -141,6 +159,9 @@ export function AutomationDetailPage() {
   }
 
   const active = automation.status === "active";
+  // See AutomationCard: a manual automation's `status` is ignored by the run
+  // endpoint, so it shows Run rather than a pause toggle that does nothing.
+  const manual = automation.trigger?.type === "manual";
   const bindingLabel = describeBinding(automation.binding);
   const editRoute =
     bindingEditRoute(automation.binding) ?? `/automations/${automation.id}/edit`;
@@ -159,9 +180,13 @@ export function AutomationDetailPage() {
             <h1 className="truncate text-[17px] font-semibold tracking-tight">
               {automation.name}
             </h1>
-            <Badge variant={active ? "success" : "secondary"}>
-              {active ? "Active" : "Paused"}
-            </Badge>
+            {manual ? (
+              <Badge variant="outline">Manual</Badge>
+            ) : (
+              <Badge variant={active ? "success" : "secondary"}>
+                {active ? "Active" : "Paused"}
+              </Badge>
+            )}
             {automation.requires_approval && (
               <Badge variant="warning">Requires approval</Badge>
             )}
@@ -178,17 +203,23 @@ export function AutomationDetailPage() {
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <Button size="sm" variant="outline" onClick={onToggle}>
-            {active ? (
-              <>
-                <Pause className="h-3.5 w-3.5" /> Pause
-              </>
-            ) : (
-              <>
-                <Play className="h-3.5 w-3.5" /> Activate
-              </>
-            )}
-          </Button>
+          {manual ? (
+            <Button size="sm" onClick={onRun} disabled={running}>
+              <Play className="h-3.5 w-3.5" /> {running ? "Starting…" : "Run"}
+            </Button>
+          ) : (
+            <Button size="sm" variant="outline" onClick={onToggle}>
+              {active ? (
+                <>
+                  <Pause className="h-3.5 w-3.5" /> Pause
+                </>
+              ) : (
+                <>
+                  <Play className="h-3.5 w-3.5" /> Activate
+                </>
+              )}
+            </Button>
+          )}
           <Button size="sm" variant="outline" onClick={() => navigate(editRoute)}>
             <Pencil className="h-3.5 w-3.5" /> Edit
           </Button>

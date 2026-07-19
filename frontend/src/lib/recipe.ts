@@ -250,7 +250,10 @@ function formatValue(v: unknown, catalog?: FieldCatalog): string {
 
 // Plain-language function names for the builder select + read mode (Module 11b).
 export const FUNCTION_LABELS: Record<string, string> = {
-  weighted_score: "Calculate a score",
+  formula: "Calculate a value",
+  // Retired in M15c; kept only so a legacy recipe still renders a readable name
+  // rather than a raw identifier.
+  weighted_score: "Calculate a score (retired)",
   days_since: "Days since a date",
   days_until: "Days until a date",
   now: "Current date & time",

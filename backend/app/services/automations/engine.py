@@ -323,6 +323,7 @@ async def start_run(
     entity_type: str | None = None,
     entity_id: str | None = None,
     skip_conditions: bool = False,
+    defer: bool = False,
 ) -> str | None:
     """Create a run if the entry conditions pass and no active run already exists
     for this (automation, entity). Returns the run id, or None when filtered out
@@ -331,6 +332,14 @@ async def start_run(
     `skip_conditions=True` is the explicit manual-run override ("Run now" forces
     the run regardless of entry conditions) — with it, a None return can only mean
     the concurrency guard fired, which lets the manual endpoint answer 409 cleanly.
+
+    `defer=True` (M15c) parks the run `waiting` with `wake_at=now()` instead of
+    starting it `running`, so the M7b waker advances it on its next poll. This
+    exists for callers that CANNOT commit before advancing — notably a tool
+    handler, which runs inside `execute_tool`'s savepoint on the caller's still-open
+    transaction. Rather than invent a post-commit hook, the deferred run rides the
+    durable machinery that already exists; it starts a poll interval later, which
+    is fine for a human-initiated "run this".
 
     The caller must COMMIT before calling `advance_run` (advance opens its own
     per-step transactions and must see the committed run row)."""
@@ -356,10 +365,22 @@ async def start_run(
                 await cur.execute(
                     """insert into public.automation_runs
                          (tenant_id, automation_id, status, trigger_event_id,
-                          entity_type, entity_id)
-                       values (%s, %s, 'running', %s, %s, %s)
+                          entity_type, entity_id, wake_at, step_log)
+                       values (%s, %s, %s, %s, %s, %s, %s, %s)
                        returning id""",
-                    (tenant_id, automation["id"], trigger_event_id, entity_type, entity_id),
+                    (
+                        tenant_id,
+                        automation["id"],
+                        "waiting" if defer else "running",
+                        trigger_event_id,
+                        entity_type,
+                        entity_id,
+                        # now() so the very next waker poll claims it.
+                        datetime.now(timezone.utc) if defer else None,
+                        Json([{"note": "queued — waiting for the next run cycle"}])
+                        if defer
+                        else Json([]),
+                    ),
                 )
                 run_id = str((await cur.fetchone())[0])
     except errors.UniqueViolation:
@@ -385,7 +406,9 @@ async def start_run(
     run = {"id": run_id, "entity_type": entity_type, "entity_id": entity_id}
     await _log_run_event(
         conn, tenant_id, run, automation, "automation.run_started",
-        f"Automation '{automation['name']}' started",
+        f"Automation '{automation['name']}' queued to run"
+        if defer
+        else f"Automation '{automation['name']}' started",
     )
     return run_id
 

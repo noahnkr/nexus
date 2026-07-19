@@ -482,9 +482,9 @@ The Automations Center is the UI over the engine — nav → **Automations**. It
   keys), and a reorderable list of THEN step cards whose forms are generated from
   each tool/function's JSON Schema (with a `{{template}}` inserter on text fields).
   Step types: run a tool, write with AI, wait a fixed delay, **wait until an event
-  happens** (with optional timeout), only-continue-if, and compute a value —
-  including a generic **`weighted_score`** function (builder-configurable weights +
-  inputs) for lead-value / applicant-fit scoring. The server is the validator of
+  happens** (with optional timeout), only-continue-if, and compute a value — see
+  the **`formula`** function under Module 15c for lead-value / applicant-fit
+  scoring. The server is the validator of
   record — a 422 renders inline; editing a definition with runs in flight returns a
   409 with a "cancel runs & save" path.
 - **Describe → draft → review** — on the create page, describe the automation in
@@ -522,10 +522,10 @@ grouped by *the selected trigger's* actual fields inserts them at the caret — 
 user never types a dotted path), and read-mode surfaces show "…to Phone" instead of
 `{{trigger.payload.phone}}`. The stored recipe format is unchanged — chips are a
 view over the same `{{path}}` strings, so existing recipes and the draft agent are
-untouched. The `function` step is presented as **"Run a calculation"**, and
-`weighted_score` gets a *field × weight* editor (with a live formula line) that
-writes its `{weights, inputs}` args without the user seeing JSON. New function:
-**`days_until`** (credential-expiry / upcoming-date automations). Condition *values*
+untouched. The `function` step is presented as **"Run a calculation"** (its editor
+landed in Module 15c, below — M11b shipped the step type but left the args on the
+generic schema form). New function: **`days_until`** (credential-expiry /
+upcoming-date automations). Condition *values*
 are now template-rendered by the engine (an unresolvable value makes the condition
 false, never a run failure). Frontend adds a `vitest` unit suite for the tokenizer
 (`npm run test`); no new backend env vars or migrations.
@@ -723,6 +723,54 @@ window — usable from chat/MCP and as an automation step), gated `record_call_o
 `assign_caregiver`; `create_schedule`/`cancel_schedule` now delegate to the seam. The
 `schedule.called_out` event (payload carries `replacement_schedule_id`) is the trigger
 for call-out automations. No new frontend deps or env vars.
+
+### Formula steps & manual runs (Module 15c)
+
+**`formula` function.** The "Run a calculation" step now takes a real arithmetic
+expression instead of the `weighted_score` weights/inputs objects that fell through
+to raw-JSON textareas:
+
+```
+({{trigger.record.hourly_rate}} + 2) * 1.5
+round({{entity.visits_last_month}} / 4, 1)
+```
+
+Grammar: decimal numbers, `+ - * /`, parentheses, unary minus, and
+`round(value[, digits])`. Field references are ordinary `{{templates}}` — the
+engine substitutes them before the function runs, so every referenced field must
+hold a number.
+
+It is evaluated by a hand-rolled tokenizer + recursive-descent parser
+(`services/automations/formula.py`) — **no `eval`, no `ast`**. The expression comes
+from a recipe a non-technical user typed, so it is untrusted input on the
+automation control path; a parser can only ever produce a number. Errors are plain
+language ("'pending' is not a number", "Division by zero") and fail the run per M7
+semantics. `lib/formula.ts` mirrors the grammar in the builder for live validation
+only — the backend parser is the authority at run time.
+
+`weighted_score` — the old weights/inputs function — was **retired** in the same
+change. No stored recipe referenced it, so nothing needed migrating; a recipe that
+still names it now fails validation rather than running silently against a missing
+function.
+
+**Manual runs.** A manual-trigger automation has no trigger to be "active" for —
+`POST /api/automations/{id}/run` has always ignored `status` — so the grid and
+detail page now show a neutral **Manual** badge and a **Run** button instead of a
+pause toggle that did nothing.
+
+**`run_automation` tool** lets chat and MCP start one: *"run the Score this lead
+automation"*. It is **safe** (starting a run has no direct external effect; a gated
+step inside it still parks for approval) and refuses three ways, all in plain
+language: unknown name (the message lists what *can* be run), a non-manual trigger,
+and — extending the automations-don't-trigger-automations rule to the tool layer —
+any call arriving with `source_system='automation'`. It is deliberately absent from
+the builder's step palette for that last reason, while chat and MCP see it normally.
+
+The run is created **deferred** (`status='waiting'`, `wake_at=now()`): a tool
+handler executes inside `execute_tool`'s savepoint on an uncommitted transaction,
+and `advance_run` opens its own per-step transactions that wouldn't see the row. The
+M7b waker picks it up on its next poll, so the run starts a few seconds later on
+machinery that already exists.
 
 ### Schedule board (Module 12b)
 

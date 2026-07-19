@@ -73,6 +73,28 @@ export function AutomationsPage() {
     }
   };
 
+  // Manual automations get a Run button instead of the pause toggle. The endpoint
+  // already ignores `status` and skips entry conditions, so this is purely UI.
+  const onRun = async (a: Automation) => {
+    try {
+      await api.runAutomation(a.id);
+      toast.success(`Started “${a.name}”`, {
+        action: {
+          label: "View run",
+          onClick: () => navigate(`/automations/${a.id}`),
+        },
+      });
+      await load();
+    } catch (e) {
+      const message = String(e);
+      toast.error(
+        message.includes("409")
+          ? `“${a.name}” is already running.`
+          : message,
+      );
+    }
+  };
+
   const onConfirmDelete = async () => {
     if (!toDelete) return;
     try {
@@ -122,6 +144,7 @@ export function AutomationsPage() {
                 key={a.id}
                 automation={a}
                 onToggle={onToggle}
+                onRun={onRun}
                 onDelete={setToDelete}
               />
             ))}

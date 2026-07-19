@@ -27,6 +27,7 @@ import {
 import type { FieldCatalog, Vocabulary } from "@/lib/api";
 import { labelizeTemplate } from "@/lib/template";
 import { SchemaForm } from "./SchemaForm";
+import { FormulaEditor } from "./FormulaEditor";
 import { TokenField, type FieldContext } from "./FieldPicker";
 import { ConditionChips } from "./ConditionChips";
 
@@ -176,8 +177,16 @@ function readDetail(step: Step, catalog?: FieldCatalog): string | null {
       ].filter(Boolean);
       return bits.join("  ·  ") || null;
     }
-    case "function":
-      return step.save_as ? `saved as ${step.save_as}` : null;
+    case "function": {
+      // A formula reads as its expression with field chips spelled out, e.g.
+      // "(Hourly rate + 2) * 1.5 · saved as score" — not just the save_as name.
+      const formula = (step.args as Record<string, unknown> | undefined)?.formula;
+      const bits = [
+        typeof formula === "string" && formula.trim() ? lbl(formula) : null,
+        step.save_as ? `saved as ${step.save_as}` : null,
+      ].filter(Boolean);
+      return bits.join("  ·  ") || null;
+    }
     case "condition":
       return "If false, the automation stops here.";
     case "wait_until": {
@@ -288,7 +297,17 @@ function StepEditor({ step, edit }: { step: Step; edit: StepEdit }) {
           placeholder="select a computation…"
           aria-label="Computation"
         />
-        {fn && (
+        {/* `formula` gets a purpose-built editor; every other function (including
+            legacy weighted_score, whose free-form object args fall back to raw
+            JSON) keeps the generic SchemaForm. */}
+        {fn && step.function === "formula" && (
+          <FormulaEditor
+            value={String((step.args as Record<string, unknown>)?.formula ?? "")}
+            onChange={(formula) => onChange({ ...step, args: { formula } })}
+            ctx={ctx}
+          />
+        )}
+        {fn && step.function !== "formula" && (
           <SchemaForm
             schema={fn.input_schema}
             value={(step.args as Record<string, unknown>) ?? {}}

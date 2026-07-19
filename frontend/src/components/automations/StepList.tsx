@@ -19,7 +19,10 @@ const NEW_STEP: Record<StepType, () => Step> = {
   tool: () => ({ type: "tool", tool: "", input: {} }),
   delay: () => ({ type: "delay", minutes: 5 }),
   condition: () => ({ type: "condition", conditions: [], on_false: "stop" }),
-  function: () => ({ type: "function", function: "", args: {} }),
+  // Pre-select `formula`: it's the one users want ("run a calculation"), and it
+  // opens the FormulaEditor instead of the generic schema form. weighted_score
+  // stays reachable from the function dropdown for legacy recipes.
+  function: () => ({ type: "function", function: "formula", args: { formula: "" } }),
   generate: () => ({ type: "generate", prompt: "", save_as: "message", model: "default" }),
   wait_until: () => ({ type: "wait_until", event_type: "", conditions: [], timeout_minutes: null }),
 };
@@ -30,7 +33,7 @@ const ADD_OPTIONS: { type: StepType; label: string; icon: ComponentType<{ classN
   { type: "delay", label: "Wait", icon: Clock },
   { type: "wait_until", label: "Wait until an event…", icon: Hourglass },
   { type: "condition", label: "Only continue if…", icon: GitBranch },
-  { type: "function", label: "Compute a value", icon: Sigma },
+  { type: "function", label: "Run a calculation", icon: Sigma },
 ];
 
 // The THEN list: reorderable step cards (up/down, not dnd) plus an add-step menu.
