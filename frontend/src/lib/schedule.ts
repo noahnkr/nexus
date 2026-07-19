@@ -60,6 +60,20 @@ export function statusMeta(status: VisitStatus): StatusMeta {
   return VISIT_STATUS_META[status];
 }
 
+// --- EVV (M16a) ---------------------------------------------------------------
+// The read-time lateness flag comes from the server (visit.evv); the UI only maps
+// it to a label. Both states are amber (warning) — a missed visit is more serious
+// than a late one, but neither is a hard error like a no-show.
+export const EVV_LABELS: Record<"late" | "missed", string> = {
+  late: "Late",
+  missed: "Missed",
+};
+
+export function evvLabel(evv: string | null | undefined): string | null {
+  if (evv === "late" || evv === "missed") return EVV_LABELS[evv];
+  return null;
+}
+
 // --- Week math (Monday-start, all in the viewer's local clock) ----------------
 function parseLocalDate(iso: string): Date {
   // "YYYY-MM-DD" as a LOCAL midnight (avoids the UTC-parse day shift `new Date("…")` does).

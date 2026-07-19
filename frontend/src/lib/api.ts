@@ -31,6 +31,10 @@ export interface DocumentOut {
   status: "uploaded" | "processing" | "ready" | "failed";
   error: string | null;
   storage_path: string | null;
+  // Optional canonical-entity tag (M16a) — a care plan is a document tagged to a
+  // client. Null on tenant-general uploads.
+  entity_type: string | null;
+  entity_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -536,6 +540,12 @@ export interface ScheduleVisit {
   required_qualification_names: string[];
   replaces_schedule_id: string | null;
   notes: string | null;
+  // EVV (M16a): raw clock stamps + the server-computed read-time flag. `evv` is
+  // 'late' | 'missed' | null, derived per request — never stored — so a badge can't
+  // outlive the caregiver finally clocking in.
+  check_in_at: string | null;
+  check_out_at: string | null;
+  evv: "late" | "missed" | null;
   created_at: string;
   updated_at: string;
 }
@@ -635,6 +645,175 @@ export interface NotifyResult {
   summary: string;
 }
 
+// --- Clients view (Module 16, vertical seam) ---------------------------------
+export type ClientStatus = "active" | "hospital_hold" | "discharged";
+export type Payer = "private_pay" | "medicaid" | "ltc_insurance" | "va" | "other";
+
+export interface Client {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  status: ClientStatus;
+  lead_id: string | null;
+  address: string | null;
+  zip: string | null;
+  languages: string[];
+  preferences: string[];
+  region_id: string | null;
+  region_name: string | null;
+  payer: Payer | null; // null = unknown (intake in progress)
+  authorized_hours_per_week: number | null;
+  care_summary: string | null;
+  requirements: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ClientPage {
+  clients: Client[];
+  total: number;
+}
+
+export interface ClientFacets {
+  statuses: string[];
+  payers: string[];
+  regions: RegionRef[];
+}
+
+// One week of hours for a client or the whole census. `leakage_hours` (authorized
+// minus delivered) is the number that matters.
+export interface ClientHours {
+  week_start: string;
+  week_end: string;
+  authorized_hours: number;
+  scheduled_hours: number;
+  delivered_hours: number;
+  open_hours: number;
+  leakage_hours: number;
+  delivery_rate: number | null; // % of authorized; null when authorized = 0
+}
+
+export interface RegionCount {
+  region_id: string | null;
+  region: string;
+  count: number;
+}
+
+export interface PayerCount {
+  payer: string; // payer key, or 'unknown' for clients with none recorded
+  count: number;
+}
+
+export interface CensusMetrics extends ClientHours {
+  active_clients: number;
+  by_region: RegionCount[];
+  by_payer: PayerCount[];
+}
+
+export interface ClientContact {
+  id: string;
+  client_id: string;
+  name: string;
+  relationship: string | null;
+  phone: string | null;
+  email: string | null;
+  is_primary: boolean;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ClientContactCreate {
+  name: string;
+  relationship?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  is_primary?: boolean;
+  notes?: string | null;
+}
+
+export interface ClientContactPatch {
+  name?: string;
+  relationship?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  is_primary?: boolean;
+  notes?: string | null;
+}
+
+export interface ClientCaregiverRef {
+  resource_id: string;
+  name: string;
+  next_visit: string | null;
+}
+
+export interface ClientDocumentRef {
+  id: string;
+  filename: string;
+  status: string;
+  created_at: string;
+}
+
+export interface ClientDetail extends Client {
+  contacts: ClientContact[];
+  caregivers: ClientCaregiverRef[];
+  hours_this_week: ClientHours;
+  documents: ClientDocumentRef[];
+}
+
+// The profile's visits card. Rows are the board's ScheduleVisit shape (same EVV
+// flag + status meta), so the profile and the board render them identically.
+export interface ClientVisits {
+  upcoming: ScheduleVisit[];
+  past: ScheduleVisit[];
+}
+
+export interface ClientSummary {
+  summary: string;
+  generated_at: string;
+}
+
+export interface ClientCreate {
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  zip?: string | null;
+  region_id?: string | null;
+  payer?: Payer | null;
+  authorized_hours_per_week?: number | null;
+  care_summary?: string | null;
+  languages?: string[];
+  preferences?: string[];
+}
+
+// Only the fields being changed are sent. A `status` change routes through the
+// server's change_status() path (emits client.status_changed).
+export interface ClientPatch {
+  name?: string;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  zip?: string | null;
+  region_id?: string | null;
+  payer?: Payer | null;
+  authorized_hours_per_week?: number | null;
+  care_summary?: string | null;
+  languages?: string[];
+  preferences?: string[];
+  status?: ClientStatus;
+}
+
+export interface ClientQuery {
+  status?: string;
+  payer?: string;
+  region_id?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
+}
+
 // --- Home summary ------------------------------------------------------------
 export interface HomeSummary {
   open_tasks: number;
@@ -685,12 +864,19 @@ export const api = {
     }).then(json<TenantSettings>),
 
   // Documents
-  listDocuments: () => authFetch("/api/documents").then(json<DocumentOut[]>),
+  listDocuments: (tag?: { entity_type: string; entity_id: string }) =>
+    authFetch(`/api/documents${queryString(tag ?? {})}`).then(json<DocumentOut[]>),
   getDocument: (id: string) =>
     authFetch(`/api/documents/${id}`).then(json<DocumentDetail>),
-  uploadDocument: (file: File) => {
+  // An optional entity tag associates the upload with a canonical record (e.g. a
+  // client's care plan); chunks inherit it. Omit for tenant-general knowledge.
+  uploadDocument: (file: File, tag?: { entity_type: string; entity_id: string }) => {
     const body = new FormData();
     body.append("file", file);
+    if (tag) {
+      body.append("entity_type", tag.entity_type);
+      body.append("entity_id", tag.entity_id);
+    }
     return authFetch("/api/documents", { method: "POST", body }).then(json<DocumentOut>);
   },
   deleteDocument: (id: string) =>
@@ -894,4 +1080,68 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ resource_id: resourceId, message }),
     }).then(json<NotifyResult>),
+  // EVV clock (M16a). Body time is optional — omitted means now. Check-out also
+  // completes the visit. Both return the refreshed visit.
+  checkInVisit: (id: string, time?: string) =>
+    authFetch(`/api/schedules/${id}/check-in`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ time: time ?? null }),
+    }).then(json<ScheduleVisit>),
+  checkOutVisit: (id: string, time?: string) =>
+    authFetch(`/api/schedules/${id}/check-out`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ time: time ?? null }),
+    }).then(json<ScheduleVisit>),
+
+  // Clients view (Module 16)
+  listClients: (params: ClientQuery = {}) =>
+    authFetch(`/api/clients${queryString(params as Record<string, unknown>)}`).then(
+      json<ClientPage>,
+    ),
+  getClientMetrics: (week?: string) =>
+    authFetch(`/api/clients/metrics${queryString({ week })}`).then(json<CensusMetrics>),
+  getClientFacets: () => authFetch("/api/clients/facets").then(json<ClientFacets>),
+  createClient: (body: ClientCreate) =>
+    authFetch("/api/clients", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<Client>),
+  getClient: (id: string) => authFetch(`/api/clients/${id}`).then(json<ClientDetail>),
+  getClientVisits: (id: string, opts?: { upcoming?: number; past?: number }) =>
+    authFetch(`/api/clients/${id}/visits${queryString({ ...opts })}`).then(
+      json<ClientVisits>,
+    ),
+  patchClient: (id: string, body: ClientPatch) =>
+    authFetch(`/api/clients/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<ClientDetail>),
+  getClientSummary: (id: string) =>
+    authFetch(`/api/clients/${id}/summary`).then(json<ClientSummary>),
+  regenerateClientSummary: (id: string) =>
+    authFetch(`/api/clients/${id}/summary/regenerate`, { method: "POST" }).then(
+      json<ClientSummary>,
+    ),
+  createContact: (clientId: string, body: ClientContactCreate) =>
+    authFetch(`/api/clients/${clientId}/contacts`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<ClientContact>),
+  patchContact: (clientId: string, contactId: string, body: ClientContactPatch) =>
+    authFetch(`/api/clients/${clientId}/contacts/${contactId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<ClientContact>),
+  deleteContact: (clientId: string, contactId: string) =>
+    authFetch(`/api/clients/${clientId}/contacts/${contactId}`, {
+      method: "DELETE",
+    }).then((r) => {
+      if (!r.ok && r.status !== 204) throw new Error(`delete failed: ${r.status}`);
+    }),
 };
