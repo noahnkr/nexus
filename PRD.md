@@ -372,18 +372,82 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 ---
 
+## Module 12: Smart Staffing & Scheduling
+
+**Goal**: give the owner the staffing loop — see the week at a glance, suggest the optimal caregiver for any visit, and when a caregiver calls out sick, fill the shift in minutes: ranked qualified replacements, one click to assign, a gated SMS to notify. This module revives the scheduling/matching content of the formerly deferred harness module (rescoped by the user 2026-07-18), minus the generic decision-harness abstraction, which stays deferred.
+
+**Shift model & schedule board**:
+
+- `schedules` learns to represent unfilled work: `resource_id` becomes nullable (NULL + status `open` *is* the open shift), statuses grow `open` and `called_out`, and visits carry `required_qualification_ids` and a `replaces_schedule_id` link — a call-out keeps the original row (who called out is a fact, not a deletion) and opens a linked replacement shift
+- The `/schedule` week board: caregivers as rows (weekly hours under each name), Mon–Sun day columns, visits as status-colored blocks, an Open-shifts row pinned on top; every action (call out, assign, reassign, cancel, outcome) lives in a click-to-act visit drawer — no drag-and-drop
+- Visit creation supports "repeat weekly until" (expanded server-side into individual rows, capped at 12 weeks); a minimal caregiver drawer on the board is the roster-editing surface (contact, address/zip, languages/traits, availability)
+
+**Algorithmic caregiver matching**:
+
+- Clients and caregivers gain `address`/`zip`/`languages` plus preference/trait tags, so the deterministic ranker (`services/views/matching.py`, vertical seam) scores geography at zip level (windshield-time proxy), cultural/language fit, availability-window fit, continuity (past visits with the client), and weekly-load balance — with hard disqualifiers for missing required qualifications and time conflicts; every candidate carries plain-language reasons and warnings, no LLM in the ranking
+- Exposed as the safe `find_available_caregivers` tool (chat, MCP, and automation tool steps all get it through the registry), as `GET /api/schedules/{id}/candidates` for the UI, and joined by gated `record_call_out`/`assign_caregiver` write tools
+
+**Automated call-outs (owner-picks flow)**:
+
+- Call-out (board or gated tool) emits `schedule.called_out` — the automation trigger; the shipped flow is owner-picks: ranked candidates in the drawer → assign → optional gated `send_sms` notify queued through `execute_tool` and approved in Tasks (no inbound-SMS loop exists, so no broadcast path in the UI; the broadcast variant is a documented recipe)
+- The README documents the call-out recipe (WHEN `schedule.called_out` → `find_available_caregivers` → task naming the top candidate, + gated SMS variant), buildable in the Module 8 builder with Module 11 tokens — not seeded (the no-starter-templates lock stands)
+
+**Infrastructure introduced**: one vertical-seam migration (schedules open/called-out support, address & trait fields, Realtime on `schedules`); no new env vars, no core-table changes, no engine changes.
+
+**Deliverable for this module**: a caregiver calls out on the board; the owner opens the replacement shift, sees ranked qualified candidates with plain-language reasons, assigns one, queues the notification text, and approves it in Tasks — with the full trail (`schedule.called_out → schedule.assigned → action.queued → action.approved → tool.called`) in the Event Log, and a builder-authored automation reacting to the same call-out event. Plans: `.agent/plans/12.smart-staffing-scheduling.md` (+ `12a.scheduling-backend-matching.md`, `12b.schedule-board.md`)
+
+---
+
+## Module 13: Automation Builder Enhancements
+
+**Goal**: finish making the builder trustworthy and pleasant for a non-technical office user — the IF section only appears when it can actually do something, the field dropdowns provably offer the trigger's real fields (fixing the reported empty-dropdown bug), and every dropdown in the app becomes one consistent, customizable component instead of ~28 native `<select>` elements. Much of this module's original summary was delivered early by Module 11's field catalog; what remains is scoped to correctness, gating, and the dropdown rollout.
+
+**Field-scope correctness & IF gating**:
+
+- The entry IF section renders only for event triggers — cron/manual runs carry no trigger or record fields, so entry conditions on them could only silently fail; switching trigger types away from an event confirms and clears stale conditions (existing non-event automations with saved conditions surface a warning instead of hiding data). Builder UX only: the recipe format, `validate_recipe`, and the engine are unchanged
+- The reported "no fields in the IF condition dropdown" bug is verified live and fixed at its root: the field-scope logic gains a pure-function regression suite, a gated catalog-content test on the vocabulary endpoint, and the condition combobox learns to explain itself (hints and an explicit empty state) instead of silently showing nothing
+- Event types read in plain language ("Lead stage changed") with the raw type as secondary text — frontend label maps over the same vocabulary, no backend change
+
+**Shared dropdown component & app-wide sweep**:
+
+- A hand-rolled `ui/Select` (no new deps, consistent with the app's existing popover patterns): options or groups, icons, colored status dots, secondary descriptions/mono text, optional search and clearable placeholder, full keyboard navigation and listbox ARIA
+- Every native select in the app converts to it with per-site customizations — trigger/step/operator/schedule dropdowns in the builder (tool picker grouped Safe vs. Requires approval), task priority with tone dots, lead/caregiver source filters and dialogs, stage selects with stage-color dots, event log filters with plain-language labels, DateTimePicker month/year, and the schedule board's selects from Module 12
+
+**Infrastructure introduced**: none — no migrations, no new env vars, no new dependencies, no backend surface changes.
+
+**Deliverable for this module**: an office user creating an automation sees the IF section only when an event trigger makes it meaningful, opens the condition field dropdown and always finds the trigger's labeled fields (or a plain explanation of why there are none), and every dropdown from the builder to the task filters looks and behaves identically — while existing automations open, edit, and run byte-identically. Plan: `.agent/plans/13.automation-builder-enhancements.md`
+
+---
+
+## Module 14: External Services Connectors
+
+**Goal**: turn the Module 3b connector placeholders into real integrations — WelcomeHome CRM, GoTo Connect, Gmail, and Google Calendar — so leads, activities, calls, texts, emails, and appointments flow into the canonical model (and trigger automations) without anyone re-typing CRM data, while outbound texting/emailing/scheduling runs through the existing gated tools. Planning-time research against the live APIs (2026-07-18) locked the architecture: WelcomeHome has **no webhooks** (its documented sync pattern is CSV export polling with `updated_at_after` cursors), GoTo requires an authorization-code OAuth bootstrap and offers WebSocket notification channels, and Google push requires a public endpoint — so this module is poll/bridge-first, push-later.
+
+**Sync architecture (core)**:
+
+- A single ingest seam (`ingest_payload`) behind both the webhook route and a new in-app **connector sync loop** (lifespan task beside the automations engine loops): registered per-source runners fetch increments, translate, and ingest through the same receipt → normalize → resolve path; cursors/channel state in `connector_state`, credentials in env only
+- One-way inbound — external platforms stay source of truth; Nexus mirrors. Outbound is explicit gated actions (`send_sms`, `send_email`, `create_calendar_event`), unchanged in name, schema, and approval semantics
+- New canonical events (`lead.activity_logged`, `email.sent`, `calendar.event.created`) declared in the automations seam so triggers and M11 field tokens see them immediately
+
+**WelcomeHome CRM (14a)**: export-table polling (Prospects/Residents/Influencers/Activities), live-verified stage map onto the leads funnel (Inquiry→new … Start of Care→converted), prospect field mapping incl. new lead `zip`/`address`/`background` columns and a `lead_contacts` table for influencers/relationships, a resolution *update* path (matched events can patch the lead; stage moves emit `lead.stage_changed` so sequences fire), activities onto lead timelines, call transcriptions into RAG ingestion, and a one-time idempotent backfill script.
+
+**GoTo Connect (14b)**: OAuth bootstrap script (one-time browser consent → refresh token in env), WebSocket notification-channel bridge feeding call/SMS events into the ingress (channel renewal via `connector_state`), and the real `send_sms` implementation behind the existing gated tool.
+
+**Gmail + Google Calendar (14c)**: Google OAuth bootstrap, Gmail `historyId` polling (new mail only, no backfill) with attachments of attributed senders ingested into RAG, real `send_email` (+ `email.sent` timeline events), Calendar `syncToken` polling, and safe `list_calendar_events` / gated `create_calendar_event` tools available to chat, MCP, and automations.
+
+**Deferred**: the **WellSky direct adapter** stays a placeholder (user decision 2026-07-18) — patient data arrives via the announced WellSky↔WelcomeHome platform integration, i.e. through the WelcomeHome sync; direct FHIR integration waits for a real driver. Also out: entity write-back to any platform, inbound-SMS conversation loops, Pub/Sub push, and any connectors/settings UI.
+
+**Infrastructure introduced**: connector sync loop + ingest seam, shared OAuth refresh helper + two bootstrap scripts, one vertical migration (lead sync fields + `lead_contacts`), `websockets` dependency, new env vars (`WELCOMEHOME_*`, `GOTO_CONNECT_*`, `GOOGLE_*`, `NEXUS_CONNECTORS_*`).
+
+**Deliverable for this module**: a new prospect entered in WelcomeHome appears as a Nexus lead within one poll cycle (stage-mapped, timeline populated, welcome sequence fired); a call to the business line lands `call.completed` on the right lead in seconds via the WebSocket bridge; an emailed PDF from a known lead is retrievable in chat; and "text her we'll call back" / "schedule a tour Friday 2pm" queue real gated sends that deliver on approval — every hop visible in the Event Log and LangSmith. Plans: `.agent/plans/14.external-connectors.md` (+ `14a.welcomehome-sync.md`, `14b.goto-connect.md`, `14c.google-workspace.md`)
+
+---
+
 ## Subsequent Modules (summary)
 
-12. **Smart Staffing and Scheduling** — Algorithmic Caregiver Matching: Automatically analyzes patient needs, geographic locations, caregiver skill sets, and cultural compatibility to suggest the most optimal caregiver. This drastically cuts down commute times ("windshield time") and maximizes continuity of care.Automated Call-Outs: When a caregiver calls out sick, the scheduling software’s AI automatically scans the roster, identifies qualified and available replacements, and dispatches SMS alerts or app notifications to fill the shift
-
-13. **Advanced RAG & Scale-Up** — hybrid search, reranking, multi-format ingestion (Docling), sub-agents, validated against this client's small corpus before applying to a larger future client
-
-**Deferred (future-plans backlog, user decision 2026-07-17)** — the former Module 11, the **Deterministic Matching/Decision Harness and Scheduling System**: generic phase-pipeline engine (check → check → human review on ambiguous cases) instantiated against this client's matching problem (e.g., can we serve this lead) using the Module 5 approval gate for ambiguous cases; the schedule board (week calendar, caregivers as rows, visits colored by state), the coverage/open-shift view, the caregiver–client matching tool (rank by qualifications, region, availability, continuity, overtime/conflict avoidance — exposed as an MCP tool like `find_available_caregivers`), and the call-out → replacement flow (call-out → ranked replacements → gated send_sms offer → owner approves in Tasks). Deterministic scoring interim home: automation function steps (Module 11 as built).
-
-*(The former "Custom Views / Plugin Apps" placeholder module is retired: the Leads and Caregivers views now carry that pattern in scope; anything beyond them stays out of scope per the Out of Scope list.)*
+*(none currently queued — candidate future work is tracked under Future Plans below)*
 
 ### Future Plans
-* Fix automation recipe builder field scope.
 * Additional automation calculation functions (brainstormed at M11 planning, not built): `count_events` (entity engagement counts), `calculate` (binary arithmetic), `tier` (threshold → label bucketing), `hours_between`.
 * Score persistence/display (M11 kept scores context-only by user decision): score column + profile/directory badges if a real need appears.
 * Settings View
@@ -393,7 +457,6 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 * Home page dashboard with census, billable hours week-over-week, new starts, caregiver headcount, coverage rate (% of visits filled), AR/unbilled, and the top open alerts.
 * Referral-source dashboard — which partners (hospitals, senior-living, discharge planners) send leads that actually convert. Referral ROI drives where the owner spends relationship time; this is the highest-value net-new growth view not already on the roadmap.
 * Run manually button for manual triggered automations. Also able to be triggered via chat. 
-* Field value tokens inside text input fields instead of double curly braces.
 * Client & care oversight: 
     * Active census — count of active clients, by region/payer, plus authorized hours vs scheduled vs delivered. The gap between authorized and delivered is direct revenue leakage — owners obsess over it.
     * Per-client care overview — care plan, assigned caregivers, schedule, family contacts, status (active / hospital-hold / discharged). Care plans and visit notes flow through your ingestion + RAG so they're searchable in chat.

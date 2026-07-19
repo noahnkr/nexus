@@ -1,7 +1,7 @@
 """Pydantic response/request models for the API layer."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from pydantic import BaseModel
@@ -230,6 +230,126 @@ class ApplicantMetrics(BaseModel):
     new_last_7_days: int = 0
     avg_days_to_hire: float | None = None
     top_sources: list[SourceCount] = []
+
+
+# --- Schedule board (Module 12a, vertical seam) ------------------------------
+class ScheduleVisitOut(BaseModel):
+    id: str
+    client_id: str
+    client_name: str
+    resource_id: str | None = None  # null for an unfilled 'open' shift
+    resource_name: str | None = None
+    start_time: datetime
+    end_time: datetime
+    status: str  # open|scheduled|called_out|completed|cancelled|no_show
+    required_qualification_ids: list[str] = []
+    required_qualification_names: list[str] = []  # resolved for display
+    replaces_schedule_id: str | None = None
+    notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CaregiverRosterOut(BaseModel):
+    """One roster row for the board's caregiver rail + the 12b edit drawer."""
+    id: str
+    name: str
+    phone: str | None = None
+    email: str | None = None
+    address: str | None = None
+    zip: str | None = None
+    languages: list[str] = []
+    traits: list[str] = []
+    qualification_ids: list[str] = []
+    region_ids: list[str] = []
+    availability: dict[str, Any] = {}
+    hours_this_week: float = 0.0  # scheduled hours in the board's ISO week
+
+
+class ScheduleBoard(BaseModel):
+    week_start: date  # Monday of the requested week
+    visits: list[ScheduleVisitOut] = []
+    caregivers: list[CaregiverRosterOut] = []
+
+
+class ScheduleCreate(BaseModel):
+    client_id: str
+    resource_id: str | None = None  # omit for an open shift
+    start_time: datetime
+    end_time: datetime
+    required_qualification_ids: list[str] = []
+    notes: str | None = None
+    repeat_weekly_until: date | None = None
+
+
+class SchedulesCreated(BaseModel):
+    visits: list[ScheduleVisitOut] = []  # all rows created (a weekly series expands)
+
+
+class SchedulePatch(BaseModel):
+    """Partial edit of an open/scheduled visit's window/notes/required quals, or an
+    outcome status (completed|no_show — routed through set_outcome). Stage-like
+    statuses are refused: transitions have their own verbs (call-out/assign/cancel)."""
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    notes: str | None = None
+    required_qualification_ids: list[str] | None = None
+    status: str | None = None
+
+
+class AssignBody(BaseModel):
+    resource_id: str
+
+
+class AssignResult(BaseModel):
+    schedule_id: str
+    resource_id: str
+    status: str
+    warnings: list[str] = []  # qualification gaps / availability mismatches (non-blocking)
+
+
+class CallOutResult(BaseModel):
+    schedule_id: str
+    replacement_schedule_id: str
+
+
+class CandidateOut(BaseModel):
+    resource_id: str
+    name: str
+    phone: str | None = None
+    score: int
+    reasons: list[str] = []
+    warnings: list[str] = []
+
+
+class CandidatesOut(BaseModel):
+    candidates: list[CandidateOut] = []
+
+
+class RosterPatch(BaseModel):
+    """Minimal roster edit surface (12b drawer). Only present fields are written."""
+    name: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    address: str | None = None
+    zip: str | None = None
+    languages: list[str] | None = None
+    traits: list[str] | None = None
+    availability: dict[str, Any] | None = None
+
+
+class NotifyBody(BaseModel):
+    resource_id: str
+    message: str
+
+
+class NotifyResult(BaseModel):
+    """The queued gated send_sms action (notify is gated even from a human click —
+    outbound messaging is a system-executed external effect)."""
+    status: str
+    task_id: str | None = None
+    pending_action_id: str | None = None
+    summary: str
 
 
 # --- Tasks & approvals -------------------------------------------------------

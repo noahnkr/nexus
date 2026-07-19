@@ -25,6 +25,7 @@ See `PRD.md` for full scope, module breakdown, and success criteria. This file g
 - Stream chat responses via SSE
 - Use Supabase Realtime for ingestion status and task/event queue updates
 - Chat is stateless per the Anthropic Messages API — store and send full conversation history yourself; use `cache_control` on system prompt and tool definitions to control cost as history grows
+- Frontend dropdowns use the shared `ui/Select` component (hand-rolled listbox popover — options/groups, icons, dots, search) — never native `<select>` elements; new UI reuses it rather than reinventing per-page pickers
 
 **Data & tenancy**
 - Every table needs Row-Level Security scoped by `tenant_id` — this is stricter than "users only see their own data"; it's tenant isolation at the Postgres level, not just per-user filtering, since this system is built to host multiple client businesses over time
@@ -32,7 +33,7 @@ See `PRD.md` for full scope, module breakdown, and success criteria. This file g
 - The FastAPI backend connects to Postgres as the dedicated `nexus_app` role (`nobypassrls`, member of `authenticated`) and sets the `request.app.tenant_id` GUC per request/transaction — never as `postgres` (has BYPASSRLS) and never with the service-role key for data access. The service-role key is reserved for migrations/ops and Storage uploads only
 - Tenant identity for the user-facing API comes from `deps.get_tenant_id()` — the verified Supabase JWT's `app_metadata.tenant_id` claim (HS256 legacy secret and ES256 project JWKS both accepted); every `/api` route fails closed (401/403) without a valid token. The credentialed machine paths — webhook ingress (HMAC signature) and `/mcp` (static bearer) — resolve tenant via `deps.get_machine_tenant_id()` (env `NEXUS_TENANT_ID`) and never via user JWTs; nothing else reads the env tenant at request time. All tenant-dependent code goes through these two seams
 - Every inbound webhook/connector event must resolve to a canonical entity via `external_ids` before writing anywhere else — never let a connector write directly into a business table without entity resolution
-- All inbound connector traffic enters through the single `POST /api/webhooks/{source}` ingress (signature-verified per adapter, raw receipt written to `events` before normalization) — poll/export-based sources are handled by external pollers (scheduled automations/manual) that re-post into this same ingress, never by a second inbound path. Connector adapters live in `backend/app/services/connectors/adapters/` (one file per source: `verify` + `normalize` only); `services/connectors/entity_writers.py` is part of the vertical re-templating seam alongside the entity migration and `services/tools/entities.py`
+- All inbound connector traffic enters through the single ingest seam `services/connectors/ingest.py::ingest_payload` (raw receipt written to `events` before normalization) — the `POST /api/webhooks/{source}` route is verify-then-ingest, and poll/export/bridge-based sources are driven by the in-app connector sync loop (`services/connectors/sync.py`, a lifespan loop under `get_machine_tenant_id()` like the automations engine loops) whose runners fetch → translate → call the same `ingest_payload`; never a second inbound path. Sync cursors/channel state live in `connector_state.state`; credentials and OAuth refresh tokens live in env vars only, never in the database. Connector adapters live in `backend/app/services/connectors/adapters/` (one file per source: `verify` + `normalize` only); `services/connectors/entity_writers.py` is part of the vertical re-templating seam alongside the entity migration and `services/tools/entities.py`. External platforms are source of truth: sync is one-way inbound; outbound effects go through gated tools only (no entity write-back)
 
 **Structured data access**
 - No open-ended text-to-SQL against tables that can be written to. Client/schedule/lead writes always go through named, parameterized tools with defined inputs/outputs
@@ -57,7 +58,8 @@ See `PRD.md` for full scope, module breakdown, and success criteria. This file g
 
 **Vertical views**
 - The entity-pipeline views (Leads/Caregivers) are pattern-core, content-seam: `backend/app/services/views/` (stage configs, metrics, smart summaries) and the vertical routers/pages (`routers/leads.py`, the view's frontend pages/components) are re-templating-seam members alongside the entity migration, `services/tools/entities.py`, and the connector writers. Stage sets live in `leads.status`-style entity columns + seam config — never in new core tables
-- View pages write entities through their own human REST routes (`source_system='user'`, entity events logged per write — e.g. `lead.stage_changed` with a plain `payload.summary`); the approval gate is for agent-initiated effects, not a human clicking their own UI. Every writer that moves an entity's stage (REST route or tool handler) emits the stage-changed event so sequences and timelines see it
+- View pages write entities through their own human REST routes (`source_system='user'`, entity events logged per write — e.g. `lead.stage_changed` with a plain `payload.summary`); the approval gate is for agent-initiated effects, not a human clicking their own UI. Every writer that moves an entity's stage (REST route or tool handler) emits the stage-changed event so sequences and timelines see it. The human-UI exemption covers entity record writes only — outbound messaging triggered from a page (e.g. the M12 notify-by-SMS) still runs through `execute_tool` and its gate
+- The Schedule board (M12) is the third sanctioned vertical surface: `services/views/schedule.py` (the transition seam — the only writer of schedule state; REST routes and tool handlers both delegate) and `services/views/matching.py` (deterministic ranker; weights are in-seam constants) are re-templating-seam members. Matching stays deterministic and explainable — plain-language reasons/warnings, no LLM in the ranking
 
 **Ingestion**
 - Manual file upload and webhook/event-triggered ingestion only — no scheduled/cron-based re-ingestion pipelines
@@ -77,7 +79,7 @@ See `PRD.md` for full scope, module breakdown, and success criteria. This file g
   - ✅ **Simple** — Single-pass executable, low risk
   - ⚠️ **Medium** — May need iteration, some complexity
   - 🔴 **Complex** — Break into sub-plans before executing
-- Modules involving the MCP tool layer, the approval-gate pattern, or the automations framework (Modules 3, 5, 7, 8, 11) should default to 🔴 Complex and be broken into sub-plans rather than attempted single-pass (the matching/decision harness, formerly Module 11, is deferred to the future-plans backlog and keeps this default if revived)
+- Modules involving the MCP tool layer, the approval-gate pattern, or the automations framework (Modules 3, 5, 7, 8, 11, 12) should default to 🔴 Complex and be broken into sub-plans rather than attempted single-pass (Module 12 carries the revived scheduling/matching scope; the generic decision-harness remains in the future-plans backlog and keeps this default if revived)
 
 ## Development Flow
 
@@ -88,4 +90,4 @@ See `PRD.md` for full scope, module breakdown, and success criteria. This file g
 
 ## Progress
 
-Check `PROGRESS.md` for current module status. Update it as you complete tasks. Module numbering follows the PRD's module list (0 through 12). The Leads and Caregivers views (Modules 9–10) are the two sanctioned vertical views — their dashboard/pipeline *pattern* is core, their content (stages, sequences, scoring) belongs to the re-templating seam; business-specific views beyond those two stay out of scope for this repo.
+Check `PROGRESS.md` for current module status. Update it as you complete tasks. Module numbering follows the PRD's module list (0 through 14). The Leads and Caregivers pipeline views (Modules 9–10) and the Schedule board (Module 12) are the three sanctioned vertical surfaces — their patterns are core, their content (stages, sequences, matching weights, board semantics) belongs to the re-templating seam; business-specific views beyond those three stay out of scope for this repo.
