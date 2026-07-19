@@ -1,10 +1,8 @@
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Select } from "@/components/ui/Select";
 import { TokenField, type FieldContext } from "./FieldPicker";
 import type { JSONSchema, JSONSchemaProp } from "@/lib/api";
-
-const selectClass =
-  "h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 // Renders a JSON Schema's `properties` into form fields (string/number/boolean/
 // enum). Every text field is a token input (chips + field picker) so references are
@@ -79,18 +77,14 @@ function Field({
     return (
       <div>
         {label}
-        <select
-          className={selectClass}
+        <Select
           value={String(value ?? "")}
-          onChange={(e) => onChange(e.target.value || undefined)}
-        >
-          <option value="">—</option>
-          {prop.enum.map((opt) => (
-            <option key={opt} value={opt}>
-              {opt}
-            </option>
-          ))}
-        </select>
+          onChange={(v) => onChange(v || undefined)}
+          options={prop.enum.map((opt) => ({ value: opt, label: opt }))}
+          clearable
+          placeholder="—"
+          aria-label={name.replace(/_/g, " ")}
+        />
       </div>
     );
   }

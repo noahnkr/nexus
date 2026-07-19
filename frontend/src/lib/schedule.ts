@@ -127,11 +127,7 @@ export function weekLabel(weekStart: string): string {
   const end = new Date(start);
   end.setDate(start.getDate() + 6);
   const startStr = start.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  const endStr = end.toLocaleDateString(undefined, {
-    month: start.getMonth() === end.getMonth() ? undefined : "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  const endStr = end.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   return `${startStr} – ${endStr}`;
 }
 

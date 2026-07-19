@@ -8,12 +8,11 @@ import {
   type ScheduleCreate,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Select } from "@/components/ui/Select";
+import { TimePicker } from "@/components/ui/TimePicker";
+import { DatePicker } from "@/components/ui/DatePicker";
 import { hoursBetween } from "@/lib/schedule";
-
-const selectClass =
-  "h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 const MAX_REPEAT_WEEKS = 12;
 
@@ -181,50 +180,43 @@ export function VisitCreateDialog({
         <div className="space-y-3">
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">Client</label>
-            <select
-              className={selectClass}
+            <Select
               value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-            >
-              <option value="">Choose a client…</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+              onChange={setClientId}
+              options={clients.map((c) => ({ value: c.id, label: c.name }))}
+              placeholder="Choose a client…"
+              searchable
+              aria-label="Client"
+            />
           </div>
 
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">
               Caregiver
             </label>
-            <select
-              className={selectClass}
+            <Select
               value={resourceId}
-              onChange={(e) => setResourceId(e.target.value)}
-            >
-              <option value="">Leave unassigned → creates an open shift</option>
-              {caregivers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+              onChange={setResourceId}
+              options={caregivers.map((c) => ({ value: c.id, label: c.name }))}
+              clearable
+              searchable
+              placeholder="Leave unassigned → creates an open shift"
+              aria-label="Caregiver"
+            />
           </div>
 
           <div className="flex gap-3">
             <div className="flex-1">
               <label className="mb-1 block text-xs font-medium text-muted-foreground">Date</label>
-              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+              <DatePicker value={date} onChange={setDate} placeholder="Pick a date" />
             </div>
-            <div className="w-24">
+            <div className="w-32">
               <label className="mb-1 block text-xs font-medium text-muted-foreground">Start</label>
-              <Input type="time" value={start} onChange={(e) => setStart(e.target.value)} />
+              <TimePicker value={start} onChange={setStart} />
             </div>
-            <div className="w-24">
+            <div className="w-32">
               <label className="mb-1 block text-xs font-medium text-muted-foreground">End</label>
-              <Input type="time" value={end} onChange={(e) => setEnd(e.target.value)} />
+              <TimePicker value={end} onChange={setEnd} align="end" />
             </div>
           </div>
           {hours > 0 && (
@@ -247,10 +239,11 @@ export function VisitCreateDialog({
             <label className="mb-1 block text-xs font-medium text-muted-foreground">
               Repeat weekly until (optional)
             </label>
-            <Input
-              type="date"
+            <DatePicker
               value={repeatUntil}
-              onChange={(e) => setRepeatUntil(e.target.value)}
+              onChange={setRepeatUntil}
+              clearable
+              placeholder="No repeat"
             />
             <p className="mt-1 text-[11px] text-muted-foreground">
               Creates a weekly series through this date (up to {MAX_REPEAT_WEEKS} extra visits).

@@ -1,17 +1,16 @@
 import { Filter, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Select, type SelectOption } from "@/components/ui/Select";
 import { FieldCombobox } from "./FieldCombobox";
 import { TokenField, type FieldContext } from "./FieldPicker";
 import {
   describeCondition,
+  operatorLabel,
   OPERATORS,
   type Condition,
   type Operator,
 } from "@/lib/recipe";
 import type { FieldCatalog } from "@/lib/api";
-
-const selectClass =
-  "h-8 rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 const NO_VALUE_OPS = new Set(["exists", "not_exists"]);
 
@@ -70,17 +69,16 @@ export function ConditionChips({
             onChange={(field) => update(i, { field })}
             ctx={ctx ?? { vocabulary: null, trigger: { type: "manual" }, contextKeys: [] }}
           />
-          <select
-            className={selectClass}
+          <Select
+            className="w-44"
+            size="sm"
             value={c.op}
-            onChange={(e) => update(i, { op: e.target.value })}
-          >
-            {operators.map((op) => (
-              <option key={op} value={op}>
-                {op}
-              </option>
-            ))}
-          </select>
+            onChange={(op) => update(i, { op })}
+            options={operators.map(
+              (op): SelectOption => ({ value: op, label: operatorLabel(op) }),
+            )}
+            aria-label="Operator"
+          />
           {!NO_VALUE_OPS.has(c.op) && (
             <div className="w-52">
               <TokenField

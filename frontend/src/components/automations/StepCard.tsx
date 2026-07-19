@@ -13,10 +13,13 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Select, type SelectOption } from "@/components/ui/Select";
 import {
   delayUnit,
   describeStep,
+  eventTypeLabel,
   functionLabel,
+  isDisplayableEventType,
   isGatedTool,
   toolLabel,
   type Step,
@@ -36,8 +39,24 @@ const STEP_ICONS: Record<Step["type"], ComponentType<{ className?: string }>> = 
   wait_until: Hourglass,
 };
 
-const selectClass =
-  "h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+type DurationUnit = "minutes" | "hours" | "days";
+
+const DURATION_UNITS: SelectOption<DurationUnit>[] = [
+  { value: "minutes", label: "minutes" },
+  { value: "hours", label: "hours" },
+  { value: "days", label: "days" },
+];
+
+const UNIT_TO_MIN: Record<DurationUnit, number> = { minutes: 1, hours: 60, days: 1440 };
+
+// Split a stored minutes count into an [amount, unit] pair for the wait-until
+// timeout editor — pick the largest unit it divides evenly into. null → indefinite.
+function timeoutParts(min: number | null | undefined): { amount: number | ""; unit: DurationUnit } {
+  if (min == null) return { amount: "", unit: "minutes" };
+  if (min % 1440 === 0) return { amount: min / 1440, unit: "days" };
+  if (min % 60 === 0) return { amount: min / 60, unit: "hours" };
+  return { amount: min, unit: "minutes" };
+}
 
 export interface StepEdit {
   onChange: (step: Step) => void;
@@ -179,25 +198,24 @@ function StepEditor({ step, edit }: { step: Step; edit: StepEdit }) {
 
   if (step.type === "tool") {
     const tool = vocabulary.tools.find((t) => t.name === step.tool);
+    const safeOptions: SelectOption[] = vocabulary.tools
+      .filter((t) => t.safe)
+      .map((t) => ({ value: t.name, label: t.label }));
+    const gatedOptions: SelectOption[] = vocabulary.tools
+      .filter((t) => !t.safe)
+      .map((t) => ({ value: t.name, label: t.label }));
     return (
       <div className="space-y-2.5">
-        <select
-          className={selectClass}
+        <Select
           value={step.tool ?? ""}
-          onChange={(e) => onChange({ ...step, tool: e.target.value, input: {} })}
-        >
-          <option value="">select an action…</option>
-          <optgroup label="Safe">
-            {vocabulary.tools.filter((t) => t.safe).map((t) => (
-              <option key={t.name} value={t.name}>{t.label}</option>
-            ))}
-          </optgroup>
-          <optgroup label="Requires approval">
-            {vocabulary.tools.filter((t) => !t.safe).map((t) => (
-              <option key={t.name} value={t.name}>{t.label}</option>
-            ))}
-          </optgroup>
-        </select>
+          onChange={(v) => onChange({ ...step, tool: v, input: {} })}
+          groups={[
+            { label: "Safe", options: safeOptions },
+            { label: "Requires approval", icon: ShieldAlert, options: gatedOptions },
+          ]}
+          placeholder="select an action…"
+          aria-label="Action"
+        />
         {tool && (
           <SchemaForm
             schema={tool.input_schema}
@@ -228,17 +246,13 @@ function StepEditor({ step, edit }: { step: Step; edit: StepEdit }) {
           onChange={(e) => setDelay(unit, Math.max(1, Number(e.target.value) || 1))}
           className="w-24"
         />
-        <select
-          className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+        <Select<DurationUnit>
+          className="w-32"
           value={unit}
-          onChange={(e) =>
-            setDelay(e.target.value as "minutes" | "hours" | "days", amount || 1)
-          }
-        >
-          <option value="minutes">minutes</option>
-          <option value="hours">hours</option>
-          <option value="days">days</option>
-        </select>
+          onChange={(v) => setDelay(v, amount || 1)}
+          options={DURATION_UNITS}
+          aria-label="Delay unit"
+        />
       </div>
     );
   }
@@ -264,16 +278,16 @@ function StepEditor({ step, edit }: { step: Step; edit: StepEdit }) {
     const fn = vocabulary.functions.find((f) => f.name === step.function);
     return (
       <div className="space-y-2.5">
-        <select
-          className={selectClass}
+        <Select
           value={step.function ?? ""}
-          onChange={(e) => onChange({ ...step, function: e.target.value, args: {} })}
-        >
-          <option value="">select a computation…</option>
-          {vocabulary.functions.map((f) => (
-            <option key={f.name} value={f.name}>{functionLabel(f.name)}</option>
-          ))}
-        </select>
+          onChange={(v) => onChange({ ...step, function: v, args: {} })}
+          options={vocabulary.functions.map((f) => ({
+            value: f.name,
+            label: functionLabel(f.name),
+          }))}
+          placeholder="select a computation…"
+          aria-label="Computation"
+        />
         {fn && (
           <SchemaForm
             schema={fn.input_schema}
@@ -294,16 +308,16 @@ function StepEditor({ step, edit }: { step: Step; edit: StepEdit }) {
           <label className="mb-1 block text-xs font-medium text-muted-foreground">
             Wait until this event happens
           </label>
-          <select
-            className={selectClass}
+          <Select
             value={step.event_type ?? ""}
-            onChange={(e) => onChange({ ...step, event_type: e.target.value })}
-          >
-            <option value="">select event…</option>
-            {vocabulary.triggers.event_types.map((et) => (
-              <option key={et} value={et}>{et}</option>
-            ))}
-          </select>
+            onChange={(v) => onChange({ ...step, event_type: v })}
+            options={vocabulary.triggers.event_types
+              .filter(isDisplayableEventType)
+              .map((et) => ({ value: et, label: eventTypeLabel(et), mono: et }))}
+            placeholder="select event…"
+            searchable
+            aria-label="Wait-until event"
+          />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-muted-foreground">
@@ -319,21 +333,11 @@ function StepEditor({ step, edit }: { step: Step; edit: StepEdit }) {
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-muted-foreground">
-            Give up after (minutes) — leave blank to wait indefinitely
+            Give up after — leave blank to wait indefinitely
           </label>
-          <Input
-            type="number"
-            min={1}
-            value={step.timeout_minutes ?? ""}
-            onChange={(e) => {
-              const n = Number(e.target.value);
-              onChange({
-                ...step,
-                timeout_minutes: e.target.value && n >= 1 ? n : null,
-              });
-            }}
-            placeholder="no timeout"
-            className="w-40"
+          <TimeoutField
+            minutes={step.timeout_minutes}
+            onChange={(timeout_minutes) => onChange({ ...step, timeout_minutes })}
           />
         </div>
       </div>
@@ -363,14 +367,16 @@ function StepEditor({ step, edit }: { step: Step; edit: StepEdit }) {
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">Model</label>
-            <select
-              className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+            <Select<"default" | "fast">
+              className="w-52"
               value={step.model ?? "default"}
-              onChange={(e) => onChange({ ...step, model: e.target.value as "default" | "fast" })}
-            >
-              <option value="default">default (higher quality)</option>
-              <option value="fast">fast (cheaper)</option>
-            </select>
+              onChange={(v) => onChange({ ...step, model: v })}
+              options={[
+                { value: "default", label: "default (higher quality)" },
+                { value: "fast", label: "fast (cheaper)" },
+              ]}
+              aria-label="Model"
+            />
           </div>
         </div>
       </div>
@@ -401,6 +407,42 @@ function SaveAsField({
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value.trim() || undefined)}
         placeholder="e.g. message"
+      />
+    </div>
+  );
+}
+
+// The wait-until timeout, authored like the delay step: an integer + a unit,
+// stored as minutes. Blank amount = wait indefinitely (null).
+function TimeoutField({
+  minutes,
+  onChange,
+}: {
+  minutes: number | null | undefined;
+  onChange: (minutes: number | null) => void;
+}) {
+  const { amount, unit } = timeoutParts(minutes);
+  const emit = (nextAmount: number | "", nextUnit: DurationUnit) =>
+    onChange(nextAmount === "" ? null : nextAmount * UNIT_TO_MIN[nextUnit]);
+  return (
+    <div className="flex items-center gap-2">
+      <Input
+        type="number"
+        min={1}
+        value={amount === "" ? "" : String(amount)}
+        onChange={(e) => {
+          const raw = e.target.value;
+          emit(raw === "" ? "" : Math.max(1, Number(raw) || 1), unit);
+        }}
+        placeholder="no timeout"
+        className="w-24"
+      />
+      <Select<DurationUnit>
+        className="w-32"
+        value={unit}
+        onChange={(v) => emit(amount, v)}
+        options={DURATION_UNITS}
+        aria-label="Timeout unit"
       />
     </div>
   );

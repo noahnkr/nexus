@@ -377,3 +377,13 @@ def test_vocabulary():
         f["path"] == "trigger.payload.summary"
         for f in fc["payload_by_event"]["lead.created"]
     )
+
+    # --- Module 13 (Task 2): the catalog the builder's IF dropdown reads is
+    # populated end-to-end. The reported "no fields appear" bug is a frontend
+    # rendering gap (FieldCombobox short-circuiting on hint-only groups), not a
+    # missing backend catalog — these guard the shape fieldGroups() depends on. ---
+    assert len(fc["trigger_fields"]) >= 5
+    assert fc["entities"]["lead"]["fields"]  # the mapped record group is non-empty
+    lead_payload_paths = {f["path"] for f in fc["payload_by_event"]["lead.created"]}
+    assert "trigger.payload.summary" in lead_payload_paths
+    assert fc["event_entity"]["lead.created"] == "lead"

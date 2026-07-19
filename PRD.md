@@ -451,6 +451,7 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 * Additional automation calculation functions (brainstormed at M11 planning, not built): `count_events` (entity engagement counts), `calculate` (binary arithmetic), `tier` (threshold → label bucketing), `hours_between`.
 * Score persistence/display (M11 kept scores context-only by user decision): score column + profile/directory badges if a real need appears.
 * Settings View
+* Task drafting/modifications inside the task drawer i.e., emails and sms. Remove technical detail dropdown and render data cleanly. Also dot inbetween View history and Originating event is not centered.
 * Content generation and output files e.g., formatted dynamic care plan
 * Stop / cancel streaming. Abort chat strea mid rresponse. Also fix send button positioning and text box. Button height does not match text input and text input not centered.
 * Sidebar collapse to icons

@@ -1,4 +1,7 @@
 import { cn } from "@/lib/utils";
+import { Select, type SelectOption } from "@/components/ui/Select";
+import { PRIORITY_DOT } from "./TaskCard";
+import type { TaskPriority } from "@/lib/api";
 
 // Status tabs map to the API's comma-separated `status` param. "Open" is the
 // default working view (pending + in_progress); "All" clears the status filter.
@@ -9,10 +12,13 @@ export const STATUS_TABS = [
   { key: "all", label: "All", status: "" },
 ] as const;
 
-const PRIORITIES = ["low", "normal", "high", "urgent"] as const;
+const PRIORITIES: TaskPriority[] = ["low", "normal", "high", "urgent"];
 
-const selectClass =
-  "h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+const PRIORITY_OPTIONS: SelectOption[] = PRIORITIES.map((p) => ({
+  value: p,
+  label: p,
+  dot: PRIORITY_DOT[p],
+}));
 
 export function TaskFilters({
   status,
@@ -47,18 +53,15 @@ export function TaskFilters({
         })}
       </div>
 
-      <select
-        className={selectClass}
+      <Select
+        className="w-44"
         value={priority}
-        onChange={(e) => onPriorityChange(e.target.value)}
-      >
-        <option value="">All priorities</option>
-        {PRIORITIES.map((p) => (
-          <option key={p} value={p}>
-            {p}
-          </option>
-        ))}
-      </select>
+        onChange={onPriorityChange}
+        options={PRIORITY_OPTIONS}
+        clearable
+        placeholder="All priorities"
+        aria-label="Priority filter"
+      />
     </div>
   );
 }

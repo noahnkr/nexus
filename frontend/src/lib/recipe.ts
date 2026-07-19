@@ -130,6 +130,77 @@ export function humanizeEventType(eventType: string | undefined): string {
   return `a ${noun} ${phrase}`;
 }
 
+// Plain-language event-type labels for the trigger dropdown (Module 13). A curated
+// map for the core-known types, with a humanized fallback for anything else
+// (`applicant.stage_changed` → "Applicant stage changed", `visit.checked_in` →
+// "Visit checked in"). Like M11's tokens, this is a *view* — the recipe JSON and the
+// vocabulary endpoint still carry the raw `entity.verb` type, shown as mono
+// secondary text beside the label.
+export const EVENT_TYPE_LABELS: Record<string, string> = {
+  "lead.created": "Lead created",
+  "lead.updated": "Lead updated",
+  "lead.stage_changed": "Lead stage changed",
+  "applicant.created": "Applicant created",
+  "applicant.updated": "Applicant updated",
+  "applicant.stage_changed": "Applicant stage changed",
+  "client.created": "Client created",
+  "client.updated": "Client updated",
+  "schedule.created": "Visit scheduled",
+  "schedule.updated": "Visit updated",
+  "schedule.cancelled": "Visit cancelled",
+  "sms.received": "Text message received",
+  "email.received": "Email received",
+  "call.received": "Call received",
+};
+
+// Test/dummy noise that leaked into the observed event/source facets from test
+// runs (the events table is the source of the vocabulary's observed types). These
+// are never real triggers, so the builder and filters hide them — a display filter,
+// not a semantic interpretation of vertical names.
+const JUNK_PREFIXES = new Set([
+  "test", "evtest", "vocab", "dummy", "example", "sample", "foo", "bar", "await", "other",
+]);
+
+// A leading segment (before the first ".") in the denylist, or a segment that is a
+// bare junk token, hides the type/source. "await.a.b", "evtest.x", "test" → hidden.
+export function isDisplayableEventType(eventType: string): boolean {
+  const head = eventType.split(".")[0]?.toLowerCase() ?? "";
+  return Boolean(head) && !JUNK_PREFIXES.has(head);
+}
+
+export function isDisplayableSource(source: string): boolean {
+  return !JUNK_PREFIXES.has(source.split(".")[0]?.toLowerCase() ?? "");
+}
+
+export function eventTypeLabel(eventType: string | undefined): string {
+  if (!eventType) return "an event";
+  const curated = EVENT_TYPE_LABELS[eventType];
+  if (curated) return curated;
+  // Humanize: "applicant.stage_changed" -> "Applicant stage changed".
+  const words = eventType.replace(/\./g, " ").replace(/_/g, " ").trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : eventType;
+}
+
+// Plain-language operator labels for the condition builder's operator dropdown
+// (Module 13). Mirrors OP_PHRASES (the read-mode symbols) but spelled out for the
+// edit UI where the user is choosing, not scanning. Unknown ops fall back to raw.
+export const OPERATOR_LABELS: Record<string, string> = {
+  eq: "is",
+  neq: "is not",
+  gt: "is greater than",
+  gte: "is greater than or equal to",
+  lt: "is less than",
+  lte: "is less than or equal to",
+  contains: "contains",
+  not_contains: "does not contain",
+  exists: "has a value",
+  not_exists: "is empty",
+};
+
+export function operatorLabel(op: string): string {
+  return OPERATOR_LABELS[op] ?? op.replace(/_/g, " ");
+}
+
 export function describeTrigger(trigger: Trigger): string {
   if (trigger.type === "event") {
     const from = trigger.source_system ? ` from ${sourceLabel(trigger.source_system)}` : "";

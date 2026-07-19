@@ -82,6 +82,23 @@ export function AutomationBuilderPage() {
 
   const mark = () => setDirty(true);
 
+  // Entry conditions only apply to event triggers (cron/manual runs have no
+  // trigger/record to test), so switching away from an event clears them — with a
+  // confirm, the applyDraft precedent, so saved conditions aren't lost silently.
+  const onTriggerChange = (t: Trigger) => {
+    if (trigger.type === "event" && t.type !== "event" && conditions.length > 0) {
+      if (
+        !window.confirm(
+          "Entry conditions only apply to event triggers. Switching to a schedule or manual trigger will remove them. Continue?",
+        )
+      )
+        return;
+      setConditions([]);
+    }
+    setTrigger(t);
+    mark();
+  };
+
   const applyDraft = useCallback(
     (d: AutomationDraft) => {
       if (dirty && !window.confirm("Replace the current draft with the AI draft?")) return;
@@ -245,13 +262,38 @@ export function AutomationBuilderPage() {
             <TriggerSentence
               trigger={trigger}
               vocabulary={vocab}
-              onChange={(t) => { setTrigger(t); mark(); }}
+              onChange={onTriggerChange}
             />
-            <ConditionChips
-              conditions={conditions}
-              ctx={{ vocabulary: vocab, trigger, contextKeys: [] }}
-              onChange={(c) => { setConditions(c); mark(); }}
-            />
+            {trigger.type === "event" ? (
+              <ConditionChips
+                conditions={conditions}
+                ctx={{ vocabulary: vocab, trigger, contextKeys: [] }}
+                onChange={(c) => { setConditions(c); mark(); }}
+              />
+            ) : conditions.length > 0 ? (
+              // Edit-mode exception: a saved non-event automation that already has
+              // entry conditions — show them (with a warning) rather than hiding data.
+              <div className="space-y-2">
+                <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/5 p-2.5 text-[12px]">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+                  <span className="text-muted-foreground">
+                    These entry conditions only run when an event starts the automation. This
+                    trigger isn't an event, so they're ignored — switch the trigger back to an
+                    event, or remove them.
+                  </span>
+                </div>
+                <ConditionChips
+                  conditions={conditions}
+                  ctx={{ vocabulary: vocab, trigger, contextKeys: [] }}
+                  onChange={(c) => { setConditions(c); mark(); }}
+                />
+              </div>
+            ) : (
+              <p className="text-[13px] text-muted-foreground">
+                Conditions apply when an event starts the run — scheduled and manual runs go
+                straight to the steps.
+              </p>
+            )}
           </div>
 
           {/* THEN */}

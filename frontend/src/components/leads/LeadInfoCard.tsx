@@ -2,12 +2,10 @@ import { useState } from "react";
 import { ChevronDown, ChevronRight, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/Select";
 import { Card, CardContent } from "@/components/ui/card";
 import { StageSelect } from "@/components/leads/StageSelect";
 import type { Lead, LeadFacets, LeadPatch, LeadStatus } from "@/lib/api";
-
-const selectClass =
-  "h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 function Field({ label, value }: { label: string; value: string | null }) {
   return (
@@ -107,18 +105,14 @@ export function LeadInfoCard({
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-muted-foreground">Region</label>
-                <select
-                  className={selectClass}
+                <Select
                   value={regionId}
-                  onChange={(e) => setRegionId(e.target.value)}
-                >
-                  <option value="">No region</option>
-                  {facets.regions.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name}
-                    </option>
-                  ))}
-                </select>
+                  onChange={setRegionId}
+                  options={facets.regions.map((r) => ({ value: r.id, label: r.name }))}
+                  clearable
+                  placeholder="No region"
+                  aria-label="Region"
+                />
               </div>
             </div>
             <div className="flex justify-end gap-2">

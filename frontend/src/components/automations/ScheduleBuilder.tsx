@@ -2,6 +2,8 @@
 // expression, replacing the raw cron string + next-dates preview. The server still
 // validates the expression (recipe.py `_validate_cron`) and schedules on it
 // (`next_fire`); this is purely a friendlier way to author the common shapes.
+import { Select, type SelectOption } from "@/components/ui/Select";
+import { TimePicker } from "@/components/ui/TimePicker";
 
 type Freq = "hourly" | "daily" | "weekday" | "weekly" | "monthly";
 
@@ -15,17 +17,7 @@ interface Schedule {
 
 const DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MINUTES = Array.from({ length: 12 }, (_, i) => i * 5); // 0,5,…,55
-const HOURS = Array.from({ length: 24 }, (_, i) => i);
 const DOMS = Array.from({ length: 28 }, (_, i) => i + 1); // 1..28 (safe every month)
-
-const selectClass =
-  "h-9 rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
-
-function hourLabel(h: number): string {
-  const period = h < 12 ? "AM" : "PM";
-  const twelve = h % 12 === 0 ? 12 : h % 12;
-  return `${twelve} ${period}`;
-}
 
 function pad(n: number): string {
   return String(n).padStart(2, "0");
@@ -70,6 +62,18 @@ function parseCron(expr: string): Schedule {
   return { ...base, freq: "daily" };
 }
 
+const FREQ_OPTIONS: SelectOption<Freq>[] = [
+  { value: "hourly", label: "Every hour" },
+  { value: "daily", label: "Every day" },
+  { value: "weekday", label: "Every weekday" },
+  { value: "weekly", label: "Every week" },
+  { value: "monthly", label: "Every month" },
+];
+
+const DOW_OPTIONS: SelectOption[] = DOW.map((d, i) => ({ value: String(i), label: d }));
+const DOM_OPTIONS: SelectOption[] = DOMS.map((d) => ({ value: String(d), label: String(d) }));
+const MINUTE_OPTIONS: SelectOption[] = MINUTES.map((m) => ({ value: String(m), label: `:${pad(m)}` }));
+
 export function ScheduleBuilder({
   expression,
   onChange,
@@ -82,82 +86,67 @@ export function ScheduleBuilder({
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <select
-        className={selectClass}
+      <Select
+        className="w-36"
+        size="sm"
         value={s.freq}
-        onChange={(e) => emit({ freq: e.target.value as Freq })}
-      >
-        <option value="hourly">Every hour</option>
-        <option value="daily">Every day</option>
-        <option value="weekday">Every weekday</option>
-        <option value="weekly">Every week</option>
-        <option value="monthly">Every month</option>
-      </select>
+        onChange={(v) => emit({ freq: v })}
+        options={FREQ_OPTIONS}
+        aria-label="Frequency"
+      />
 
       {s.freq === "weekly" && (
         <>
           <span className="text-muted-foreground">on</span>
-          <select
-            className={selectClass}
-            value={s.dow}
-            onChange={(e) => emit({ dow: Number(e.target.value) })}
-          >
-            {DOW.map((d, i) => (
-              <option key={d} value={i}>{d}</option>
-            ))}
-          </select>
+          <Select
+            className="w-36"
+            size="sm"
+            value={String(s.dow)}
+            onChange={(v) => emit({ dow: Number(v) })}
+            options={DOW_OPTIONS}
+            aria-label="Day of week"
+          />
         </>
       )}
 
       {s.freq === "monthly" && (
         <>
           <span className="text-muted-foreground">on day</span>
-          <select
-            className={selectClass}
-            value={s.dom}
-            onChange={(e) => emit({ dom: Number(e.target.value) })}
-          >
-            {DOMS.map((d) => (
-              <option key={d} value={d}>{d}</option>
-            ))}
-          </select>
+          <Select
+            className="w-20"
+            size="sm"
+            value={String(s.dom)}
+            onChange={(v) => emit({ dom: Number(v) })}
+            options={DOM_OPTIONS}
+            aria-label="Day of month"
+          />
         </>
       )}
 
       {s.freq === "hourly" ? (
         <>
           <span className="text-muted-foreground">at minute</span>
-          <select
-            className={selectClass}
-            value={s.minute}
-            onChange={(e) => emit({ minute: Number(e.target.value) })}
-          >
-            {MINUTES.map((m) => (
-              <option key={m} value={m}>:{pad(m)}</option>
-            ))}
-          </select>
+          <Select
+            className="w-20"
+            size="sm"
+            value={String(s.minute)}
+            onChange={(v) => emit({ minute: Number(v) })}
+            options={MINUTE_OPTIONS}
+            aria-label="Minute"
+          />
         </>
       ) : (
         <>
           <span className="text-muted-foreground">at</span>
-          <select
-            className={selectClass}
-            value={s.hour}
-            onChange={(e) => emit({ hour: Number(e.target.value) })}
-          >
-            {HOURS.map((h) => (
-              <option key={h} value={h}>{hourLabel(h)}</option>
-            ))}
-          </select>
-          <select
-            className={selectClass}
-            value={s.minute}
-            onChange={(e) => emit({ minute: Number(e.target.value) })}
-          >
-            {MINUTES.map((m) => (
-              <option key={m} value={m}>:{pad(m)}</option>
-            ))}
-          </select>
+          <div className="w-36">
+            <TimePicker
+              value={`${pad(s.hour)}:${pad(s.minute)}`}
+              onChange={(v) => {
+                const [h, m] = v.split(":");
+                emit({ hour: Number(h), minute: Number(m) });
+              }}
+            />
+          </div>
         </>
       )}
     </div>
