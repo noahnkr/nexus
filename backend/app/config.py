@@ -60,6 +60,23 @@ class Settings(BaseSettings):
     nexus_automations_poll_seconds: float = 5
     nexus_automations_stale_minutes: int = 10
 
+    # Connector sync loop (Module 18). The in-process poller for sources with no
+    # webhooks (WelcomeHome export API today). Mirrors the automations-loop flags:
+    #   enabled=false disables the loop entirely (webhook ingress is unaffected);
+    #   poll_seconds is the cycle interval. A runner is active only when its own
+    #   credentials are configured, so an unset key simply means "no runner".
+    nexus_connectors_enabled: bool = True
+    nexus_connectors_poll_seconds: float = 120
+
+    # WelcomeHome CRM (Module 18a). Unset key ⇒ the WH runner never registers.
+    # community_id "all" spans every community on the account (the single-community
+    # deployment can leave it as-is). backfill_since bounds the one-time Activities
+    # import so an operator can skip ancient history.
+    welcomehome_api_key: str = ""
+    welcomehome_base_url: str = "https://crm.welcomehomesoftware.com"
+    welcomehome_community_id: str = "all"
+    welcomehome_backfill_since: str = ""
+
     # LangSmith — no-ops gracefully when the key is unset.
     langsmith_tracing: str = ""
     langsmith_api_key: str = ""
