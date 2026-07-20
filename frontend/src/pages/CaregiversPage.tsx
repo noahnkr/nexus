@@ -56,7 +56,10 @@ export function CaregiversPage() {
       />
 
       <div className="border-b px-4 sm:px-6">
-        <div className="flex gap-1 overflow-x-auto">
+        {/* overflow-y-hidden is load-bearing: setting overflow-x makes overflow-y
+            compute to `auto`, and the tabs' -mb-px overhang is enough to raise a
+            vertical scrollbar. */}
+        <div className="flex gap-1 overflow-x-auto overflow-y-hidden">
           {TABS.map((t) => (
             <button
               key={t.id}
