@@ -21,6 +21,16 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+// The name to greet someone by: the display name they set in Settings, falling
+// back to the local part of their email, then a neutral "there". Settings writes
+// it to Supabase `user_metadata.display_name`, so it rides the session — no fetch.
+export function displayName(session: Session | null): string {
+  const meta = session?.user?.user_metadata as Record<string, unknown> | undefined;
+  const name = typeof meta?.display_name === "string" ? meta.display_name.trim() : "";
+  if (name) return name;
+  return (session?.user?.email ?? "").split("@")[0] || "there";
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
