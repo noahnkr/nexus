@@ -55,15 +55,15 @@ See `PRD.md` for full scope, module breakdown, and success criteria. This file g
 - Automation functions (`services/automations/functions.py` registry) are safe-by-definition pure computations — anything with external effect must be a *tool*, never a function; vertical functions (e.g. scoring) register into this seam without core changes, and `services/automations/entities.py` is the vertical entity-lookup seam alongside the other re-templating files
 - The engine loops (event dispatcher, cron, waker, recovery) run in-process in the FastAPI lifespan under `get_machine_tenant_id()`; the events dispatcher never re-dispatches events with `source_system='automation'` (automations must not trigger automations — the same rule extends to the tool layer: `run_automation` only starts manual-trigger automations and refuses calls with `source_system='automation'`); the default concurrency rule is one active run per (automation, entity)
 - Agent-drafted recipes are never persisted directly — drafting endpoints return unsaved, validated drafts for human review in a builder; the standard validated create path is the only writer of `automations` rows
-- Pipeline-view stage sequences (M9–10) are ordinary automations tagged via the core `automations.binding` jsonb (`{"view": …, "stage": …}`; one per (tenant, view, stage) via partial unique index) — core validates binding *shape* only and never interprets vertical stage names; no parallel linkage tables, no second execution path
+- Pipeline-view stage sequences are ordinary automations tagged via the core `automations.binding` jsonb (`{"view": …, "stage": …}`; one per (tenant, view, stage) via partial unique index) — core validates binding *shape* only and never interprets vertical stage names; no parallel linkage tables, no second execution path
 
 **Vertical views**
 - The entity-pipeline views (Leads/Caregivers) are pattern-core, content-seam: `backend/app/services/views/` (stage configs, metrics, smart summaries) and the vertical routers/pages (`routers/leads.py`, the view's frontend pages/components) are re-templating-seam members alongside the entity migration, `services/tools/entities.py`, and the connector writers. Stage sets live in `leads.status`-style entity columns + seam config — never in new core tables
-- View pages write entities through their own human REST routes (`source_system='user'`, entity events logged per write — e.g. `lead.stage_changed` with a plain `payload.summary`); the approval gate is for agent-initiated effects, not a human clicking their own UI. Every writer that moves an entity's stage (REST route or tool handler) emits the stage-changed event so sequences and timelines see it. The human-UI exemption covers entity record writes only — outbound messaging triggered from a page (e.g. the M12 notify-by-SMS) still runs through `execute_tool` and its gate
-- The Schedule board (M12) is the third sanctioned vertical surface: `services/views/schedule.py` (the transition seam — the only writer of schedule state; REST routes, tool handlers, and the M18 connector sync writers all delegate) and `services/views/matching.py` (deterministic ranker; weights are in-seam constants) are re-templating-seam members. Matching stays deterministic and explainable — plain-language reasons/warnings, no LLM in the ranking
-- The Clients view (M15) is the fourth sanctioned vertical surface: `services/views/clients.py` (status transitions via the single `change_status` writer, census math, EVV read-time flags) and `routers/clients.py` are re-templating-seam members. Census/hours numbers are deterministic seam SQL — no LLM near the metrics; EVV late/missed flags are computed at read time from rule constants, never stored or written by a detector loop
-- The Referrals dashboard (M16) rides the Leads surface (not a fifth surface): `services/views/referrals.py` + `routers/referrals.py` are seam members. Referral partners are enrichment-by-name over the free-text `leads.source` (exact match, no FK, no backfill) — lead write paths and connector adapters never link to partner rows, they just keep writing source strings
-- The workforce Roster (M17) rides the Caregivers surface: `services/views/workforce.py` + `routers/workforce.py` are seam members. Credentials are dated rows per (caregiver, qualification) layered over the undated `qualifications` vocabulary — `resources.qualification_ids` stays the matching input, and credential expiry status is derived at read time from in-seam constants (no stored status, no detector loop). Resources with `status='inactive'` are excluded from matching candidates and the schedule board; the Roster tab is the one surface that lists everyone
+- View pages write entities through their own human REST routes (`source_system='user'`, entity events logged per write — e.g. `lead.stage_changed` with a plain `payload.summary`); the approval gate is for agent-initiated effects, not a human clicking their own UI. Every writer that moves an entity's stage (REST route or tool handler) emits the stage-changed event so sequences and timelines see it. The human-UI exemption covers entity record writes only — outbound messaging triggered from a page (e.g. the schedule board's notify-by-SMS) still runs through `execute_tool` and its gate
+- The Schedule board is the third sanctioned vertical surface: `services/views/schedule.py` (the transition seam — the only writer of schedule state; REST routes, tool handlers, and the connector sync writers all delegate) and `services/views/matching.py` (deterministic ranker; weights are in-seam constants) are re-templating-seam members. Matching stays deterministic and explainable — plain-language reasons/warnings, no LLM in the ranking
+- The Clients view is the fourth sanctioned vertical surface: `services/views/clients.py` (status transitions via the single `change_status` writer, census math, EVV read-time flags) and `routers/clients.py` are re-templating-seam members. Census/hours numbers are deterministic seam SQL — no LLM near the metrics; EVV late/missed flags are computed at read time from rule constants, never stored or written by a detector loop
+- The Referrals dashboard rides the Leads surface (not a fifth surface): `services/views/referrals.py` + `routers/referrals.py` are seam members. Referral partners are enrichment-by-name over the free-text `leads.source` (exact match, no FK, no backfill) — lead write paths and connector adapters never link to partner rows, they just keep writing source strings
+- The workforce Roster rides the Caregivers surface: `services/views/workforce.py` + `routers/workforce.py` are seam members. Credentials are dated rows per (caregiver, qualification) layered over the undated `qualifications` vocabulary — `resources.qualification_ids` stays the matching input, and credential expiry status is derived at read time from in-seam constants (no stored status, no detector loop). Resources with `status='inactive'` are excluded from matching candidates and the schedule board; the Roster tab is the one surface that lists everyone
 
 **Ingestion**
 - Manual file upload and webhook/event-triggered ingestion only — no scheduled/cron-based re-ingestion pipelines
@@ -75,8 +75,8 @@ See `PRD.md` for full scope, module breakdown, and success criteria. This file g
 
 ## Planning
 
-- Save all plans to `.agent/plans/` folder
-- Naming convention: `{sequence}.{plan-name}.md` (e.g., `0.canonical-data-model.md`, `1.foundation-chat-ingestion.md`)
+- Save all plans to `.claude/plans/`, one per version
+- Naming convention: `vX.Y.Z-{name}.md` (e.g. `v1.0.0-welcomehome-sync.md`, `v1.2.0-wellsky-sync.md`)
 - Plans should be detailed enough to execute without ambiguity
 - Each task in the plan must include at least one validation test to verify it works
 - Assess complexity and single-pass feasibility — can an agent realistically complete this in one go?
@@ -84,15 +84,22 @@ See `PRD.md` for full scope, module breakdown, and success criteria. This file g
   - ✅ **Simple** — Single-pass executable, low risk
   - ⚠️ **Medium** — May need iteration, some complexity
   - 🔴 **Complex** — Break into sub-plans before executing
-- Modules involving the MCP tool layer, the approval-gate pattern, or the automations framework (Modules 3, 5, 7, 8, 11, 12, 15, 17, 18) should default to 🔴 Complex and be broken into sub-plans rather than attempted single-pass (Module 12 carries the revived scheduling/matching scope; the generic decision-harness remains in the future-plans backlog and keeps this default if revived)
+- Versions touching the MCP tool layer, the approval-gate pattern, or the automations framework default to 🔴 Complex and should be broken into ordered sub-parts rather than attempted single-pass
 
-## Development Flow
+## Versioning & Workflow
 
-1. **Plan** — Create a detailed plan and save it to `.agent/plans/`
-2. **Build** — Execute the plan to implement the feature
-3. **Validate** — Test and verify the implementation works correctly. Use browser testing where applicable via an appropriate MCP. For agent/tool-calling features, verify the LangSmith trace shows the expected step sequence, not just the final output
-4. **Iterate** — Fix any issues found during validation
+Semantic versioning **by impact** (see `ROADMAP.md`): **minor** = a new capability/subsystem, **patch** = a tweak/fix to an existing one, **major** = a re-template or breaking change. Two rules: **build order = version order** (never build a later version before an earlier one), and **ideas get routed before they get built** (a new idea lands in the roadmap's backlog or a version slot, never straight into the code).
 
-## Progress
+The lifecycle is encoded as commands — use them rather than reinventing the flow:
 
-Releases are versioned: each completed module is one minor release (Module N → v0.N+1.0; the connectors module, 18, ships as v1.0.0). Check `PROGRESS.md` for the current release's task status and update it as work completes; shipped history lives in `CHANGELOG.md` (append a release entry there when a module completes — never rewrite past entries). Module numbering follows the PRD's module list (final renumbering 2026-07-20: connectors last as Module 18). The Leads and Caregivers pipeline views (Modules 9–10), the Schedule board (Module 12), and the Clients view (Module 15) are the four sanctioned vertical surfaces (the M16 Referrals dashboard rides the Leads surface; the M17 workforce Roster rides the Caregivers surface) — their patterns are core, their content (stages, sequences, matching weights, board semantics, census/EVV rules, referral metrics, credential/utilization rules) belongs to the re-templating seam; business-specific views beyond those stay out of scope for this repo.
+1. **`/idea`** — capture a feature/fix and route it to the right version (or backlog) in `ROADMAP.md`, in dependency order. Never starts building.
+2. **`/plan`** — plan the next version (top of the roadmap's _Planned_ list): explore → clarify → write `.claude/plans/vX.Y.Z-*.md` → sync docs.
+3. **`/build`** — execute the current version's plan top-to-bottom, ticking `PROGRESS.md`, running every validation (incl. the LangSmith trace for agent/tool work).
+4. **`/tweak`** — a small patch-version change without a full plan.
+5. **`/document`** — after a green build, ship the version: append to `CHANGELOG.md` (high-level, never rewrite past entries), move it to _Shipped_ in `ROADMAP.md`, advance `PROGRESS.md`.
+
+The four docs have distinct jobs: `ROADMAP.md` = ordered versions + backlog (what's next) · `PROGRESS.md` = the active build board (task checkboxes) · `CHANGELOG.md` = shipped history (high-level) · `PRD.md` = the component/architecture reference (not a build timeline).
+
+## Vertical surfaces
+
+The Leads and Caregivers pipeline views, the Schedule board, and the Clients view are the four sanctioned vertical surfaces (the Referrals dashboard rides the Leads surface; the workforce Roster rides the Caregivers surface) — their patterns are core, their content (stages, sequences, matching weights, board semantics, census/EVV rules, referral metrics, credential/utilization rules) belongs to the re-templating seam; business-specific views beyond those stay out of scope for this repo.
