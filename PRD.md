@@ -63,11 +63,10 @@ The Leads and Caregivers views (interfaces #7–8) are the first *vertical* view
 - ❌ Multi-tenant **admin tooling** (schema is tenant-aware; building UI/workflows to provision and manage *multiple* live tenant businesses is deferred until after this client is validated)
 - ❌ Billing/payments
 - ❌ Scheduled/automated ingestion (cron-based re-scans); ingestion is manual-upload or event-triggered only
-- ❌ Admin UI (configuration via env vars and direct DB access for this phase)
 - ❌ Open-ended text-to-SQL against state-changing tables (client/schedule writes always go through parameterized tools, never generated SQL)
 - ❌ PDF bounding-box citation grounding
 - ❌ Full HIPAA compliance certification (system is designed with audit logging, access control, and data-flow discipline in mind, but formal compliance review/BAA execution is a separate legal/business workstream, not an engineering deliverable of this PRD)
-- ❌ Business-specific plugin views **beyond the Leads and Caregivers views** (e.g., a caregiver scheduler) — the two in-scope views validate the core entity-dashboard/pipeline pattern; anything further is built and scoped separately, per client, once the core here is validated; keeping the rest out of this PRD is what keeps the core templatable
+
 
 ## Stack
 
@@ -537,7 +536,6 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 ## Subsequent Modules (summary)
 
-All summarized modules have been promoted to full sections (Modules 0–18 above). Remaining ideas live in Future Plans below.
 
 ### Future Plans
 * Retention / at-risk view — rule-based flags (declining hours vs 4-week average, repeated no-shows, short tenure via a new `hire_date`) on the roster; deferred from Module 18 (user decision 2026-07-19).
