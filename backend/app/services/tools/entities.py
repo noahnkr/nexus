@@ -31,6 +31,7 @@ from ..views.schedule import (
     check_out,
     create_visits,
 )
+from ..views.workforce import EXPIRING_DAYS, describe_expiry, expiring_credentials
 from .core import ToolDef, ToolInputError, ToolResult, _jsonable, current_invocation
 from .registry import register
 
@@ -359,6 +360,42 @@ async def _get_applicant(conn, args: dict) -> ToolResult:
     return ToolResult(
         f"Applicant: {applicant['name']} (stage {applicant['stage']}).",
         {"applicant": applicant},
+    )
+
+
+# ---------------------------------------------------------------------------
+# workforce compliance (Module 18)
+# ---------------------------------------------------------------------------
+async def _list_expiring_credentials(conn, args: dict) -> ToolResult:
+    """SAFE read: which active caregivers' credentials need attention. Nothing here
+    changes state, so it needs no gate — the daily digest automation calls it and
+    then creates a task, which is where the human decision lives."""
+    raw = args.get("days_ahead", EXPIRING_DAYS)
+    try:
+        days_ahead = int(raw)
+    except (ValueError, TypeError):
+        days_ahead = EXPIRING_DAYS
+    days_ahead = max(1, min(days_ahead, 365))
+
+    rows = await expiring_credentials(conn, days_ahead)
+    if not rows:
+        return ToolResult(
+            f"No credentials expire in the next {days_ahead} days.",
+            {"credentials": [], "count": 0, "days_ahead": days_ahead},
+        )
+
+    # Plain-language content line — no UUIDs, no raw dates. The digest task's
+    # description is built from exactly this text.
+    clauses = "; ".join(describe_expiry(r) for r in rows)
+    noun = "credential" if len(rows) == 1 else "credentials"
+    return ToolResult(
+        f"{len(rows)} {noun} need attention: {clauses}.",
+        {
+            "credentials": _jsonable(rows),
+            "count": len(rows),
+            "days_ahead": days_ahead,
+            "summary": clauses,
+        },
     )
 
 
@@ -1015,6 +1052,29 @@ register(ToolDef(
     handler=_list_schedules,
 ))
 
+register(ToolDef(
+    name="list_expiring_credentials",
+    description=(
+        "List caregiver credentials (CPR, TB test, background check, licenses) that "
+        "have expired or expire soon, for active caregivers only. Already-expired "
+        "credentials are always included — an expired credential can mean a "
+        "caregiver legally can't work a shift. Read-only."
+    ),
+    input_schema=_obj({
+        "days_ahead": {
+            "type": "integer",
+            "default": EXPIRING_DAYS,
+            "minimum": 1,
+            "maximum": 365,
+            "description": (
+                "How far ahead to look, in days (default 60). Values outside 1–365 "
+                "are clamped."
+            ),
+        },
+    }),
+    handler=_list_expiring_credentials,
+))
+
 
 # --- gated write tools (safe=False -> queued for human approval) --------------
 register(ToolDef(
@@ -1246,7 +1306,19 @@ client_contacts(id uuid, client_id uuid -> clients.id, name text, relationship t
 resources(id uuid, name text, phone text, email text, qualification_ids uuid[],
           region_ids uuid[], availability jsonb, address text, zip text,
           languages text[], traits text[], applicant_id uuid -> applicants.id,
-          created_at timestamptz)  -- caregivers (applicant_id set when hired from an applicant)
+          status text {active|inactive}, created_at timestamptz)
+          -- caregivers (applicant_id set when hired from an applicant). An
+          -- 'inactive' caregiver is excluded from matching and the schedule board;
+          -- filter `status = 'active'` for anything about who can work today.
+resource_credentials(id uuid, resource_id uuid -> resources.id,
+                     qualification_id uuid -> qualifications.id,
+                     issued_at date, expires_at date (NULL = does not expire),
+                     notes text, created_at timestamptz)
+                     -- DATED evidence over the qualification vocabulary, one row per
+                     -- (caregiver, qualification). Expiry status is derived, not
+                     -- stored: expires_at < current_date = expired; within 60 days =
+                     -- expiring. resources.qualification_ids remains the "has this
+                     -- skill" matching input.
 applicants(id uuid, name text, phone text, email text, source text,
            stage text {applied|screening|interview|offer|hired|rejected},
            qualification_ids uuid[], region_ids uuid[], availability jsonb,

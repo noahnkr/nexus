@@ -1,15 +1,36 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Plus, X } from "lucide-react";
-import { api, type Availability, type CaregiverRoster } from "@/lib/api";
+import {
+  api,
+  type Availability,
+  type Credential,
+  type QualificationRef,
+  type ResourceStatus,
+} from "@/lib/api";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TimePicker } from "@/components/ui/TimePicker";
+import { CredentialsEditor } from "@/components/caregivers/CredentialsEditor";
+import { resourceStatusMeta } from "@/lib/workforce";
 
-// The one roster-editing surface (a full roster view stays in Future Plans). Edits
+// The ONE caregiver-editing surface, shared by the schedule board and the M18b
+// Roster tab — deliberately not forked, so a credential added from the board and
+// one added from the roster leave the identical audit trail. Edits
 // contact/address/zip, the languages/traits tags matching feeds on, and per-day
-// availability in the existing {"mon":["08:00-16:00"]} shape. Save → patchRosterMember,
-// which emits one resource.updated naming the changed fields.
+// availability in the existing {"mon":["08:00-16:00"]} shape. Save →
+// patchRosterMember, which emits one resource.updated naming the changed fields.
+//
+// M18b adds two sections that write on their OWN, immediately (not on Save):
+//   * Credentials — dated rows via the workforce REST routes.
+//   * Active / inactive — the roster PATCH, which emits resource.status_changed.
+// Both are discrete, consequential acts (deactivating pulls someone off the board
+// and out of matching), so batching them behind "Save changes" would hide them.
+//
+// Credentials and status are FETCHED here rather than taken as props: the board's
+// payload has no credentials, and making the drawer self-sufficient is what keeps
+// it one component instead of two.
 const DAYS: { key: string; label: string }[] = [
   { key: "mon", label: "Mon" },
   { key: "tue", label: "Tue" },
@@ -107,12 +128,29 @@ function TagInput({
   );
 }
 
+// The fields the drawer edits — satisfied structurally by both `CaregiverRoster`
+// (the board's payload) and `RosterCaregiver` (the Roster tab's), so neither
+// caller has to reshape its rows.
+export interface DrawerCaregiver {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  zip: string | null;
+  languages: string[];
+  traits: string[];
+  availability: Availability;
+  status: ResourceStatus;
+  hours_this_week: number;
+}
+
 export function CaregiverDrawer({
   caregiver,
   onClose,
   onSaved,
 }: {
-  caregiver: CaregiverRoster;
+  caregiver: DrawerCaregiver;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
@@ -125,8 +163,56 @@ export function CaregiverDrawer({
   const [avail, setAvail] = useState<DayRanges>(parseAvailability(caregiver.availability));
   const [busy, setBusy] = useState(false);
 
+  // Compliance state, owned by the drawer (see the header note).
+  const [credentials, setCredentials] = useState<Credential[]>([]);
+  const [status, setStatus] = useState<ResourceStatus>(caregiver.status);
+  const [qualifications, setQualifications] = useState<QualificationRef[]>([]);
+  const [confirmDeactivate, setConfirmDeactivate] = useState(false);
+  const [togglingStatus, setTogglingStatus] = useState(false);
+
+  const loadCompliance = useCallback(async () => {
+    const roster = await api.getWorkforceRoster();
+    const row = roster.caregivers.find((c) => c.id === caregiver.id);
+    setCredentials(row?.credentials ?? []);
+    if (row) setStatus(row.status);
+  }, [caregiver.id]);
+
+  useEffect(() => {
+    loadCompliance().catch(() => {});
+    // The tenant's qualification vocabulary — the same list the applicant
+    // multi-selects use, so there is one source for credential names.
+    api
+      .getApplicantFacets()
+      .then((f) => setQualifications(f.qualifications))
+      .catch(() => {});
+  }, [loadCompliance]);
+
+  // A credential write changes the roster's compliance counts, so the parent
+  // refetches too (the board ignores the extra call; the Roster tab needs it).
+  const onCredentialsChanged = async () => {
+    await loadCompliance();
+    await onSaved();
+  };
+
   const setDay = (key: string, ranges: Range[]) =>
     setAvail((prev) => ({ ...prev, [key]: ranges }));
+
+  const applyStatus = async (next: ResourceStatus) => {
+    setTogglingStatus(true);
+    try {
+      await api.patchRosterMember(caregiver.id, { status: next });
+      setStatus(next);
+      await onSaved();
+      toast.success(
+        next === "inactive" ? "Caregiver deactivated" : "Caregiver reactivated",
+      );
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setTogglingStatus(false);
+      setConfirmDeactivate(false);
+    }
+  };
 
   const save = async () => {
     setBusy(true);
@@ -156,7 +242,14 @@ export function CaregiverDrawer({
       <div className="absolute right-0 top-0 flex h-full w-full max-w-md flex-col border-l bg-card shadow-xl">
         <div className="flex items-start justify-between gap-3 border-b p-4">
           <div className="min-w-0">
-            <h2 className="truncate text-base font-semibold">{caregiver.name}</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="truncate text-base font-semibold">{caregiver.name}</h2>
+              {status === "inactive" && (
+                <Badge variant={resourceStatusMeta(status).badge}>
+                  {resourceStatusMeta(status).label}
+                </Badge>
+              )}
+            </div>
             <p className="mt-0.5 text-sm text-muted-foreground tabular-nums">
               {caregiver.hours_this_week}h scheduled this week
             </p>
@@ -266,6 +359,73 @@ export function CaregiverDrawer({
                 );
               })}
             </div>
+          </div>
+
+          {/* --- Credentials: writes immediately, not on Save --- */}
+          <CredentialsEditor
+            resourceId={caregiver.id}
+            credentials={credentials}
+            qualifications={qualifications}
+            onChanged={onCredentialsChanged}
+          />
+
+          {/* --- Active / inactive: also immediate. Deactivating is confirmed
+              because it silently removes someone from staffing surfaces. --- */}
+          <div className="rounded-lg border p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xs font-medium text-muted-foreground">Roster status</div>
+                <div className="mt-0.5 text-sm">
+                  {resourceStatusMeta(status).label}
+                </div>
+              </div>
+              {status === "active" ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setConfirmDeactivate(true)}
+                  disabled={togglingStatus || confirmDeactivate}
+                >
+                  Deactivate
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => applyStatus("active")}
+                  disabled={togglingStatus}
+                >
+                  {togglingStatus ? "Working…" : "Reactivate"}
+                </Button>
+              )}
+            </div>
+            {confirmDeactivate && (
+              <div className="mt-2.5 space-y-2 border-t pt-2.5">
+                <p className="text-xs text-muted-foreground">
+                  They'll be removed from the schedule board and from caregiver
+                  matching. Their visit history is kept, and you can reactivate them
+                  here at any time.
+                </p>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setConfirmDeactivate(false)}
+                    disabled={togglingStatus}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => applyStatus("inactive")}
+                    disabled={togglingStatus}
+                  >
+                    {togglingStatus ? "Working…" : "Deactivate"}
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

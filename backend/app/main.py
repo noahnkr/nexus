@@ -29,6 +29,7 @@ from .routers import (
     settings as settings_router,
     tasks,
     webhooks,
+    workforce,
 )
 from .services.automations.scheduler import engine_loop
 from .services.mcp_server import build_mcp_asgi_app, session_manager
@@ -78,6 +79,7 @@ app.include_router(referrals.router)
 app.include_router(applicants.router)
 app.include_router(clients.router)
 app.include_router(schedule.router)
+app.include_router(workforce.router)
 app.include_router(settings_router.router)
 
 # MCP server (Streamable HTTP) exposing the tool registry to external clients.

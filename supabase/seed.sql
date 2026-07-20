@@ -134,6 +134,27 @@ on conflict (id) do update set
   languages = excluded.languages,
   traits    = excluded.traits;
 
+-- Resource credentials (Module 18) — DATED evidence over the undated qualification
+-- vocabulary, one row per (caregiver, qualification). Dates are RELATIVE to
+-- current_date (the schedule-seed precedent) so the demo always has one of each
+-- read-time status rather than drifting expired:
+--   Alicia / CNA            expires +180 days -> valid
+--   Carmen / Dementia Care  expires  +30 days -> expiring (inside EXPIRING_DAYS=60)
+--   Brian  / HHA            expires  -10 days -> expired
+--   Alicia / Hoyer Lift     expires  null     -> no_expiry (a one-time sign-off)
+-- Idempotent update-in-place so a re-seed refreshes the dates.
+insert into public.resource_credentials (id, tenant_id, resource_id, qualification_id, issued_at, expires_at, notes) values
+  ('ff000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000001', '22222222-0000-0000-0000-000000000001', current_date - interval '185 days', current_date + interval '180 days', 'State CNA license; renews every two years.'),
+  ('ff000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000003', '22222222-0000-0000-0000-000000000003', current_date - interval '335 days', current_date + interval '30 days',  'Dementia-care certification; renewal course not yet booked.'),
+  ('ff000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000002', '22222222-0000-0000-0000-000000000002', current_date - interval '375 days', current_date - interval '10 days',  'HHA certificate lapsed — needs renewal before the next shift.'),
+  ('ff000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000001', '55555555-0000-0000-0000-000000000001', '22222222-0000-0000-0000-000000000004', current_date - interval '400 days', null,                                'Hoyer lift sign-off; one-time, does not expire.')
+on conflict (id) do update set
+  resource_id      = excluded.resource_id,
+  qualification_id = excluded.qualification_id,
+  issued_at        = excluded.issued_at,
+  expires_at       = excluded.expires_at,
+  notes            = excluded.notes;
+
 -- Schedules (past + upcoming, mixed statuses). 12a adds required_qualification_ids
 -- (visit-level skill requirements the matcher disqualifies on), plus two shapes the
 -- board needs demo data for: an OPEN shift (unfilled, resource_id null) and a
