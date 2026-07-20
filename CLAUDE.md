@@ -100,6 +100,39 @@ The lifecycle is encoded as commands — use them rather than reinventing the fl
 
 The four docs have distinct jobs: `ROADMAP.md` = ordered versions + backlog (what's next) · `PROGRESS.md` = the active build board (task checkboxes) · `CHANGELOG.md` = shipped history (high-level) · `PRD.md` = the component/architecture reference (not a build timeline).
 
+## Commits
+
+Conventional commits — `type(scope): subject` — always. This ties commits to the versioning system: the **type** signals the version impact, and the **scope** names the component (drawn from the architecture, so scoping stays consistent rather than ad hoc).
+
+**Type** (decides the version bump):
+
+| Type | Meaning | Bump |
+|---|---|---|
+| `feat` | a new capability/subsystem | minor |
+| `fix` | a bug fix | patch |
+| `perf` / `refactor` | performance / behavior-preserving change | patch |
+| `test` | tests only | — |
+| `docs` | docs, plans, comments only | — |
+| `chore` | tooling, deps, config, file moves, housekeeping | — |
+
+A `BREAKING CHANGE:` footer forces a **major** bump regardless of type.
+
+**Scope** — the component the change centers on. Pick the closest from the standing vocabulary; omit the scope only for a genuinely repo-wide change.
+
+- **Core platform:** `data-model` · `chat` · `knowledge` · `tools` · `mcp` · `events` · `tasks` · `approvals` · `automations` · `connectors` · `auth` · `obs`
+- **Vertical seam:** `leads` · `caregivers` · `schedule` · `clients` · `referrals` · `workforce` · `entities`
+- **A specific connector** when clearer than `connectors`: `welcomehome` · `wellsky` · `goto` · `google`
+- **Meta:** `docs` · `plans` · `roadmap` · `readme` · `workflow` · `deps` · `seed` · `migrations` · `config`
+
+**Subject**: imperative mood, lowercase after the colon, no trailing period, ≤ 72 chars. An optional wrapped body explains *why*, not what. End every AI-assisted commit with a `Co-Authored-By:` trailer naming the assisting model, e.g. `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+
+Examples:
+- `feat(welcomehome): sync prospects to leads with stage mapping`
+- `fix(schedule): keep the called-out shift's original row on reassign`
+- `refactor(leads): extract change_stage as the single stage-writer`
+- `docs(prd): restructure into a component reference`
+- `chore(workflow): add /idea → /plan → /build → /document commands`
+
 ## Vertical surfaces
 
 The Leads and Caregivers pipeline views, the Schedule board, and the Clients view are the four sanctioned vertical surfaces (the Referrals dashboard rides the Leads surface; the workforce Roster rides the Caregivers surface) — their patterns are core, their content (stages, sequences, matching weights, board semantics, census/EVV rules, referral metrics, credential/utilization rules) belongs to the re-templating seam; business-specific views beyond those stay out of scope for this repo.
