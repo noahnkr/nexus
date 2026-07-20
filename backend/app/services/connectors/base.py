@@ -69,8 +69,14 @@ class NormalizedEvent:
     entity_type: str  # "lead" | "client" | "resource" | "schedule"
     external_id: str  # the source's id for the entity (or a phone/email/etc.)
     summary: str  # plain language — reaches tasks/UI
-    attributes: dict = field(default_factory=dict)  # canonical fields; auto-create only
+    attributes: dict = field(default_factory=dict)  # canonical fields
     creates_entity: bool = False  # True ⇒ this event stands up a new entity
+    # True ⇒ when the external id ALREADY maps to an entity, patch that entity from
+    # `attributes` instead of only logging (Module 18a). Polled sources re-send the
+    # whole record every sweep, so "already known" is the common case, not the edge
+    # one; without this a CRM edit would be recorded and then ignored. A type with
+    # no registered updater falls back to today's log-only behavior.
+    updates_entity: bool = False
     occurred_at: str | None = None
     detail: dict = field(default_factory=dict)  # technical payload for the event row
 

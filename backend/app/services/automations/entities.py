@@ -62,6 +62,7 @@ EVENT_ENTITY_TYPES: dict[str, str] = {
     "lead.created": "lead",
     "lead.updated": "lead",
     "lead.stage_changed": "lead",
+    "lead.activity_logged": "lead",
     "lead.converted": "client",
     "client.created": "client",
     "client.updated": "client",
@@ -120,6 +121,14 @@ EVENT_PAYLOAD_FIELDS: dict[str, list[tuple[str, str]]] = {
     ],
     "lead.updated": [("fields", "Changed fields")],
     "lead.stage_changed": _STAGE_CHANGE_FIELDS,
+    # CRM activity on a lead (18a): a call, email, note or visit logged upstream.
+    # `direction` is the useful trigger field — "an INBOUND call was logged" is a
+    # recipe an office writes; "an activity happened" is not.
+    "lead.activity_logged": [
+        ("detail.activity_type", "Activity type"),
+        ("detail.direction", "Direction (inbound/outbound)"),
+        ("detail.notes", "Activity notes"),
+    ],
     "applicant.stage_changed": _STAGE_CHANGE_FIELDS,
     "schedule.called_out": [("replacement_schedule_id", "Replacement shift id")],
     "client.status_changed": [("from", "Previous status"), ("to", "New status")],

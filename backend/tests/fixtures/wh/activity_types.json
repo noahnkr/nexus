@@ -1,0 +1,9 @@
+[
+  {"id": 78184, "name": "Call", "icon": "call", "for_prospects": true},
+  {"id": 78186, "name": "Email", "icon": "email", "for_prospects": true},
+  {"id": 78190, "name": "Text", "icon": "text", "for_prospects": true},
+  {"id": 78187, "name": "Note", "icon": "note", "for_prospects": true},
+  {"id": 78182, "name": "Home Visit", "icon": "home_visit", "for_prospects": true},
+  {"id": 78183, "name": "Assessment", "icon": "assessment", "for_prospects": true},
+  {"id": 78188, "name": "Other", "icon": "other", "for_prospects": true}
+]

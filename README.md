@@ -310,6 +310,82 @@ Then in Chat ask "any new leads today?" — the agent's `list_leads` answer incl
 the webhook-created lead. Every call is auditable: `events` rows for
 `webhook.received` and `lead.created`, and a `webhook_ingress` span in LangSmith.
 
+### Connector sync loop (Module 18)
+
+Not every source pushes. **WelcomeHome has no webhooks at all**, so its data
+arrives by *polling* — the same seam, driven from the other side. An in-process
+loop (`services/connectors/sync.py`, started in the FastAPI lifespan under the
+machine tenant, exactly like the automations engine) sweeps each enabled source on
+`NEXUS_CONNECTORS_POLL_SECONDS` (default 120), and each runner fetches → translates
+→ calls the very same `ingest_payload` a webhook does. Polled receipts are logged
+as `connector.received` (a webhook was never involved); everything downstream —
+entity resolution, the audit trail, the approval gate — is identical. A source
+being down degrades to one `connector.sync_failed` event and a skipped cycle; it
+never stalls the loop or the app. There is a `connector_sync` LangSmith span per
+cycle.
+
+Config lives entirely in env vars (`.env.example` documents each):
+
+```
+NEXUS_CONNECTORS_ENABLED=true      # false disables the loop; ingress unaffected
+NEXUS_CONNECTORS_POLL_SECONDS=120
+WELCOMEHOME_API_KEY=...            # unset ⇒ the WelcomeHome runner never registers
+WELCOMEHOME_COMMUNITY_ID=all
+WELCOMEHOME_BACKFILL_SINCE=        # optional ISO date; bounds the history import
+```
+
+**WelcomeHome (18a).** One-way inbound sync of the CRM's sales pipeline:
+
+| WelcomeHome | Nexus |
+|---|---|
+| Prospect (care recipient = its primary Resident) | `leads` row (create + update) |
+| Stage → status (below) | `leads.status`, via the single stage-writer |
+| Lead source | `leads.source` **verbatim** — the M16 referral-partner join key |
+| Influencers + extra Residents | `lead_contacts` rows |
+| Activities (calls, emails, notes, visits) | `lead.activity_logged` timeline events |
+| Long call/note narratives | ingested to RAG, entity-tagged to the lead |
+| **Start of Care** | promotes the lead to an **active `clients` row** (`lead_id` set) |
+
+Stage map (keyed on WelcomeHome's stable `system_type`, else the stage's position
+band — a renamed stage keeps working; a genuinely new stage leaves the lead's
+status unchanged with a warning event, never a guess):
+
+| WelcomeHome stage | Nexus `leads.status` |
+|---|---|
+| Inquiry (`new_lead`) | `new` |
+| Contact Attempted / Contact Made | `contacted` |
+| Home Visit Scheduled / Completed (`visit`) | `qualified` |
+| Start of Care (`move_in`) | `converted` + client promotion |
+| discarded / closed | `lost` |
+
+*Referral-source naming.* Because `leads.source` is written **exactly** as
+WelcomeHome's lead-source label, a partner tracked on `/referrals` must be named to
+match it (the Track button prefills the string, so this is the happy path). The
+connector never creates or links partner rows — it only writes source strings.
+
+*Start-of-Care promotion.* When a lead reaches `converted`, the connector stands up
+its client row (contacts copied across, care recipient registered against the
+client). `payer` and `authorized_hours_per_week` are left null — WelcomeHome
+doesn't know them; the office completes intake on the client profile. Client status
+lifecycle (hospital hold / discharge) stays with the M15 seam; the connector only
+ever *creates* a client. A human dragging a lead card to Converted in the UI does
+**not** promote — promotion is a CRM-sync behavior only.
+
+**One-time backfill.** The loop only sweeps forward; existing history is imported
+once with an operator-run, idempotent, resumable script:
+
+```bash
+# from backend/, venv active, .env filled in
+python -m app.scripts.backfill_welcomehome --dry-run --since 2026-01-01   # preview counts
+python -m app.scripts.backfill_welcomehome --since 2026-01-01             # for real
+```
+
+It prints per-table counts only (never record contents), checkpoints progress in
+`connector_state`, and re-runs safely. **After it finishes, before trusting the
+census:** WelcomeHome has no discharge signal, so *every* historical Start-of-Care
+prospect lands as an **active** client — including engagements that ended long ago.
+Bound the reach with `--since`, then open `/clients` and discharge the stale ones.
+
 ### Approvals & Tasks (Module 5)
 
 State-changing tools (`update_lead_status`, `update_client_status`,

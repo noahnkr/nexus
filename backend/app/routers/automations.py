@@ -70,8 +70,8 @@ from ..services.tools.labels import tool_label
 # Core event types the builder should always offer, even before any have been
 # observed in the events table (the vocabulary unions these with observed facets).
 _KNOWN_EVENT_TYPES = [
-    "lead.created", "lead.updated", "client.created", "client.updated",
-    "client.status_changed",
+    "lead.created", "lead.updated", "lead.stage_changed", "lead.activity_logged",
+    "client.created", "client.updated", "client.status_changed",
     "schedule.created", "schedule.assigned", "schedule.called_out",
     "schedule.cancelled", "schedule.updated",
     "schedule.checked_in", "schedule.checked_out",

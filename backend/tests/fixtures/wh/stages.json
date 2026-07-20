@@ -1,0 +1,8 @@
+[
+  {"id": 25090, "name": "Inquiry", "position": 0, "system_type": "new_lead"},
+  {"id": 25156, "name": "Contact Attempted", "position": 1, "system_type": "none"},
+  {"id": 25091, "name": "Contact Made", "position": 2, "system_type": "none"},
+  {"id": 25092, "name": "Home Visit Scheduled", "position": 3, "system_type": "none"},
+  {"id": 25189, "name": "Home Visit Completed", "position": 4, "system_type": "visit"},
+  {"id": 25093, "name": "Start of Care", "position": 5, "system_type": "move_in"}
+]
