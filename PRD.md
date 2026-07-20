@@ -418,31 +418,7 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 ---
 
-## Module 14: External Services Connectors
-
-**Goal**: turn the Module 3b connector placeholders into real integrations — WelcomeHome CRM, GoTo Connect, Gmail, and Google Calendar — so leads, activities, calls, texts, emails, and appointments flow into the canonical model (and trigger automations) without anyone re-typing CRM data, while outbound texting/emailing/scheduling runs through the existing gated tools. Planning-time research against the live APIs (2026-07-18) locked the architecture: WelcomeHome has **no webhooks** (its documented sync pattern is CSV export polling with `updated_at_after` cursors), GoTo requires an authorization-code OAuth bootstrap and offers WebSocket notification channels, and Google push requires a public endpoint — so this module is poll/bridge-first, push-later.
-
-**Sync architecture (core)**:
-
-- A single ingest seam (`ingest_payload`) behind both the webhook route and a new in-app **connector sync loop** (lifespan task beside the automations engine loops): registered per-source runners fetch increments, translate, and ingest through the same receipt → normalize → resolve path; cursors/channel state in `connector_state`, credentials in env only
-- One-way inbound — external platforms stay source of truth; Nexus mirrors. Outbound is explicit gated actions (`send_sms`, `send_email`, `create_calendar_event`), unchanged in name, schema, and approval semantics
-- New canonical events (`lead.activity_logged`, `email.sent`, `calendar.event.created`) declared in the automations seam so triggers and M11 field tokens see them immediately
-
-**WelcomeHome CRM (14a)**: export-table polling (Prospects/Residents/Influencers/Activities), live-verified stage map onto the leads funnel (Inquiry→new … Start of Care→converted), prospect field mapping incl. new lead `zip`/`address`/`background` columns and a `lead_contacts` table for influencers/relationships, a resolution *update* path (matched events can patch the lead; stage moves emit `lead.stage_changed` so sequences fire), activities onto lead timelines, call transcriptions into RAG ingestion, and a one-time idempotent backfill script.
-
-**GoTo Connect (14b)**: OAuth bootstrap script (one-time browser consent → refresh token in env), WebSocket notification-channel bridge feeding call/SMS events into the ingress (channel renewal via `connector_state`), and the real `send_sms` implementation behind the existing gated tool.
-
-**Gmail + Google Calendar (14c)**: Google OAuth bootstrap, Gmail `historyId` polling (new mail only, no backfill) with attachments of attributed senders ingested into RAG, real `send_email` (+ `email.sent` timeline events), Calendar `syncToken` polling, and safe `list_calendar_events` / gated `create_calendar_event` tools available to chat, MCP, and automations.
-
-**Deferred**: the **WellSky direct adapter** stays a placeholder (user decision 2026-07-18) — patient data arrives via the announced WellSky↔WelcomeHome platform integration, i.e. through the WelcomeHome sync; direct FHIR integration waits for a real driver. Also out: entity write-back to any platform, inbound-SMS conversation loops, Pub/Sub push, and any connectors/settings UI.
-
-**Infrastructure introduced**: connector sync loop + ingest seam, shared OAuth refresh helper + two bootstrap scripts, one vertical migration (lead sync fields + `lead_contacts`), `websockets` dependency, new env vars (`WELCOMEHOME_*`, `GOTO_CONNECT_*`, `GOOGLE_*`, `NEXUS_CONNECTORS_*`).
-
-**Deliverable for this module**: a new prospect entered in WelcomeHome appears as a Nexus lead within one poll cycle (stage-mapped, timeline populated, welcome sequence fired); a call to the business line lands `call.completed` on the right lead in seconds via the WebSocket bridge; an emailed PDF from a known lead is retrievable in chat; and "text her we'll call back" / "schedule a tour Friday 2pm" queue real gated sends that deliver on approval — every hop visible in the Event Log and LangSmith. Plans: `.agent/plans/14.external-connectors.md` (+ `14a.welcomehome-sync.md`, `14b.goto-connect.md`, `14c.google-workspace.md`)
-
----
-
-## Module 15: Finishing Touches
+## Module 14: Finishing Touches
 
 **Goal**: the usability pass collected from real use — chat becomes interruptible and better at document-style answers, tasks become completable without leaving the app (edit a drafted text/email right in the approval, no raw JSON anywhere), the shell grows up (collapsible sidebar, mobile, a real Settings page), the agent becomes customizable per tenant (Ingestion → Knowledge with an Instructions tab), and two automations rough edges get finished (manual automations get a Run button + an agent tool; "calculate a score" becomes a real formula builder).
 
@@ -467,12 +443,12 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 **Infrastructure introduced**: `tenant_settings` core table + settings seam/API, `ToolDef.editable_fields` + approve-with-edits, chat cancellation persistence, `formula` function + parser, safe `run_automation` tool, `start_run(defer=True)`.
 
-**Deliverable for this module**: the office user stops a rambling answer mid-stream and the thread stays healthy; a queued "text the caregiver" task is opened, its message fixed up, and approved without touching another app; the whole app works on a phone for the core surfaces; the assistant follows the tenant's written instructions; a manual "score this lead" automation runs from a button or by asking the agent, its score computed by a formula the user built from field tokens. Plans: `.agent/plans/15.finishing-touches.md` (+ `15a.chat-and-tasks.md`, `15b.shell-settings-knowledge.md`, `15c.automation-touches.md`)
+**Deliverable for this module**: the office user stops a rambling answer mid-stream and the thread stays healthy; a queued "text the caregiver" task is opened, its message fixed up, and approved without touching another app; the whole app works on a phone for the core surfaces; the assistant follows the tenant's written instructions; a manual "score this lead" automation runs from a button or by asking the agent, its score computed by a formula the user built from field tokens. Plans: `.agent/plans/14.finishing-touches.md` (+ `14a.chat-and-tasks.md`, `14b.shell-settings-knowledge.md`, `14c.automation-touches.md`)
 
 
-## Module 16: Client & Care Oversight
+## Module 15: Client & Care Oversight
 
-**Goal**: make the operational heart of the business visible — who we serve, who serves them, and whether we're delivering the hours we're paid for. Clients become the fourth sanctioned vertical surface (the Leads/Caregivers/Schedule pattern): a directory with an **active census** on top, a per-client **care overview** profile, and in-app **visit verification (EVV)** — clock-in/out on visits with read-time late/missed flags. EVV is legally mandated for Medicaid-funded home care in most states; this module lands the in-app version, and connector-fed EVV (telephony clock-ins via GoTo, WellSky) later fills the same columns through Module 14's ingest path.
+**Goal**: make the operational heart of the business visible — who we serve, who serves them, and whether we're delivering the hours we're paid for. Clients become the fourth sanctioned vertical surface (the Leads/Caregivers/Schedule pattern): a directory with an **active census** on top, a per-client **care overview** profile, and in-app **visit verification (EVV)** — clock-in/out on visits with read-time late/missed flags. EVV is legally mandated for Medicaid-funded home care in most states; this module lands the in-app version, and connector-fed EVV (telephony clock-ins via GoTo, WellSky) later fills the same columns through Module 18's ingest path.
 
 **Client oversight backend (16a)**:
 
@@ -491,16 +467,16 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 **Infrastructure introduced**: `documents` entity tagging (core), `client_contacts` table, EVV columns + `schedule.checked_in`/`checked_out`/`client.status_changed` events, census seam, three new tools, the fourth vertical surface.
 
-**Deliverable for this module**: the owner opens `/clients` and sees at a glance how many clients are active, by payer and region, and whether delivered hours are tracking authorized hours — the revenue-leakage gap in one number; opening a client shows their care plan documents (searchable in chat), family contacts, caregivers, and visit history with late/missed flags; a caregiver's visit is checked in and out from the board and the census's delivered hours move accordingly; asking chat "how's our delivery this week?" answers through the safe census tool. Plans: `.agent/plans/16.client-care-oversight.md` (+ `16a.client-oversight-backend.md`, `16b.clients-view-frontend.md`)
+**Deliverable for this module**: the owner opens `/clients` and sees at a glance how many clients are active, by payer and region, and whether delivered hours are tracking authorized hours — the revenue-leakage gap in one number; opening a client shows their care plan documents (searchable in chat), family contacts, caregivers, and visit history with late/missed flags; a caregiver's visit is checked in and out from the board and the census's delivered hours move accordingly; asking chat "how's our delivery this week?" answers through the safe census tool. Plans: `.agent/plans/15.client-care-oversight.md` (+ `15a.client-oversight-backend.md`, `15b.clients-view-frontend.md`)
 
-## Module 17: Referral-Source Dashboard
+## Module 16: Referral-Source Dashboard
 
 **Goal**: show which partners (hospitals, senior-living communities, discharge planners) send leads that actually convert. Referral ROI drives where the owner spends relationship time — this view answers "who's worth a coffee visit" with conversion rates and a revenue proxy, not gut feel. Partners are an *enrichment* over the free-text `leads.source` every lead path already writes (manual, webhook, the future WelcomeHome sync): a `referral_partners` table joined by exact source-name match — no lead schema change, no backfill, no connector linking logic.
 
 **Referral backend**:
 
 - One vertical migration: `referral_partners` (name unique per tenant; category — hospital / senior-living / discharge-planner / home-health / community / other; contact person, phone, email, notes; 4-policy RLS, Realtime)
-- A referrals seam (`services/views/referrals.py`): one deterministic metrics pass — per-source rows (leads, in-pipeline, converted, lost, conversion rate, avg days to convert, **hours/week won** = the Module 16 `authorized_hours_per_week` of clients traced back through `clients.lead_id`, last lead, zero-filled monthly trend buckets) left-joined to tracked partners, plus top-line totals (tracked partners, leads last 30 days, best converter above a ≥3-lead threshold, total hours won)
+- A referrals seam (`services/views/referrals.py`): one deterministic metrics pass — per-source rows (leads, in-pipeline, converted, lost, conversion rate, avg days to convert, **hours/week won** = the Module 15 `authorized_hours_per_week` of clients traced back through `clients.lead_id`, last lead, zero-filled monthly trend buckets) left-joined to tracked partners, plus top-line totals (tracked partners, leads last 30 days, best converter above a ≥3-lead threshold, total hours won)
 - REST: `GET /api/referrals/metrics` + partner CRUD (`referral_partner.created/updated/deleted` events with plain summaries; delete only un-enriches the source string — lead history untouched)
 - No new agent tools: `referral_partners` joins `SQL_SCHEMA_DOC` so chat answers referral questions through the existing read-only `run_report`
 
@@ -511,9 +487,9 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 **Infrastructure introduced**: `referral_partners` table + referrals seam/router, `referral_partner` entity + event types in the automation vocabulary, shared hand-rolled trend-bar component.
 
-**Deliverable for this module**: the owner opens `/referrals` and sees every lead source ranked by hours-per-week won and conversion rate — tracked partners with their contact details one click away, quiet partners visible by their zero rows; an unfamiliar source string arriving from a webhook is promoted to a tracked partner in one click; asking chat "which referral partners actually convert?" answers through read-only reporting. Plan: `.agent/plans/17.referral-dashboard.md`
+**Deliverable for this module**: the owner opens `/referrals` and sees every lead source ranked by hours-per-week won and conversion rate — tracked partners with their contact details one click away, quiet partners visible by their zero rows; an unfamiliar source string arriving from a webhook is promoted to a tracked partner in one click; asking chat "which referral partners actually convert?" answers through read-only reporting. Plan: `.agent/plans/16.referral-dashboard.md`
 
-## Module 18: Workforce & Compliance
+## Module 17: Workforce & Compliance
 
 **Goal**: the caregiver side of oversight — a roster that answers "who do I actually have and how loaded are they," and a credential tracker that surfaces an expiring CPR/TB/license *before* it means a caregiver legally can't work a shift. The credential watch is the flagship automations use case: the engine, cron triggers, and task queue already exist, so a daily digest automation costs one safe read tool.
 
@@ -532,19 +508,45 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 **Infrastructure introduced**: `resource_credentials` table, `resources.status` + inactive-exclusion rule, workforce seam/router, safe `list_expiring_credentials` tool, `resource.status_changed`/`credential.*` event types, the documented digest recipe.
 
-**Deliverable for this module**: the owner opens the Roster tab and sees headcount, utilization, and every credential's state at a glance — expiring ones flagged weeks ahead; a daily automation files a digest task naming exactly whose credentials need attention; asking chat "whose credentials are expiring?" answers through the safe tool; deactivating a caregiver removes them from the board and matching in one click while their history stays. Plans: `.agent/plans/18.workforce-compliance.md` (+ `18a.workforce-backend.md`, `18b.roster-frontend.md`)
+**Deliverable for this module**: the owner opens the Roster tab and sees headcount, utilization, and every credential's state at a glance — expiring ones flagged weeks ahead; a daily automation files a digest task naming exactly whose credentials need attention; asking chat "whose credentials are expiring?" answers through the safe tool; deactivating a caregiver removes them from the board and matching in one click while their history stays. Plans: `.agent/plans/17.workforce-compliance.md` (+ `17a.workforce-backend.md`, `17b.roster-frontend.md`)
+
+## Module 18: External Services Connectors
+
+**Goal**: turn the Module 3b connector placeholders into real integrations — WelcomeHome CRM, GoTo Connect, Gmail, and Google Calendar — so leads, activities, calls, texts, emails, and appointments flow into the canonical model (and trigger automations) without anyone re-typing CRM data, while outbound texting/emailing/scheduling runs through the existing gated tools. Planning-time research against the live APIs (2026-07-18) locked the architecture: WelcomeHome has **no webhooks** (its documented sync pattern is CSV export polling with `updated_at_after` cursors), GoTo requires an authorization-code OAuth bootstrap and offers WebSocket notification channels, and Google push requires a public endpoint — so this module is poll/bridge-first, push-later.
+
+**Sync architecture (core)**:
+
+- A single ingest seam (`ingest_payload`) behind both the webhook route and a new in-app **connector sync loop** (lifespan task beside the automations engine loops): registered per-source runners fetch increments, translate, and ingest through the same receipt → normalize → resolve path; cursors/channel state in `connector_state`, credentials in env only
+- One-way inbound — external platforms stay source of truth; Nexus mirrors. Outbound is explicit gated actions (`send_sms`, `send_email`, `create_calendar_event`), unchanged in name, schema, and approval semantics
+- New canonical events (`lead.activity_logged`, `email.sent`, `calendar.event.created`) declared in the automations seam so triggers and M11 field tokens see them immediately
+
+**WelcomeHome CRM (18a)**: export-table polling (Prospects/Residents/Influencers/Activities), live-verified stage map onto the leads funnel (Inquiry→new … Start of Care→converted), prospect field mapping incl. new lead `zip`/`address`/`background` columns and a `lead_contacts` table for influencers/relationships, a resolution *update* path (matched events can patch the lead; stage moves emit `lead.stage_changed` so sequences fire), activities onto lead timelines, call transcriptions into RAG ingestion, and a one-time idempotent backfill script.
+
+**WellSky Personal Care (18b)** *(added 2026-07-20, superseding the 2026-07-18 deferral)*: direct sync with the line-of-business system (formerly ClearCare) — the system of record for active clients, caregivers, schedules, and EVV clock data that the M12 schedule board, M15 clients/census/EVV, and M17 roster surfaces (all built after the deferral) need real data for; the WelcomeHome sync only carries the sales-side funnel. Scope locked 2026-07-20: **active clients only** (prospects stay WelcomeHome's domain), **hired caregivers only** (the M10 pipeline owns hiring), **full schedule sync** — appointments into `schedules` and encounter clock-in/out into the M15 EVV columns through the existing seams (WellSky-authoritative for the board; Nexus board actions are local-only, divergence documented), and **client files (DocumentReference) into RAG** entity-tagged. Notable API facts from the public docs (`https://apidocs.clearcareonline.com/`): OAuth client-credentials with short-lived tokens; watermark search on people resources but windowed sweeps for shifts (no modified-since); webhook subscriptions need a public endpoint (polling now, subscriptions when deployed); the certificates API is disabled, so M17 credential data stays human-entered. No migration, no new tools, no new event types. **API credentials are a blocking ops step** (partner-gated via a WellSky rep) — build and tests run offline against recorded fixtures, live validations are credential-gated. Rides the 18a sync loop and ingest seam; one-way inbound like everything else.
+
+**GoTo Connect (18c)**: OAuth bootstrap script (one-time browser consent → refresh token in env), WebSocket notification-channel bridge feeding call/SMS events into the ingress (channel renewal via `connector_state`), and the real `send_sms` implementation behind the existing gated tool.
+
+**Gmail + Google Calendar (18d)**: Google OAuth bootstrap, Gmail `historyId` polling (new mail only, no backfill) with attachments of attributed senders ingested into RAG, real `send_email` (+ `email.sent` timeline events), Calendar `syncToken` polling, and safe `list_calendar_events` / gated `create_calendar_event` tools available to chat, MCP, and automations.
+
+**Deferred**: ~~the **WellSky direct adapter** stays a placeholder (user decision 2026-07-18)~~ — un-deferred into 18b (user decision 2026-07-20), see above. Still out: entity write-back to any platform, inbound-SMS conversation loops, Pub/Sub push, and any connectors/settings UI.
+
+**Infrastructure introduced**: connector sync loop + ingest seam, shared OAuth refresh helper + two bootstrap scripts, one vertical migration (lead sync fields + `lead_contacts`), `websockets` dependency, new env vars (`WELCOMEHOME_*`, `GOTO_CONNECT_*`, `GOOGLE_*`, `NEXUS_CONNECTORS_*`).
+
+**Deliverable for this module**: a new prospect entered in WelcomeHome appears as a Nexus lead within one poll cycle (stage-mapped, timeline populated, welcome sequence fired); WellSky's clients, caregivers, and schedules populate the schedule board, census, and roster without re-typing; a call to the business line lands `call.completed` on the right lead in seconds via the WebSocket bridge; an emailed PDF from a known lead is retrievable in chat; and "text her we'll call back" / "schedule a tour Friday 2pm" queue real gated sends that deliver on approval — every hop visible in the Event Log and LangSmith. Plans: `.agent/plans/18.external-connectors.md` (+ `18a.welcomehome-sync.md`, `18b.wellsky-sync.md`, `18c.goto-connect.md`, `18d.google-workspace.md`)
+
+---
 
 ## Subsequent Modules (summary)
 
 
 ### Future Plans
-* Retention / at-risk view — rule-based flags (declining hours vs 4-week average, repeated no-shows, short tenure via a new `hire_date`) on the roster; deferred from Module 18 (user decision 2026-07-19).
-* Per-credential `credential.expiring` events — a flagging tool with dedup state so automations can trigger per credential with entity context; Module 18 ships the daily digest instead.
+* Retention / at-risk view — rule-based flags (declining hours vs 4-week average, repeated no-shows, short tenure via a new `hire_date`) on the roster; deferred from Module 17 (user decision 2026-07-19).
+* Per-credential `credential.expiring` events — a flagging tool with dedup state so automations can trigger per credential with entity context; Module 17 ships the daily digest instead.
 * Credential-based scheduling blocks — matching/assign currently warn on qualification gaps; hard-blocking on expired credentials is a policy change deferred until asked for.
-* Fuzzy/alias referral-source matching — Module 17 joins partners to `leads.source` by exact name; revisit when the WelcomeHome sync (14a) surfaces messy real-world source strings.
+* Fuzzy/alias referral-source matching — Module 16 joins partners to `leads.source` by exact name; revisit when the WelcomeHome sync (18a) surfaces messy real-world source strings.
 * `leads.referral_partner_id` FK — only if partner-rename stability becomes a real problem; the enrichment-by-name join is deliberate (user decision 2026-07-19).
-* Structured care-plan editor (goals, ADLs, care tasks) — Module 16 ships care plans as tagged documents + RAG plus a free-text care summary (user decision 2026-07-19); a structured editor waits for a real need.
-* Billing/payroll export of delivered hours — the Module 16 census computes delivered vs authorized; exporting it to a billing system is connector-shaped future work.
-* Home census StatCard — surface Module 16's leakage number on the Home page.
-* Chat document export — PDF/print export of document-style chat answers (e.g. a generated care plan); deferred from Module 15 (user decision 2026-07-19, formatting-only shipped there).
-* Mobile layouts for the schedule board and automation builder — Module 15 makes the core pages responsive; these two dense surfaces stay desktop-first with horizontal scroll until a real mobile need appears.
+* Structured care-plan editor (goals, ADLs, care tasks) — Module 15 ships care plans as tagged documents + RAG plus a free-text care summary (user decision 2026-07-19); a structured editor waits for a real need.
+* Billing/payroll export of delivered hours — the Module 15 census computes delivered vs authorized; exporting it to a billing system is connector-shaped future work.
+* Home census StatCard — surface Module 15's leakage number on the Home page.
+* Chat document export — PDF/print export of document-style chat answers (e.g. a generated care plan); deferred from Module 14 (user decision 2026-07-19, formatting-only shipped there).
+* Mobile layouts for the schedule board and automation builder — Module 14 makes the core pages responsive; these two dense surfaces stay desktop-first with horizontal scroll until a real mobile need appears.

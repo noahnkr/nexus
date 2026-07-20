@@ -220,7 +220,7 @@ Then sign in at `/login`; the app redirects there automatically when signed out.
 `NEXUS_TENANT_ID` is no longer read for the user surface — it remains only for the
 machine paths (webhooks, `/mcp`), the seed, and the test harness.
 
-### Workspace Settings & Agent Instructions (Module 15b)
+### Workspace Settings & Agent Instructions (Module 14b)
 
 `tenant_settings` is a core table holding one jsonb row per tenant of *user-facing*
 preferences. It is deliberately not a config store: infra config and credentials
@@ -345,7 +345,7 @@ the **Tasks** page (nav → Tasks) live-updates: it lists tasks with status tabs
 task creation, and a drill-down into the Event Log. In Chat, a gated call shows an
 amber "queued" chip linking to the Tasks page.
 
-**Task drawer & approve-with-edits (Module 15a).** Task cards are summaries —
+**Task drawer & approve-with-edits (Module 14a).** Task cards are summaries —
 type icon and label ("Text message", "Scheduling"), status, and an "awaiting your
 approval" chip. Clicking one opens a right-side drawer that renders the queued call
 as labeled fields (*To*, *Message*, *Subject*) instead of raw JSON; the payload
@@ -483,7 +483,7 @@ The Automations Center is the UI over the engine — nav → **Automations**. It
   each tool/function's JSON Schema (with a `{{template}}` inserter on text fields).
   Step types: run a tool, write with AI, wait a fixed delay, **wait until an event
   happens** (with optional timeout), only-continue-if, and compute a value — see
-  the **`formula`** function under Module 15c for lead-value / applicant-fit
+  the **`formula`** function under Module 14c for lead-value / applicant-fit
   scoring. The server is the validator of
   record — a 422 renders inline; editing a definition with runs in flight returns a
   409 with a "cancel runs & save" path.
@@ -523,7 +523,7 @@ user never types a dotted path), and read-mode surfaces show "…to Phone" inste
 `{{trigger.payload.phone}}`. The stored recipe format is unchanged — chips are a
 view over the same `{{path}}` strings, so existing recipes and the draft agent are
 untouched. The `function` step is presented as **"Run a calculation"** (its editor
-landed in Module 15c, below — M11b shipped the step type but left the args on the
+landed in Module 14c, below — M11b shipped the step type but left the args on the
 generic schema form). New function: **`days_until`** (credential-expiry /
 upcoming-date automations). Condition *values*
 are now template-rendered by the engine (an unresolvable value makes the condition
@@ -724,7 +724,7 @@ window — usable from chat/MCP and as an automation step), gated `record_call_o
 `schedule.called_out` event (payload carries `replacement_schedule_id`) is the trigger
 for call-out automations. No new frontend deps or env vars.
 
-### Formula steps & manual runs (Module 15c)
+### Formula steps & manual runs (Module 14c)
 
 **`formula` function.** The "Run a calculation" step now takes a real arithmetic
 expression instead of the `weighted_score` weights/inputs objects that fell through
@@ -815,7 +815,7 @@ The "AI dispatch" extension swaps step ②'s `create_task` for a gated `send_sms
 before any text goes out. The M11 token picker resolves the
 `{{trigger.payload.replacement_schedule_id}}` and `{{steps.N.candidates.0.*}}` paths.
 
-### Client & care oversight — backend (Module 16a)
+### Client & care oversight — backend (Module 15a)
 
 The clients surface is the fourth sanctioned vertical view (after Leads,
 Caregivers, and the Schedule board). Its content seam is
@@ -854,7 +854,7 @@ when no clock data exists. Late/missed are **computed at read time** by
 a 15-minute grace and `missed` past its end time. There is no stored flag and no
 detector loop, so a badge can never survive the caregiver finally clocking in.
 `no_show` stays the explicit human-recorded terminal status. Connector-fed clock-ins
-(telephony, WellSky) land in the same columns via Module 14's ingest path.
+(telephony, WellSky) land in the same columns via Module 18's ingest path.
 
 **Endpoints** (all JWT tenant-scoped; writes are `source_system='user'`):
 
@@ -900,7 +900,7 @@ on "WHEN a visit is checked out".
 
 No new environment variables.
 
-### Clients view — frontend (Module 16b)
+### Clients view — frontend (Module 15b)
 
 The `/clients` directory and `/clients/{id}` care overview are the fourth vertical
 surface's UI, reusing the Leads/Caregivers directory + profile patterns and the M12b
@@ -945,13 +945,13 @@ existing outcome buttons for unclocked bookkeeping. The EVV badge + `evvLabel` l
 profile's visits card so the two never disagree.
 
 **One backend addition (deviation from the plan's "no backend work" note).** The
-visits card needs a client-scoped visit list, which 16a did not ship, so 16b adds one
+visits card needs a client-scoped visit list, which 15a did not ship, so 15b adds one
 read-only seam route: `GET /api/clients/{id}/visits?upcoming=&past=` returns the next
 upcoming and last past visits in the board's `ScheduleVisitOut` shape (same resolved
 names, same read-time `evv` flag). It reuses the schedule router's visit shaping and is
 RLS-scoped like every `/api` route; both routers are vertical-seam members.
 
-### Referrals dashboard (Module 17)
+### Referrals dashboard (Module 16)
 
 Which referral partners (hospitals, senior-living communities, discharge planners)
 send leads that actually convert — referral ROI drives where the owner spends
@@ -1008,7 +1008,7 @@ the ≥ 3-lead bar surfaces `website` (33.3%) as the best converter — the plan
 that it would stay null on the seed was a miscount; the code follows the explicit
 ≥ 3 contract.
 
-### Workforce & compliance — backend (Module 18a)
+### Workforce & compliance — backend (Module 17a)
 
 Who can actually work, how booked they are, and whose paperwork is about to lapse.
 An expired credential can mean a caregiver legally *can't* work a shift, so this is
@@ -1023,7 +1023,7 @@ input ("has this skill"). A `resource_credentials` row — one per (caregiver,
 qualification), unique — adds "…issued on X, expires on Y". Only credentials that
 actually renew need a row; a one-time sign-off is a null `expires_at`.
 
-**Status is derived at read time, never stored** (the M16a EVV-flag rule): from
+**Status is derived at read time, never stored** (the M15a EVV-flag rule): from
 `expires_at` and the in-seam `EXPIRING_DAYS = 60` constant —
 
 | status | meaning |
@@ -1113,7 +1113,7 @@ short-circuits on a quiet day, so no empty "0 credentials" task ever reaches the
 queue. No `generate` step — deliberately, so the recipe (and its test) runs with no
 Anthropic key.
 
-### Roster tab — workforce frontend (Module 18b)
+### Roster tab — workforce frontend (Module 17b)
 
 `/caregivers` is now **one people surface with two tabs** (user-locked — no new nav
 entry): **Pipeline** (the hiring funnel, moved verbatim into
