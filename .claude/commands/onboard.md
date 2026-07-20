@@ -10,9 +10,9 @@ description: Onboard Claude Code into the codebase
    - Run `git ls-files` to see all tracked files
 
 2. **Read key files**
-   - CLAUDE.md, PRD.md, and any other architecture docs
-   - Entry points and config files
-   - Core schemas/models
+   - `CLAUDE.md` (how it's built + seam boundaries), `PRD.md` (component/architecture reference)
+   - `ROADMAP.md` (ordered versions + backlog), `PROGRESS.md` (active build board), `CHANGELOG.md` (shipped history)
+   - Entry points and config files, core schemas/models, the most recent shipped plan in `.claude/plans/`
 
 3. **Check state**
    - Run `git status` and `git log -10 --oneline`

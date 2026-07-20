@@ -1,72 +1,134 @@
-# Nexus Control Center - PRD
+# Nexus Control Center — Product & Architecture Reference
 
-## What We're Building
+This document describes **what Nexus is made of** — its components and how they fit together — as a standing reference, not a build timeline. For what's shipped, in progress, and planned next, see `CHANGELOG.md`, `PROGRESS.md`, and `ROADMAP.md`. For the rules governing *how* it's built, see `CLAUDE.md`.
 
-A control center application — the operational nexus for a small business — that unifies messy, cross-platform business data (CRM, phone service, line-of-business system, email) into a single canonical source of truth, exposed through a conversational AI agent and a set of purpose-built interfaces. The core is deliberately business-agnostic: the interfaces, MCP tool layer, event/task system, and automations engine are shared scaffolding; what changes per client is the Postgres entity schema (Module 0) and any domain-specific connectors, pipeline views, or harnesses built on top of it. This first build validates the architecture against an in-home senior care business, but no core interface should assume care-specific concepts.
+## What Nexus Is
 
-**10 interfaces:**
+Nexus is an operational hub for a small business — the single place its owner and office staff go to see, ask about, and act on everything happening across the disconnected tools the business already runs on (a CRM, a phone system, a line-of-business/EHR system, email). It pulls that scattered data into one canonical model, exposes it through a conversational agent and a set of purpose-built views, and turns cross-system follow-ups into automations and reviewable tasks.
 
-1. **Chat** — Threaded conversations with the AI agent; retrieval-augmented responses over unstructured business context, plus structured data lookups and action-taking via MCP tools
-2. **Ingestion** — Upload files manually, track processing status, manage documents, view chunking/embedding results
-3. **Control Center Home** (default view) — Landing dashboard: at-a-glance stats, recent activity, quick actions; a widget grid later modules extend
-4. **Tasks** — Pending/in-progress/done items, created automatically (agent, automation, harness) or manually; each links back to its originating event(s)
-5. **Event Log** — Immutable, append-only audit feed of everything that happened across every connected system and every agent/tool action
-6. **Automations Center** — monday.com-style grid of WHEN → IF → THEN automations; create via a recipe/card sentence builder or by describing the automation and letting an agent draft it
-7. **Leads** — Lead pipeline dashboard: marketing-funnel stages with per-stage outreach sequences, lead directory with expanded profiles and AI smart summaries, funnel metrics
-8. **Caregivers** — Hiring-process dashboard: stage pipeline with automated accept/deny emails and scoring, applicant directory with smart summaries, hiring metrics
-9. **Settings** — Connector configuration, user preferences, agent behavior toggles (config primarily via env vars for this phase — see Out of Scope)
-10. **Auth / Login** — Session-based auth, tenant-scoped from the data layer up
+Two things define the product:
 
-The Leads and Caregivers views (interfaces #7–8) are the first *vertical* views: the entity-dashboard + pipeline pattern they're built on is core scaffolding, while their content (lead stages, hiring stages, scoring) lives in the re-templating seam. Business-specific views beyond those two remain excluded — see Out of Scope.
+- **It is a system of intelligence, not a system of record.** The external tools stay authoritative for their own data; Nexus mirrors them one-way and adds the layer none of them can — reasoning and action *across* all of them at once. The value is the connective tissue (agent, automations, tasks, unified memory), not a re-implementation of any single tool.
+- **The core is business-agnostic; the vertical is a seam.** Everything except the entity schema and a handful of clearly-marked seam files is shared scaffolding meant to be re-templated for other verticals. The first instantiation is an in-home senior-care business, but no core component assumes care-specific concepts.
 
-## Target Users
+## Who It's For
 
-- **Primary**: a small business's office staff/owner-operator — non-technical, needs to triage leads, resolve exceptions, and trust the system enough to act on what it surfaces, without writing queries or reading logs
-- **Implicit tertiary user**: the builder (you) — this is a reference implementation meant to be re-templated for future small-business clients across different verticals, so architectural decisions favor reusability over hardcoding any one business's domain specifics
+- **Primary user** — a small business's owner-operator and office staff. Non-technical. They need to triage leads, resolve exceptions, and trust the system enough to act on what it surfaces, without writing queries or reading logs.
+- **Implicit second user** — the builder. This is a reference implementation intended to be re-templated for future clients across verticals, so architecture favors reusability over hardcoding any one domain.
 
-## Scope
+## The Central Idea: Core Platform vs. Vertical Seam
 
-### In Scope
+```
+┌─────────────────────────────────────────────────────────────┐
+│  CORE PLATFORM  (business-agnostic, shared across verticals) │
+│                                                              │
+│  Canonical data model · Chat & agent · Knowledge/RAG ·       │
+│  Tool layer & MCP · Event log · Tasks & approval gate ·      │
+│  Automations engine & center · Connectors & sync ·           │
+│  Auth & tenancy · Observability                              │
+├─────────────────────────────────────────────────────────────┤
+│  VERTICAL SEAM  (swapped per deployment — senior care here)  │
+│                                                              │
+│  Entity schema · pipeline views (Leads, Caregivers) ·        │
+│  Schedule board & matching · Clients/census/EVV · Referrals ·│
+│  Workforce roster · connector adapters & entity writers      │
+└─────────────────────────────────────────────────────────────┘
+```
 
-- ✅ Document ingestion and processing (manual upload; webhook-triggered ingestion from connected systems)
-- ✅ Canonical entity data model (business-specific entities — e.g. leads, clients, resources, schedules — defined per deployment) with cross-system ID mapping
-- ✅ Vector search with pgvector
-- ✅ Hybrid search (keyword + vector)
-- ✅ Reranking
-- ✅ Metadata extraction
-- ✅ Record management (deduplication, entity resolution across CRM/phone/EHR/email sources)
-- ✅ Multi-format support (PDF, DOCX, HTML, Markdown)
-- ✅ Data connectors (APIs, webhooks, websockets) for CRM, phone service, EHR, email
-- ✅ Structured-data tool layer (parameterized read/write tools — see Constraints on text-to-SQL scope)
-- ✅ Text-to-SQL tool, restricted to read-only analytical/reporting queries only
-- ✅ Web search fallback
-- ✅ Sub-agents with isolated context
-- ✅ Chat with threads and memory
-- ✅ Streaming responses
-- ✅ Auth with RLS, schema designed tenant-aware (single active tenant this phase)
-- ✅ MCP server exposing all agent-callable tools (structured queries, vector search, connector actions, task creation)
-- ✅ Immutable Event Log across all systems and agent/tool actions
-- ✅ Task system with approval-gate pattern for external-facing/state-changing actions
-- ✅ Custom automations framework (WHEN → IF → THEN): event-trigger listeners + cron-scheduled triggers, durable run state across delays/waits, steps executing MCP tools through the audited/gated seam, custom functions, LLM content generation
-- ✅ Automations Center interface (grid of active automations; recipe sentence builder; agent-built automations from a natural-language description)
-- ✅ Entity pipeline views (Leads, Caregivers): pre-defined stage funnels with per-stage outreach sequences, entity directories with event history and AI smart summaries, dashboard metrics
-- ⏸ Deterministic multi-phase harness *pattern* (generic engine: phase → programmatic check → human review on ambiguous cases) — **deferred to the future-plans backlog (user decision 2026-07-17)** together with the scheduling surfaces it was bundled with; in the interim, deterministic scoring/derivation lives in the automations engine's function steps (`formula` et al.)
-- ✅ LLM observability/tracing (LangSmith)
-- ✅ Prompt caching for repeated system prompt/tool-definition context
+Re-templating for a new vertical touches only the seam: the entity migration, the seam service files (`services/views/*`, `services/tools/entities.py`, `services/automations/entities.py`, `services/connectors/entity_writers.py` + adapters), and the vertical routers/pages. Core tables and core code never change.
 
-### Out of Scope
+---
 
-- ❌ Knowledge graphs / GraphRAG
-- ❌ Code execution / sandboxing
-- ❌ Image/audio/video processing
-- ❌ Fine-tuning
-- ❌ Multi-tenant **admin tooling** (schema is tenant-aware; building UI/workflows to provision and manage *multiple* live tenant businesses is deferred until after this client is validated)
-- ❌ Billing/payments
-- ❌ Scheduled/automated ingestion (cron-based re-scans); ingestion is manual-upload or event-triggered only
-- ❌ Open-ended text-to-SQL against state-changing tables (client/schedule writes always go through parameterized tools, never generated SQL)
-- ❌ PDF bounding-box citation grounding
-- ❌ Full HIPAA compliance certification (system is designed with audit logging, access control, and data-flow discipline in mind, but formal compliance review/BAA execution is a separate legal/business workstream, not an engineering deliverable of this PRD)
+## Core Platform Components
 
+### Canonical Data Model & Tenancy
+
+The single source of truth every other component reads and writes. Core operational tables (identical across deployments): `events`, `tasks`, `pending_actions`, `external_ids`, `documents`/`document_chunks`, `chat_threads`/`chat_messages`, `connector_state`, `automations`/`automation_runs`, `entity_summaries`, `tenant_settings`.
+
+- **Cross-system identity** — `external_ids` maps every external record to its canonical entity. Every inbound connector event resolves through it before anything else is written, so one real-world thing is one entity no matter how many systems report it.
+- **Tenancy** — every table carries `tenant_id` and is protected by Postgres row-level security (four policies each), so isolation is enforced at the database, not just in application code. The backend connects as a dedicated RLS-subject role (`nexus_app`, no bypass) and sets the tenant per request; the service-role key is reserved for migrations/ops and storage. Single active tenant this phase, tenant-aware throughout to keep the multi-tenant path open.
+
+### Chat & the Agent
+
+The conversational front door. Threaded conversations, streamed over SSE, answered by the Anthropic Messages API as a real tool-using loop: a question routes to structured tools, document retrieval, reporting queries, or action tools, and the answer cites its sources. Conversation history is stored and re-sent per call (stateless Messages API) with prompt caching on the system prompt and tool definitions to control cost. Per-tenant instructions and tone are appended *after* the core persona — they shape voice and content, never the gating rules or tool semantics.
+
+### Knowledge & Retrieval
+
+How unstructured context becomes answerable. Documents (PDF/DOCX/HTML/Markdown) are uploaded or connector-fed, parsed, chunked, embedded (Voyage), and retrieved by hybrid search + reranking, tuned for correctness at this corpus's scale (low hundreds of documents) rather than for volume this business doesn't have. A document can be tagged to a canonical entity so "this client's documents" is one query, and chunks inherit the tag.
+
+Knowledge is organized as **three tiers**, kept deliberately separate so a high-volume, low-value stream never pollutes the curated corpus:
+
+1. **Documents** — authored, durable material (care plans, assessments, contracts). The curated RAG corpus.
+2. **Communications** — messages, calls, emails: their own store, timeline-linked always, embedded *selectively* (store ≠ embed). *(Foundational tier planned as v1.1.0, ahead of the messaging connectors.)*
+3. **Derived knowledge** — per-entity summaries and communication profiles (tone, responsiveness) generated from history via the `entity_summaries` seam. Tone/style is a summary problem, not a retrieval one.
+
+### Tool Layer & MCP
+
+The one governed path to structured data and actions. Every agent-callable tool lives in a registry and runs through a single `execute_tool()` seam that writes an audit event and enforces the `safe` flag. Named, parameterized read/write tools cover the entity model; a read-only, validated text-to-SQL tool answers analytical questions (never writes). The same registry is exposed to external machine clients over an MCP server (`/mcp`, static-bearer auth) — MCP calls run through the identical seam and audit trail. Open-ended write access via generated SQL is never allowed.
+
+### Event Log & Audit
+
+The immutable spine. Every tool call, webhook/connector event, automation step, and gated-action resolution appends a row to `events`. The Event Log surface renders these as plain-language summaries (derived at read time for types that lack one), filterable down to a single entity's history, with raw technical detail one click away — never in the summary line.
+
+### Tasks & the Approval Gate
+
+How the system acts safely. Any tool that changes state visible outside Nexus (send SMS/email, update a record, trigger an external effect) defaults to **gated**: instead of executing, it writes a plain-language, human-reviewable task and a `pending_actions` row. Approval executes the *same* call through the *same* audited seam (optionally with human-edited fields the tool declares editable); rejection and failure stay visible. A queued gated call is a successful result the agent reports plainly, not an error. The Tasks interface is where staff clear that queue alongside connector review-tasks and their own to-dos.
+
+### Automations Engine & Center
+
+The cross-system brain. A business-agnostic **WHEN → IF → THEN** engine: event/cron/manual triggers, declarative field-comparison conditions (no code or LLM in the control path), and THEN steps that run tools through the audited/gated seam, wait/delay durably across restarts, guard on mid-sequence conditions, compute via safe registered functions, or generate LLM content. Runs advance one transaction per step; gated steps park the run for approval. The **Automations Center** is the surface over it — a grid to see and manage automations, a sentence + step-list builder, and agent drafting (describe it in English, review a validated draft; the agent never persists directly). Automations cannot trigger automations.
+
+### Connectors & Sync
+
+How external systems flow in. A single **ingest seam** (`ingest_payload`) sits behind both the webhook route (verify → ingest) and an in-app **connector sync loop** (a lifespan task, like the automations engine) that polls sources with no webhooks. Every inbound event follows the same path: raw receipt → normalize (per-source adapter) → resolve to a canonical entity via `external_ids` (match / auto-create / review-task). Sync is **one-way inbound** — external platforms stay source of truth; outbound effects go only through gated tools. Cursors/channel state live in `connector_state`; credentials live in env vars only, never the database. A source being down degrades to one `connector.sync_failed` event and a skipped cycle — never a stalled loop.
+
+### Auth & Observability
+
+- **Auth** — Supabase Auth (email/password), tenant resolved from the verified JWT's `app_metadata.tenant_id`; every `/api` route fails closed. The two machine paths keep their own credentials (webhook HMAC, MCP static bearer) and never use user JWTs.
+- **Observability** — LangSmith tracing end to end (chat turns, tool spans, connector-sync spans, automation runs), so any behavior is inspectable beyond the user-facing Event Log.
+
+---
+
+## The Vertical Layer (senior-care instantiation)
+
+Everything below is content in the re-templating seam. Another vertical replaces these and nothing else.
+
+### Entity Schema
+
+The business's own records, defined per deployment (all tenant-scoped, audited): `leads`, `clients` (with `lead_id` provenance), `resources` (caregivers), `applicants` (hiring), `schedules`, `regions`, `qualifications`, `referral_partners`, plus contact tables (`lead_contacts`, `client_contacts`) and dated `resource_credentials`. Naming stays generic where reasonable so the *pattern* re-templates, not just the care-specific names.
+
+### Sanctioned Vertical Surfaces
+
+Four dashboard patterns are core; their content is seam. Business-specific views beyond these stay out of scope.
+
+- **Leads** — marketing-funnel pipeline: stage board, per-stage outreach sequences (ordinary automations bound to a stage), lead directory with profiles and on-demand AI summaries, funnel metrics. A single stage-writer emits `lead.stage_changed` from every path.
+- **Caregivers** — the same pipeline pattern for hiring (applied → hired, automated accept/deny emails); moving an applicant to Hired atomically creates their caregiver record. A **Roster** tab layers on workforce oversight (below).
+- **Schedule board & matching** — a weekly board with open shifts and a call-out → replacement flow, backed by a **deterministic** caregiver matcher (geography, language/trait fit, availability, continuity, load) that gives plain-language reasons and warnings — no LLM in the ranking. The schedule seam is the single writer of schedule state; connector sync delegates to it.
+- **Clients, census & EVV** — a clients directory with an active **census** (authorized vs scheduled vs delivered hours, revenue leakage, payer/region breakdowns — deterministic seam SQL), a per-client care overview, and in-app **EVV** (visit clock-in/out with read-time late/missed flags). A single `change_status` writer owns the client lifecycle.
+
+Two more surfaces ride the above rather than adding new ones:
+
+- **Referrals** — rides Leads: partners as enrichment-by-name over free-text `leads.source` (exact match, no FK, no backfill), ranked by conversion and hours-won.
+- **Workforce roster** — rides Caregivers: headcount/utilization and credential expiry (valid / expiring / expired) derived at read time; inactive caregivers drop out of matching and the board.
+
+### Connector Adapters & Entity Writers
+
+The per-source translation layer — `services/connectors/adapters/*` (verify + normalize only) and `services/connectors/entity_writers.py` (auto-create/update canonical rows, promotion) — is a seam member alongside the entity migration. External platforms are source of truth; adapters never write a business table without entity resolution, and never link across the referral-partner or other enrichment tables.
+
+---
+
+## Principles & Constraints
+
+- **Cost, not scope, is the limiting factor.** Building "more than needed" for this client is intended — a deliberate investment in reusable architecture for larger future clients. Optimize for API/infra spend, not for minimizing feature surface.
+- **Health-adjacent data discipline.** Every table touching client/care data has `tenant_id`; every action touching it writes to the Event Log; anything that changes client-affecting state is gated by default unless explicitly marked safe.
+- **No open-ended LLM writes.** Text-to-SQL is read-only and reporting-scoped; all structured writes go through named, parameterized tools.
+- **Non-technical users.** Every surface that shows agent/workflow output to staff is plain language — no raw JSON or tool payloads in user-facing views (that belongs in traces and the Event Log's technical detail).
+- **Scale discipline.** Low hundreds of documents, not thousands — retrieval sophistication is present but tuned for correctness at this scale, not premature optimization.
+- **Single-tenant deployment, tenant-aware schema** — keeps the templating path open without building multi-tenant admin surface prematurely.
+
+## Out of Scope
+
+Knowledge graphs / GraphRAG · code execution/sandboxing · image/audio/video processing · fine-tuning · multi-tenant admin tooling (provisioning UI for multiple live businesses) · billing/payments · scheduled/automated re-ingestion (ingestion is manual-upload or event-triggered) · open-ended text-to-SQL against writable tables · PDF bounding-box citations · formal HIPAA certification (designed with audit/access discipline in mind; BAA/compliance review is a separate legal workstream) · entity write-back to external platforms · inbound-SMS conversation loops · business-specific views beyond the four sanctioned surfaces.
 
 ## Stack
 
@@ -75,493 +137,8 @@ The Leads and Caregivers views (interfaces #7–8) are the first *vertical* view
 | Frontend | React + TypeScript + Vite + Tailwind + shadcn/ui |
 | Backend | Python + FastAPI |
 | Database | Supabase (Postgres + pgvector + Auth + Storage + Realtime) |
-| LLM | Anthropic Messages API (Claude Sonnet primary; Haiku for cheap high-volume classification/routing subtasks) |
-| Embeddings | Voyage AI |
-| Reranking | Voyage AI reranker |
-| Agent Tooling | MCP server (custom tools) |
-| Automations | Custom in-app engine — event listeners + cron scheduling, durable runs, steps via MCP tools (no n8n) |
-| Observability | LangSmith (Anthropic wrapper + `@traceable` for tool/harness spans) |
-
-## Constraints
-
-- **Cost, not scope, is the limiting factor.** Building "more than needed" for this client is acceptable and intended — it's a deliberate investment in a reusable architecture for future, larger clients. Optimize for API/infra spend, not for minimizing feature surface.
-- **Data sensitivity**: this business touches health-adjacent information. Every table involved in client/care data needs a tenant_id, every agent/tool action touching client data must write to the Event Log, and any tool that can change client-affecting state must be gated through the Task approval system by default unless explicitly marked safe.
-- **No open-ended write access via LLM-generated queries.** Text-to-SQL is read-only and reporting-scoped; all structured writes go through named, parameterized tools with defined inputs/outputs.
-- **Scale target for this phase**: low hundreds of documents, not thousands — do not over-invest in retrieval sophistication (hybrid search/reranking should be present per Scope, but tuned for correctness at small scale, not premature optimization for corpora this client doesn't have yet).
-- **Non-technical end users.** Every interface that surfaces agent or workflow output to office staff must be understandable without technical background — plain-language task descriptions, no raw JSON/tool-call output in user-facing views (that belongs in LangSmith traces and the Event Log's technical detail, not the Task queue's summary line).
-- **Single-tenant deployment this phase**, tenant-aware schema throughout, to keep the templating path open without building multi-tenant admin surface prematurely.
-
----
-
-## Module 0: Canonical Data Model
-
-**Goal**: establish the single source of truth every other module reads from and writes to, before any ingestion, chat, or connector work begins. Everything in this module except the entity tables themselves is meant to be identical across deployments — only the entity schema below changes per client/vertical.
-
-**Core entity tables — business-specific, defined per deployment** (all include `tenant_id`, `created_at`, `updated_at`):
-
-This first build's instantiation (in-home senior care), given as a concrete example — a different vertical would swap these tables for its own equivalents (e.g., a home-services business might have `jobs`/`technicians`/`service_areas` instead):
-
-- `leads` — id, tenant_id, name, contact info, source, status, region, requirements, created_at
-- `clients` — id, tenant_id, lead_id (nullable FK), name, contact info, requirements, status
-- `resources` (caregivers, in this instantiation) — id, tenant_id, name, qualifications[], regions[], availability_ref
-- `schedules` — id, tenant_id, resource_id, client_id, start_time, end_time, status
-- `regions` — id, tenant_id, name, boundary definition (zip codes/geo)
-- `qualifications` — id, tenant_id, name, description (reference table joined to resource capabilities/lead requirements)
-
-The naming above (`resources`, `regions`, `qualifications`) is intentionally generic where reasonable, so the pattern — not just the care-specific names — is what should be reused for the next client.
-
-**Cross-system identity mapping**:
-
-- `external_ids` — entity_type, entity_id (FK to canonical table), source_system (crm/phone/ehr/email), external_id, last_synced_at
-- This table is what makes entity resolution possible: every inbound webhook event resolves to a canonical entity via this table before writing anywhere else
-
-**Unstructured content**:
-
-- `document_chunks` — id, tenant_id, document_id, chunk_text, embedding (pgvector), entity_type (nullable), entity_id (nullable FK), source_system, created_at
-- The entity_id/entity_type tag is what lets a query like "what's going on with client X" join structured record + relevant notes by canonical ID rather than by semantic similarity alone
-
-**Operational tables** (used by later modules, defined here since they're foundational):
-
-- `events` — id, tenant_id, source_system, event_type, entity_type, entity_id, payload (jsonb), created_at — immutable, append-only
-- `tasks` — id, tenant_id, title, description, status, priority, originating_event_id (FK, nullable), assigned_to, due_at, created_at, resolved_at
-- `pending_actions` — id, tenant_id, task_id (FK), tool_name, tool_input (jsonb), status (pending/approved/rejected), created_at, resolved_at — the approval-gate mechanism: a gated tool call writes here instead of executing immediately
-
-**Row-Level Security (RLS)**: every table scoped by `tenant_id` matching the authenticated session's tenant, enforced at the Postgres level via Supabase RLS policies — not just application-layer filtering, so a bug in the API layer can't leak cross-tenant data.
-
-**Deliverable for this module**: schema migrations, RLS policies, and a seed script with representative fake data (a handful of leads/clients/caregivers/schedules) so every subsequent module has something real to build and test against immediately.
-
----
-
-## Module 1: Foundation Chat + Ingestion
-
-**Goal**: stand up the first two user-facing interfaces — Chat and Ingestion — on top of Module 0's schema, proving the full loop end to end: upload a document, watch it chunk and embed, then ask the agent about it and get a streamed, cited answer. This module also introduces the running application itself (the first FastAPI app and the first frontend), so its infrastructure decisions — tenant-scoped DB access, the SSE contract, the parser seam — are load-bearing for every later module.
-
-**Chat**:
-
-- Threaded conversations persisted in new core tables: `chat_threads` and `chat_messages`, with messages stored as Anthropic content-block JSON verbatim so Module 2's `tool_use`/`tool_result` blocks need no schema change
-- Responses streamed via SSE (`start` → `citations` → `text` deltas → `done`/`error`)
-- Basic RAG: query embedding → plain pgvector cosine top-k over `document_chunks` → retrieved context injected into the system prompt with numbered citations; hybrid search and reranking stay in Module 12
-- Prompt caching (`cache_control`) on the static system block; full conversation history sent per call (stateless Messages API)
-
-**Ingestion**:
-
-- Drag-and-drop upload → Supabase Storage → background chunking/embedding pipeline (FastAPI BackgroundTasks — no worker queue at this scale)
-- All four formats (PDF, DOCX, HTML, Markdown/TXT) via lightweight parsers behind a swappable parser interface; the Docling upgrade in Module 12 replaces parser registry entries only
-- Voyage AI embeddings (1024-dim, matching the `document_chunks` column), batched
-- Document status transitions (`uploaded → processing → ready/failed`) surfaced live to the frontend via Supabase Realtime; every transition also writes an immutable `events` row
-
-**Infrastructure introduced here**:
-
-- Dedicated RLS-subject Postgres role (`nexus_app`) for the backend, with per-request tenant scoping via the `request.app.tenant_id` GUC — closing the RLS-bypass hole of connecting as `postgres`/service-role
-- Tenant-identity seam (`get_tenant_id()`): env-configured single tenant this phase, replaced by the verified JWT claim in Module 6
-- Vite + React + Tailwind + shadcn/ui frontend shell with Chat (default) and Ingestion pages
-- LangSmith tracing wired end to end (retrieve → generate spans)
-
-**Deliverable for this module**: a runnable app where a user can upload documents in the four supported formats, watch processing status update live, and hold a threaded, streamed chat that answers from those documents with citations — with all tests green and every ingestion/chat action visible in the Event Log's `events` table and LangSmith. Plan: `.agent/plans/1.foundation-chat-ingestion.md`
-
----
-
-## Module 2: Structured Data Access
-
-**Goal**: give the agent governed access to the structured side of the canonical data model — named, parameterized read tools over the entity schema plus a scoped read-only text-to-SQL reporting tool — and wire them into Chat as a real agentic tool loop, so a question routes to structured tools, vector search (now a tool itself), or both. This module establishes the tool registry that Module 3's MCP server, Module 5's approval gate, and Module 7's automation steps all build on.
-
-**Tool layer**:
-
-- A registry of tool definitions (`name`, `description`, JSON Schema input, handler, `safe` flag) with a single `execute_tool()` execution seam: every call writes an immutable `events` row (plain-language summary + technical payload) and unsafe tools are refused until Module 5's gate exists
-- Entity read tools — this instantiation: `list_leads`, `get_lead`, `list_clients`, `get_client`, `list_resources`, `get_resource_availability`, `list_schedules` — kept in one vertical-seam file mirroring the entity migration; generic naming so the pattern re-templates
-- `search_documents` — document retrieval becomes a tool the model chooses to call; per-turn context injection is retired
-- `run_report` — read-only text-to-SQL for analytical/reporting questions only: statement validation (single SELECT, allowlisted tables), executed inside a `READ ONLY` transaction with a statement timeout, RLS-scoped like everything else. Reads only this module; all write tools deferred to Module 5's approval gate
-
-**Chat integration**:
-
-- Multi-step agentic turns: `tool_use`/`tool_result` content blocks persisted verbatim in `chat_messages` (the Module 1 schema anticipated this), bounded loop, prompt caching over the static system block and tool definitions
-- SSE contract extended additively with plain-language `tool`/`tool_result` progress events; citations aggregate across all `search_documents` calls in a turn
-- Frontend shows tool activity as human-readable chips — no raw JSON in user-facing views
-
-**Deliverable for this module**: chat that answers structured questions from live entity data ("which caregivers can handle dementia care?"), document questions via retrieval-as-a-tool with citations, and aggregate questions via read-only reporting SQL — every tool call visible as an `events` row and as a tool span in the LangSmith trace. Plan: `.agent/plans/2.structured-data-access.md`
-
----
-
-## Module 3: MCP Server & External Connectors
-
-**Goal**: open the system in both directions — outward, an MCP server exposing the Module 2 tool registry to external clients (Claude clients now, automation steps in Module 7); inward, a webhook ingress and connector-adapter seam that normalizes events from external systems into canonical entities via `external_ids` before anything else is written. Built as two sub-plans per the complexity rule.
-
-**MCP server**:
-
-- Official MCP Python SDK, Streamable HTTP transport, mounted at `/mcp` inside the existing FastAPI app — one process, one connection pool, one tenant seam
-- Tools listed dynamically from the Module 2 registry; every call dispatches through the same audited `execute_tool()` seam with `source_system='mcp'`, so MCP calls appear in the Event Log and LangSmith exactly like chat calls
-- Static bearer-token auth (`NEXUS_MCP_TOKEN`) until Module 6 introduces real auth
-
-**Connector ingress & entity resolution**:
-
-- Single ingress `POST /api/webhooks/{source}` with per-adapter signature verification (raw receipt written to `events` for every accepted call); poll-based sources (via Module 7's scheduled automations, or manual triggers) re-post into this same ingress so the core stays webhook-shaped
-- Adapter seam per source: `verify()` + async `normalize()` → canonical `NormalizedEvent`s; five adapters shipped as placeholders documenting the researched real integration flows — WelcomeHome (CRM, webhook subscriptions), GoTo Connect (VoIP/SMS, notification channels), WellSky Personal Care (EHR, FHIR webhooks/poll fallback), Gmail (Pub/Sub push + history fetch-back), Google Calendar (watch channels + syncToken fetch-back); real adapters later replace only adapter-file internals, never the seam
-- Resolution routing per normalized event: matched via `external_ids` → link + record; unmatched but explicitly new (e.g. `lead.created`) → auto-create canonical row + mapping via the vertical-seam entity writers; unmatched reference → plain-language review task linked to the originating event (fuzzy matching stays in Module 11)
-- New core table `connector_state` (tenant-scoped, RLS) for durable connector cursors — Gmail `historyId`, Calendar `syncToken`, channel renewals
-
-**Deliverable for this module**: an MCP client (e.g. Claude Code) can connect to `/mcp` with a bearer token and call the same governed tools as chat, fully audited; a simulated signed webhook for each of the five sources flows through ingress → normalization → entity resolution, auto-creating a lead, matching known external ids, and stalling unknowns as review tasks — every step visible in `events` and LangSmith. Plans: `.agent/plans/3.mcp-and-connectors.md` (+ `3a.mcp-server.md`, `3b.connector-ingress.md`)
-
----
-
-## Module 4: Event Log
-
-**Goal**: surface the audit trail. Every module already writes immutable `events` rows (document lifecycle, chat turns, tool calls from chat and MCP, webhook receipts, connector resolutions); this module adds the business-facing read surface — PRD interface #5 — so office staff can see everything that happened across every connected system without reading logs or LangSmith.
-
-**Events API**:
-
-- `GET /api/events` — keyset-paginated feed (newest first) with filters: source system, event type, date range, and canonical entity (`entity_type` + `entity_id`) for entity drill-down ("everything that happened to this lead"), all RLS-scoped like every other read
-- `GET /api/events/facets` — distinct source systems/event types feeding the filter UI, kept dynamic so the surface stays business-agnostic
-- Plain-language summaries derived at read time: events that self-describe (`payload.summary` — tool calls, connector events) pass through; core lifecycle events get templates; unknown types humanize gracefully. No backfill — events are immutable
-
-**Event Log interface**:
-
-- Chronological feed with source badges, plain-language summary lines, and entity chips that apply the drill-down filter (URL-addressable for future deep links)
-- Expandable per-row technical detail (pretty-printed payload JSON) — the sanctioned home for raw detail per the non-technical-user constraint; summaries stay plain everywhere else
-- Live tail via Supabase Realtime (`events` added to the publication), same token pattern as ingestion status
-
-**Deliverable for this module**: an Event Log page where a chat turn, an MCP tool call, and a simulated webhook each appear as readable feed entries within moments of happening, filterable down to a single lead's history — with raw payloads one click away but never in the summary line. Plan: `.agent/plans/4.event-log.md`
-
----
-
-## Module 5: Approval Gate & Task System
-
-**Goal**: close the loop the tool layer has been pointing at since Module 2 — state-changing tools stop being refused and start being *governed*. A gated tool call queues as a human-reviewable task instead of executing; approval triggers the real execution through the same audited seam; and office staff get the Tasks interface (PRD interface #4) to clear that queue alongside review tasks from connectors and their own manual to-dos. Built as two sub-plans per the complexity rule.
-
-**Approval gate (backend)**:
-
-- `execute_tool()`'s unsafe-tool refusal becomes the queue path: an `action.queued` event, a high-priority task titled in plain language (each gated tool provides a `gate_describe` that names the affected entities), and a `pending_actions` row holding the exact tool input — the model is told the action is queued (not an error) so it reports honestly
-- Approval executes synchronously through `execute_tool` with an approved-action bypass — one seam for every execution, so the post-approval run writes the standard `tool.called` audit row plus an `action.approved` outcome event; rejection cancels the task with an `action.rejected` event; failed executions stay visible (`failed` action, task remains open)
-- First write tools: vertical-seam entity writes (`update_lead_status`, `update_client_status`, `create_schedule`, `cancel_schedule`, all gated), core gated `send_sms`/`send_email` with placeholder log-only execution documenting the real GoTo/Gmail flows (credentials arrive with the automation modules' real connector work), and a safe `create_task` so the agent can create internal coordination tasks immediately
-- Tasks & approvals API: keyset-paginated task list with embedded pending actions, manual task creation, validated status transitions, approve/reject endpoints — `tasks` and `pending_actions` join the Realtime publication
-
-**Tasks interface**:
-
-- `/tasks` page: status tabs and priority filter (URL-addressable), task cards with plain-language descriptions, status transitions, manual creation, and drill-down links into the Event Log via each task's originating event
-- Inline approval cards: what will happen in plain language, Approve/Reject (with optional note), outcome shown immediately; raw tool input only behind an expandable technical-detail toggle; live updates via Supabase Realtime
-- Chat marks queued actions distinctly (additive `queued` flag on the SSE `tool_result` event, amber chip linking to `/tasks`)
-
-**Deliverable for this module**: the PRD success criterion made demonstrable — asking chat to change a lead's status visibly *stalls* (record unchanged, task created) until a human approves it in the Tasks page, at which point the change lands and the Event Log shows the whole `action.queued → action.approved → tool.called` trail in plain language; rejection and failure paths equally visible. Plans: `.agent/plans/5.approval-gate-and-tasks.md` (+ `5a.approval-gate-backend.md`, `5b.tasks-interface.md`)
-
----
-
-## Module 6: Control Center Shell & Visual Overhaul
-
-**Goal**: turn the collection of views into the actual product — a control center someone logs into. Real auth replaces the env-tenant seam (PRD interface #8), a Home landing page gives the shell a front door (PRD interface #3, deliberately light this phase), and a full visual overhaul brings every existing view up to a "visually stunning, sleek, professional" bar using the frontend-design plugin. Built as two sub-plans per the complexity rule.
-
-**Auth & tenant identity**:
-
-- Supabase Auth with email + password for the office user (created once via dashboard with `app_metadata.tenant_id` set); login page, persisted session, sign-out
-- `deps.get_tenant_id()` swaps its body for the verified Supabase JWT claim — HS256 (legacy secret) and ES256 (project JWKS) both accepted; every `/api` route fails closed (401/403) except the credentialed machine paths, which keep their own auth and move to a separate machine-tenant seam: the webhook ingress (HMAC signature) and `/mcp` (static bearer token, kept deliberately — MCP consumers are machines; per-client OAuth waits for a real external need)
-- The frontend attaches the session access token to every API call; Supabase Realtime rides the real session, retiring the minted realtime-token dev seam; approval resolutions record the resolving user (`resolved_by`)
-
-**Control Center Home** (landing page at `/`; Chat moves to `/chat`):
-
-- A *home*, not a duplicated needs-attention queue (Tasks already serves triage): greeting, at-a-glance stat widgets (open tasks, pending approvals, document pipeline, today's events) each linking into its full view, a recent-activity glance from the Event Log, and quick actions (new chat, upload, new task)
-- Backed by one read-only `GET /api/home/summary` counts endpoint over core tables only — business-agnostic, RLS-scoped; laid out as a widget grid future modules extend (automation status in M8, harness outcomes in M11)
-
-**Visual overhaul & chat QoL**:
-
-- Design system pass: typography (Inter), redesigned light/dark token palette, semantic status tokens, shared `PageHeader`/`EmptyState`/skeleton primitives; restyled shell with grouped nav and a user menu (email, theme, sign out)
-- Chat: markdown rendering for assistant messages (GFM tables/lists/code), smoother streaming (frame-batched deltas), pinned-aware autoscroll with jump-to-latest
-- Polish sweep across Ingestion, Tasks, and Event Log — presentational only, zero behaviour changes
-
-**Deliverable for this module**: a stranger can be handed the URL and it behaves like a product — login required (API fails closed without a valid token), landing on a Home page that summarizes the operation at a glance, with every Module 1–5 flow (chat with tools, ingestion, approvals, event trail) still working end to end inside a visibly redesigned, professional shell. Plans: `.agent/plans/6.control-center-shell.md` (+ `6a.supabase-auth.md`, `6b.shell-home-overhaul.md`)
-
----
-
-## Module 7: Core Automations Framework
-
-**Goal**: the engine everything automation-shaped runs on — replacing the previously planned n8n integration with an in-app framework. The driving observation: outside two prescribed processes (the lead marketing funnel, M9; the caregiver hiring process, M10), no automation needs its entire flow specified step by step — most follow a **WHEN (trigger) → IF (condition) → THEN (actions)** recipe. This module builds that engine and its API, business-agnostic and headless; the Automations Center (M8) and the two pipeline views (M9–10) are all surfaces over it. Built as two sub-plans per the complexity rule.
-
-**Recipe model & synchronous engine**:
-
-- Two new core tables: `automations` (name, active/paused, declarative WHEN/IF/THEN definition as validated JSON) and `automation_runs` (durable run state: status, step index, accumulated context, wake time) — plus `pending_actions.automation_run_id` so approvals know which run they pause
-- Recipe vocabulary: event/cron/manual triggers; declarative IF conditions (field comparisons over trigger/entity/context — no code, no LLM in the control path); THEN steps of MCP tool calls (through the audited `execute_tool` seam with `source_system='automation'` — gated tools queue for approval exactly as from chat, pausing the run), delays/waits, mid-sequence condition guards, registered custom functions (the seam vertical scoring functions plug into), and LLM content generation with `{{path}}` templating
-- One active run per (automation, entity) — a re-trigger mid-flight is skipped, not double-sent; a failed step fails the run and creates a plain-language review task
-- REST API: automations CRUD with plain-language validation errors, manual run-now, run history — the whole engine curl-testable before any UI exists
-
-**Triggers, scheduling & durability**:
-
-- In-app engine loops (same process as the API, started in the FastAPI lifespan): an event-trigger dispatcher polling the immutable `events` stream behind a durable cursor (anything in the audit trail can trigger an automation; automation-emitted events are never re-dispatched — no cycles), a cron scheduler (`next_fire_at` bookkeeping), a waker for due delays, and a stale-run recovery sweep
-- Runs advance one transaction per step, so restarts resume mid-sequence without replaying side effects; approval resolution resumes (approve) or cancels (reject) the paused run through the same approvals engine
-- Run lifecycle events (`automation.run_started/completed/failed/skipped/cancelled`) in the Event Log, and every run traced as a LangSmith chain span
-
-**Deliverable for this module**: with no UI beyond curl and the existing Tasks page — a signed `lead.created` webhook fires an automation that generates a personalized message and queues a gated `send_sms`; the run visibly parks awaiting approval, approving it in Tasks resumes and completes the run; a cron automation fires on schedule; and a run parked on a multi-day delay survives a backend restart. The full trail is readable in the Event Log and LangSmith. Plans: `.agent/plans/7.core-automations-framework.md` (+ `7a.recipe-model-and-engine.md`, `7b.triggers-scheduler-durability.md`)
-
----
-
-## Module 8: Automations Center
-
-**Goal**: give Module 7's headless engine its face — PRD interface #6, the monday.com-inspired generic automations surface. Office staff see every automation at a glance, manage them safely, and create new ones two ways: composing a recipe in a sentence builder, or describing the automation in plain English and reviewing what an agent drafts. The builder's components and vocabulary endpoint are deliberately reusable — Modules 9–10's constrained per-stage builders compose the same pieces. Built as two sub-plans per the complexity rule.
-
-**Center management**:
-
-- `/automations` grid of automation cards: status (active/paused with pause/resume), plain-language trigger line, "requires approval" chip when a step is gated, active-run and last-run info — live via Supabase Realtime (both tables already published)
-- Automation detail: read-mode recipe (sentence + step list), run history, and a per-step run timeline from the engine's `step_log`; raw recipe/context JSON only behind technical expanders
-- Run cancellation through the approvals seam (cancelling a run that's awaiting approval rejects its pending action — one seam, no orphans); definition edits are guarded while runs are in flight (409 — cancel or let them finish)
-- Home widget-grid extension: automations stat card (active count, today's runs)
-
-**Recipe builder & agent drafting** (dedicated pages, `/automations/new` + `/automations/{id}/edit`):
-
-- Sentence + step-list layout: WHEN and IF as an editable sentence with inline chips; THEN as a reorderable list of step cards (tool / delay / condition / function / generate) with schema-driven forms and a `{{path}}` template-insertion helper
-- A vocabulary endpoint feeds the whole builder (tools with input schemas + safety flags, functions, event types, operators) so new tools and vertical functions appear with zero frontend changes
-- Agent drafting: describe the automation → LLM drafts a Pydantic-validated recipe (one retry on validation failure) → the draft prefills the builder for human review — **drafts are never persisted by the agent**; the standard validated create path is the only writer
-
-**Deliverable for this module**: an office user types "when a new lead comes in from WelcomeHome, wait a day, then text them a personalized welcome," reviews the drafted recipe in the builder, activates it — and when the signed webhook fires, watches the run advance live on the detail page, park awaiting SMS approval, and complete after approving in Tasks; the whole trail readable in the Event Log and LangSmith. Plans: `.agent/plans/8.automations-center.md` (+ `8a.center-management.md`, `8b.recipe-builder.md`)
-
----
-
-## Module 9: Leads View & Marketing Funnel
-
-**Goal**: PRD interface #7 — the first vertical dashboard view, and the proof that the entity-dashboard/pipeline *pattern* is core while its *content* is the re-templating seam. Office staff see the marketing funnel at a glance, work individual leads from a directory, and attach automated outreach to each stage — all running on the Module 7 engine and visible in the Module 8 Center. Built as two sub-plans per the complexity rule.
-
-**Leads API, directory & profiles**:
-
-- A vertical-seam leads REST API (list/search/facets, manual creation, basic-field edits, stage moves — human `source_system='user'` writes like the Tasks page; no delete, so funnel history stays honest) — every stage change emits a first-class `lead.stage_changed` event from whichever writer moved it (REST or the gated `update_lead_status` tool)
-- `/leads` directory: filterable/searchable table (stage, source, free text ↔ URL params), manual "New lead" dialog, live via Supabase Realtime; `/leads/{id}` profile: editable basic info, stage selector, the lead's entity event timeline (reusing the Event Log's entity drill-down), and an **AI smart summary** at the top — generated on demand (fast model over the lead row + recent event summaries), never persisted
-- New vertical seam: `services/views/` (stage config, metrics, summary generation) alongside a vertical `routers/leads.py` — M10 adds its caregiver twin without touching core
-
-**Funnel, metrics & per-stage sequences**:
-
-- A clickable funnel strip over the pre-defined stages (counts per stage, click filters the directory) with a per-stage sequence chip, plus conversion metrics widgets (in-pipeline count, conversion rate, new this week, average days to convert, top sources)
-- Per-stage outreach sequences are ordinary M7 automations tagged via a new **core** `automations.binding` jsonb (`{"view":"leads","stage":…}`, one sequence per stage by partial unique index) — the engine, approval gate, run history, and Automations Center apply unchanged, and M10 reuses the mechanism verbatim
-- A constrained sequence builder (`/leads/stages/{stage}/sequence`) — deliberately less flexible than M8's: the trigger is fixed by the stage (stage entry event + managed condition), while THEN composes 8b's step components with the tool palette restricted to SMS/email/call-task plus delays, conditionals, functions, and content generation
-
-**Deliverable for this module**: an office user opens `/leads`, sees the funnel with live counts and metrics, attaches a "Contacted" sequence (personalized message → gated SMS) from the funnel strip, then moves a lead to Contacted in its profile — the run fires, parks awaiting SMS approval, and completes after approval in Tasks, with the whole trail on the lead's timeline, in the Event Log, and in LangSmith. Plans: `.agent/plans/9.leads-view.md` (+ `9a.leads-api-directory.md`, `9b.funnel-and-stage-sequences.md`)
-
----
-
-## Module 10: Caregivers View & Hiring Process
-
-**Goal**: PRD interface #8 — the second and final sanctioned vertical view, re-instantiating Module 9's pipeline pattern for caregiver recruiting and thereby proving the pattern is core while content is seam. The structural difference from leads: applicants don't exist in the schema (`resources` is the active caregiver roster, no stage column), so this module adds the applicants entity end-to-end plus a promotion path onto the roster, mirroring how clients record lead conversion. Built as two sub-plans per the complexity rule.
-
-**Applicants model, API, directory & profiles**:
-
-- New vertical `applicants` table (contact, source, hiring stage `applied → screening → interview → offer → hired` with terminal `rejected`, qualification/region/availability fields mirroring `resources`) with standard RLS and Realtime; `resources.applicant_id` records promotion provenance (the `clients.lead_id` precedent)
-- One stage-moving path — a `move_stage()` service emitting first-class `applicant.stage_changed` events — shared by the human REST PATCH and a new gated `update_applicant_stage` tool; moving an applicant to `hired` **atomically auto-creates the caregiver row** (copying contact/qualifications/regions/availability) and emits `resource.created`; the human moving the stage is the approver, and there is no delete
-- `/caregivers` directory (filter/search, manual applicant creation, live via Realtime) and applicant profiles: editable basic info + qualifications, hiring smart summary (on-demand fast-model generation through the shared view-agnostic summary helper), entity event timeline, and a hire-confirm dialog that links the created caregiver
-- The applicant entity threads through every vertical seam (entity map, read tools, SQL schema doc, event vocabulary) — the template for adding an entity type to a running deployment
-
-**Hiring funnel, metrics & per-stage sequences**:
-
-- The generic funnel strip instantiated with the hiring stages — including a sequence chip on `rejected` (the automated denied email is the marquee use case; chip-bearing stages are per-view config, not component logic) — plus hiring metrics widgets (in-pipeline count, hire rate, new this week, average days to hire, top sources)
-- Per-stage sequences (accepted/denied emails on gated `send_email`) as bound automations (`{"view":"caregivers","stage":…}`) built in the shared view-config-driven stage builder — no new pages, no engine or Center backend changes; the caregivers view registers a config, nothing more
-- Scoring is **deliberately absent** (user decision 2026-07-17): applicant/lead scoring lands in Module 11's matching/decision harness
-
-**Deliverable for this module**: a recruiter creates an applicant, watches it move through the hiring funnel, and on moving it to Rejected the denial sequence fires — a personalized email drafts, parks for approval, and sends on approval in Tasks — while moving another to Hired atomically creates the caregiver record; both trails readable on the applicant's timeline, in the Event Log, and in LangSmith. Plans: `.agent/plans/10.caregivers-view.md` (+ `10a.applicants-api-directory.md`, `10b.hiring-funnel-and-sequences.md`)
-
----
-
-## Module 11: Automation Field Tokens
-
-**Goal**: make the automations/sequences builder genuinely usable by a non-technical office user — no more typing `{{trigger.payload.phone}}` by hand — and make deterministic scoring (applicant fit, lead value) buildable in plain language. This module took the Module 11 slot when the matching/decision harness + scheduling system was deferred (user decision 2026-07-17; see Deferred below).
-
-**Trigger-aware field catalog (backend)**:
-
-- The builder vocabulary grows a structured, plain-language field catalog: labeled core trigger fields, observed `trigger.payload.*` keys grouped *per event type*, entity fields *per entity type* with seam-supplied labels ("Lead", "Applicant", …), and an event-type → entity-type map — so the builder can show exactly the fields that exist for the trigger the user picked, and explain what "the entity" is (the record the run is about; empty on cron/manual runs)
-- Entity labels/fields come from the vertical seam (`services/automations/entities.py`) — the catalog re-templates with the entity schema, core only humanizes names
-- Condition *values* become template-rendered like `wait_until` conditions already were (an unresolvable reference makes the condition false, never a crash); the agent-drafting prompt is taught the catalog so drafted recipes reference real paths
-
-**Visual field tokens (builder)**:
-
-- Every template-accepting input (tool inputs, generate prompts, condition values) renders `{{path}}` references as atomic, labeled, deletable chips; insertion is cursor-positioned from a searchable picker grouped by "From the trigger event" / "The Lead …" / "Earlier step results", with a custom-path escape hatch
-- The stored recipe format is unchanged — chips are a view over the same `{{path}}` strings, so existing recipes, the draft agent, and the engine are untouched; read-mode surfaces (step cards, run timeline, recipe sentences) show labels instead of raw paths
-
-**Deliverable for this module**: an office user builds "when a new applicant arrives, score them by weighted fields and, if the score clears a threshold, text them" entirely from labeled dropdowns and visual tokens — never typing a dotted path or JSON — and existing automations open and run identically. Plans: `.agent/plans/11.automation-field-tokens.md` (+ `11a.field-catalog-backend.md`, `11b.token-builder-frontend.md`)
-
----
-
-## Module 12: Smart Staffing & Scheduling
-
-**Goal**: give the owner the staffing loop — see the week at a glance, suggest the optimal caregiver for any visit, and when a caregiver calls out sick, fill the shift in minutes: ranked qualified replacements, one click to assign, a gated SMS to notify. This module revives the scheduling/matching content of the formerly deferred harness module (rescoped by the user 2026-07-18), minus the generic decision-harness abstraction, which stays deferred.
-
-**Shift model & schedule board**:
-
-- `schedules` learns to represent unfilled work: `resource_id` becomes nullable (NULL + status `open` *is* the open shift), statuses grow `open` and `called_out`, and visits carry `required_qualification_ids` and a `replaces_schedule_id` link — a call-out keeps the original row (who called out is a fact, not a deletion) and opens a linked replacement shift
-- The `/schedule` week board: caregivers as rows (weekly hours under each name), Mon–Sun day columns, visits as status-colored blocks, an Open-shifts row pinned on top; every action (call out, assign, reassign, cancel, outcome) lives in a click-to-act visit drawer — no drag-and-drop
-- Visit creation supports "repeat weekly until" (expanded server-side into individual rows, capped at 12 weeks); a minimal caregiver drawer on the board is the roster-editing surface (contact, address/zip, languages/traits, availability)
-
-**Algorithmic caregiver matching**:
-
-- Clients and caregivers gain `address`/`zip`/`languages` plus preference/trait tags, so the deterministic ranker (`services/views/matching.py`, vertical seam) scores geography at zip level (windshield-time proxy), cultural/language fit, availability-window fit, continuity (past visits with the client), and weekly-load balance — with hard disqualifiers for missing required qualifications and time conflicts; every candidate carries plain-language reasons and warnings, no LLM in the ranking
-- Exposed as the safe `find_available_caregivers` tool (chat, MCP, and automation tool steps all get it through the registry), as `GET /api/schedules/{id}/candidates` for the UI, and joined by gated `record_call_out`/`assign_caregiver` write tools
-
-**Automated call-outs (owner-picks flow)**:
-
-- Call-out (board or gated tool) emits `schedule.called_out` — the automation trigger; the shipped flow is owner-picks: ranked candidates in the drawer → assign → optional gated `send_sms` notify queued through `execute_tool` and approved in Tasks (no inbound-SMS loop exists, so no broadcast path in the UI; the broadcast variant is a documented recipe)
-- The README documents the call-out recipe (WHEN `schedule.called_out` → `find_available_caregivers` → task naming the top candidate, + gated SMS variant), buildable in the Module 8 builder with Module 11 tokens — not seeded (the no-starter-templates lock stands)
-
-**Infrastructure introduced**: one vertical-seam migration (schedules open/called-out support, address & trait fields, Realtime on `schedules`); no new env vars, no core-table changes, no engine changes.
-
-**Deliverable for this module**: a caregiver calls out on the board; the owner opens the replacement shift, sees ranked qualified candidates with plain-language reasons, assigns one, queues the notification text, and approves it in Tasks — with the full trail (`schedule.called_out → schedule.assigned → action.queued → action.approved → tool.called`) in the Event Log, and a builder-authored automation reacting to the same call-out event. Plans: `.agent/plans/12.smart-staffing-scheduling.md` (+ `12a.scheduling-backend-matching.md`, `12b.schedule-board.md`)
-
----
-
-## Module 13: Automation Builder Enhancements
-
-**Goal**: finish making the builder trustworthy and pleasant for a non-technical office user — the IF section only appears when it can actually do something, the field dropdowns provably offer the trigger's real fields (fixing the reported empty-dropdown bug), and every dropdown in the app becomes one consistent, customizable component instead of ~28 native `<select>` elements. Much of this module's original summary was delivered early by Module 11's field catalog; what remains is scoped to correctness, gating, and the dropdown rollout.
-
-**Field-scope correctness & IF gating**:
-
-- The entry IF section renders only for event triggers — cron/manual runs carry no trigger or record fields, so entry conditions on them could only silently fail; switching trigger types away from an event confirms and clears stale conditions (existing non-event automations with saved conditions surface a warning instead of hiding data). Builder UX only: the recipe format, `validate_recipe`, and the engine are unchanged
-- The reported "no fields in the IF condition dropdown" bug is verified live and fixed at its root: the field-scope logic gains a pure-function regression suite, a gated catalog-content test on the vocabulary endpoint, and the condition combobox learns to explain itself (hints and an explicit empty state) instead of silently showing nothing
-- Event types read in plain language ("Lead stage changed") with the raw type as secondary text — frontend label maps over the same vocabulary, no backend change
-
-**Shared dropdown component & app-wide sweep**:
-
-- A hand-rolled `ui/Select` (no new deps, consistent with the app's existing popover patterns): options or groups, icons, colored status dots, secondary descriptions/mono text, optional search and clearable placeholder, full keyboard navigation and listbox ARIA
-- Every native select in the app converts to it with per-site customizations — trigger/step/operator/schedule dropdowns in the builder (tool picker grouped Safe vs. Requires approval), task priority with tone dots, lead/caregiver source filters and dialogs, stage selects with stage-color dots, event log filters with plain-language labels, DateTimePicker month/year, and the schedule board's selects from Module 12
-
-**Infrastructure introduced**: none — no migrations, no new env vars, no new dependencies, no backend surface changes.
-
-**Deliverable for this module**: an office user creating an automation sees the IF section only when an event trigger makes it meaningful, opens the condition field dropdown and always finds the trigger's labeled fields (or a plain explanation of why there are none), and every dropdown from the builder to the task filters looks and behaves identically — while existing automations open, edit, and run byte-identically. Plan: `.agent/plans/13.automation-builder-enhancements.md`
-
----
-
-## Module 14: Finishing Touches
-
-**Goal**: the usability pass collected from real use — chat becomes interruptible and better at document-style answers, tasks become completable without leaving the app (edit a drafted text/email right in the approval, no raw JSON anywhere), the shell grows up (collapsible sidebar, mobile, a real Settings page), the agent becomes customizable per tenant (Ingestion → Knowledge with an Instructions tab), and two automations rough edges get finished (manual automations get a Run button + an agent tool; "calculate a score" becomes a real formula builder).
-
-**Chat & task completion (15a)**:
-
-- Stop/cancel a streaming chat response (abort mid-stream with a cancellation-safe persistence contract — partial answers persist with a `stopped` marker so thread replay stays valid), send button/input alignment fixed, and output-formatting guidance + GFM table rendering for document-style answers (care plans, comparisons). PDF/export is deferred to Future Plans (user decision 2026-07-19)
-- Approve-with-edits: gated tools declare `editable_fields` (SMS body, email subject/body); the approval surface renders the drafted message as editable text and the approve endpoint executes the edited version through the same `services/approvals.py` seam, with the edit audited on the `action.approved` event
-- A task detail drawer (VisitDrawer pattern) renders action data as clean labeled fields — the raw-JSON "Technical detail" toggle leaves the cards; task-type icons/labels (text message, email, scheduling, record update); the metadata-line separator-dot bug fixed
-- Event log readability: type icons, plain-language type labels (reusing M13's label maps), and per-source color accents
-
-**Shell, settings & knowledge (15b)**:
-
-- New core table `tenant_settings` (one jsonb row per tenant, 4-policy RLS) for user-facing preferences — whitelisted keys through a `services/settings.py` seam + `GET/PATCH /api/settings`; env vars remain the only home for infra config and credentials
-- Agent customization: per-tenant instructions + tone injected as a second system block after the core persona (instructions shape tone/content, never the gating rules); Ingestion renames to **Knowledge** with a Documents tab (existing upload/list + a detail drawer with chunk previews and delete) and an Instructions tab (free-text instructions + tone dropdown)
-- Sidebar collapses to an icon rail (persisted); mobile-friendly core pages (Home, Chat, Tasks, Leads, Caregivers, Event Log, Settings, Knowledge) behind a drawer nav — the schedule board and builder stay desktop-first with horizontal scroll (mobile layouts for them in Future Plans)
-- A `/settings` page (from the user menu): profile edit (display name, password via Supabase), workspace name, appearance
-
-**Automations touches (15c)**:
-
-- Manual-trigger automations drop the meaningless Active/Paused toggle for a **Run** button (the run-now endpoint already ignores status), and a safe `run_automation` tool lets chat/MCP agents start manual automations — restricted to manual triggers, refused for `source_system='automation'` (the no-self-trigger rule extended to the tool layer), starting the run deferred (`waiting` + `wake_at=now()`) for the M7b waker to advance
-- "Calculate a score" becomes a real formula builder: a new `formula` function (hand-rolled safe expression parser — numbers, `+ − × ÷`, parentheses, `round()`; field values via the existing `{{token}}` templates; no eval, no LLM) with a token-aware `FormulaEditor` in the builder; the result saves to run context via the existing save-as. `weighted_score` was retired in the same change (no stored recipe referenced it)
-
-**Infrastructure introduced**: `tenant_settings` core table + settings seam/API, `ToolDef.editable_fields` + approve-with-edits, chat cancellation persistence, `formula` function + parser, safe `run_automation` tool, `start_run(defer=True)`.
-
-**Deliverable for this module**: the office user stops a rambling answer mid-stream and the thread stays healthy; a queued "text the caregiver" task is opened, its message fixed up, and approved without touching another app; the whole app works on a phone for the core surfaces; the assistant follows the tenant's written instructions; a manual "score this lead" automation runs from a button or by asking the agent, its score computed by a formula the user built from field tokens. Plans: `.agent/plans/14.finishing-touches.md` (+ `14a.chat-and-tasks.md`, `14b.shell-settings-knowledge.md`, `14c.automation-touches.md`)
-
-
-## Module 15: Client & Care Oversight
-
-**Goal**: make the operational heart of the business visible — who we serve, who serves them, and whether we're delivering the hours we're paid for. Clients become the fourth sanctioned vertical surface (the Leads/Caregivers/Schedule pattern): a directory with an **active census** on top, a per-client **care overview** profile, and in-app **visit verification (EVV)** — clock-in/out on visits with read-time late/missed flags. EVV is legally mandated for Medicaid-funded home care in most states; this module lands the in-app version, and connector-fed EVV (telephony clock-ins via GoTo, WellSky) later fills the same columns through Module 18's ingest path.
-
-**Client oversight backend (16a)**:
-
-- One small core migration — `documents` gains nullable `entity_type`/`entity_id` (chunks already carry them; the parent must too so "this client's documents" is one query). Upload accepts an optional canonical-entity tag, validated against the entity map; chunks inherit it, so tagged care plans are RAG-searchable and listable per client
-- One vertical migration — clients gain `region_id`, `payer` (private-pay / Medicaid / LTC-insurance / VA / other), `authorized_hours_per_week`, `care_summary`; statuses become `active` / `hospital_hold` / `discharged` (data-migrated from paused/ended); a new `client_contacts` table (family contacts, 4-policy RLS); schedules gain `check_in_at`/`check_out_at` with coherence CHECKs
-- A clients view seam (`services/views/clients.py`): `change_status` as the one writer of client status (emits `client.status_changed`), deterministic Monday-week **census math** (authorized = Σ authorized hrs/wk over active clients; scheduled = planned visit hours; delivered = actual clock durations falling back to scheduled durations for completed visits; leakage = authorized − delivered), and rule-based read-time EVV flags (late after a 15-minute grace, missed after end — no detector loop, no stored flag)
-- Schedule seam gains `check_in`/`check_out` transitions (check-out completes the visit; events `schedule.checked_in`/`schedule.checked_out` join the automation-triggerable set)
-- Tools through the registry: `update_client_status` rewired to the seam, gated `record_visit_check_in`/`record_visit_check_out`, safe `get_census`; `get_client` enriched with care fields, contacts, and week hours
-- REST: `/api/clients` directory (filters/facets/metrics/create/detail/patch), family-contacts CRUD, cached client smart summary (entity-summaries precedent), schedule check-in/out routes (board feed carries the EVV flag), document list/upload entity filters
-
-**Clients view frontend (16b)**:
-
-- `/clients` directory: census strip (active clients; authorized vs scheduled vs delivered hours with the leakage number in warning tone; by-payer and by-region breakdowns as clickable filter chips) over a filterable client table, create dialog, Realtime
-- `/clients/{id}` care overview: smart summary, info + care cards (status with discharge confirm, payer, authorized hours, region, care summary), this-week hours bars, family contacts, assigned caregivers, upcoming/past visits with EVV badges, client documents card (tagged upload — care plans searchable in chat), entity timeline
-- Schedule board: late/missed badges on visit blocks (server-computed), check-in/check-out actions in the visit drawer with actual times and durations shown once recorded
-
-**Infrastructure introduced**: `documents` entity tagging (core), `client_contacts` table, EVV columns + `schedule.checked_in`/`checked_out`/`client.status_changed` events, census seam, three new tools, the fourth vertical surface.
-
-**Deliverable for this module**: the owner opens `/clients` and sees at a glance how many clients are active, by payer and region, and whether delivered hours are tracking authorized hours — the revenue-leakage gap in one number; opening a client shows their care plan documents (searchable in chat), family contacts, caregivers, and visit history with late/missed flags; a caregiver's visit is checked in and out from the board and the census's delivered hours move accordingly; asking chat "how's our delivery this week?" answers through the safe census tool. Plans: `.agent/plans/15.client-care-oversight.md` (+ `15a.client-oversight-backend.md`, `15b.clients-view-frontend.md`)
-
-## Module 16: Referral-Source Dashboard
-
-**Goal**: show which partners (hospitals, senior-living communities, discharge planners) send leads that actually convert. Referral ROI drives where the owner spends relationship time — this view answers "who's worth a coffee visit" with conversion rates and a revenue proxy, not gut feel. Partners are an *enrichment* over the free-text `leads.source` every lead path already writes (manual, webhook, the future WelcomeHome sync): a `referral_partners` table joined by exact source-name match — no lead schema change, no backfill, no connector linking logic.
-
-**Referral backend**:
-
-- One vertical migration: `referral_partners` (name unique per tenant; category — hospital / senior-living / discharge-planner / home-health / community / other; contact person, phone, email, notes; 4-policy RLS, Realtime)
-- A referrals seam (`services/views/referrals.py`): one deterministic metrics pass — per-source rows (leads, in-pipeline, converted, lost, conversion rate, avg days to convert, **hours/week won** = the Module 15 `authorized_hours_per_week` of clients traced back through `clients.lead_id`, last lead, zero-filled monthly trend buckets) left-joined to tracked partners, plus top-line totals (tracked partners, leads last 30 days, best converter above a ≥3-lead threshold, total hours won)
-- REST: `GET /api/referrals/metrics` + partner CRUD (`referral_partner.created/updated/deleted` events with plain summaries; delete only un-enriches the source string — lead history untouched)
-- No new agent tools: `referral_partners` joins `SQL_SCHEMA_DOC` so chat answers referral questions through the existing read-only `run_report`
-
-**Referral dashboard frontend**:
-
-- `/referrals` page (nav entry between Leads and Caregivers): metrics strip, hand-rolled monthly trend bars (no chart library), and a sortable partner table — tracked sources show their category chip, untracked sources get a one-click **Track** button that promotes the source string to a partner record
-- Partner detail drawer: editable contact info + category + notes, per-partner monthly bars, that source's recent leads linking into the Leads view, delete with confirm
-
-**Infrastructure introduced**: `referral_partners` table + referrals seam/router, `referral_partner` entity + event types in the automation vocabulary, shared hand-rolled trend-bar component.
-
-**Deliverable for this module**: the owner opens `/referrals` and sees every lead source ranked by hours-per-week won and conversion rate — tracked partners with their contact details one click away, quiet partners visible by their zero rows; an unfamiliar source string arriving from a webhook is promoted to a tracked partner in one click; asking chat "which referral partners actually convert?" answers through read-only reporting. Plan: `.agent/plans/16.referral-dashboard.md`
-
-## Module 17: Workforce & Compliance
-
-**Goal**: the caregiver side of oversight — a roster that answers "who do I actually have and how loaded are they," and a credential tracker that surfaces an expiring CPR/TB/license *before* it means a caregiver legally can't work a shift. The credential watch is the flagship automations use case: the engine, cron triggers, and task queue already exist, so a daily digest automation costs one safe read tool.
-
-**Workforce backend (18a)**:
-
-- One vertical migration: `resources.status` (`active`/`inactive`) and a `resource_credentials` table — one dated row per (caregiver, qualification) with issued/expires dates + notes (null expiry = doesn't expire); `resources.qualification_ids` stays the matching input, credentials add dated evidence on top. Seeded with relative dates (valid / expiring / expired / no-expiry) so nothing drifts
-- Workforce seam (`services/views/workforce.py`): read-time credential status (valid / expiring ≤60d / expired — in-seam constant, no stored state, no detector loop), availability-hours parsing, per-caregiver utilization % (scheduled ÷ available; null without declared availability), roster metrics (headcount, average utilization, expiring/expired counts scoped to active caregivers), soonest-first expiring-credentials query
-- Inactive exclusion: deactivated caregivers disappear from matching candidates and the schedule-board roster (the Roster tab is the one surface listing everyone); status changes emit `resource.status_changed` through the existing single roster PATCH
-- Safe `list_expiring_credentials` tool (days-ahead arg, plain-language result) — the only tool this module; credential CRUD is human REST (`credential.added/updated/removed` events on the caregiver's timeline)
-- The daily credential-digest recipe (WHEN cron daily → tool → IF count > 0 → digest task) published in the README and proven by a pytest that creates it through the standard API and drives the real engine to a created task — never seeded into `automations`
-
-**Roster frontend (18b)**:
-
-- `/caregivers` grows Pipeline | Roster tabs (`?tab=`, no new nav entry): the hiring funnel moves unmodified into the Pipeline tab; the Roster tab gets a compliance strip (active headcount, average utilization, expiring/expired counts in warning/destructive tones), a roster table (hours vs available, hand-rolled utilization bars, per-credential status badges, status filter + search), and Realtime
-- The shared caregiver drawer (board + roster, one component) gains a credentials editor (add/edit/delete with qualification picker and dates) and an active/inactive toggle with a confirm explaining the board/matching consequences
-
-**Infrastructure introduced**: `resource_credentials` table, `resources.status` + inactive-exclusion rule, workforce seam/router, safe `list_expiring_credentials` tool, `resource.status_changed`/`credential.*` event types, the documented digest recipe.
-
-**Deliverable for this module**: the owner opens the Roster tab and sees headcount, utilization, and every credential's state at a glance — expiring ones flagged weeks ahead; a daily automation files a digest task naming exactly whose credentials need attention; asking chat "whose credentials are expiring?" answers through the safe tool; deactivating a caregiver removes them from the board and matching in one click while their history stays. Plans: `.agent/plans/17.workforce-compliance.md` (+ `17a.workforce-backend.md`, `17b.roster-frontend.md`)
-
-## Module 18: External Services Connectors
-
-**Goal**: turn the Module 3b connector placeholders into real integrations — WelcomeHome CRM, GoTo Connect, Gmail, and Google Calendar — so leads, activities, calls, texts, emails, and appointments flow into the canonical model (and trigger automations) without anyone re-typing CRM data, while outbound texting/emailing/scheduling runs through the existing gated tools. Planning-time research against the live APIs (2026-07-18) locked the architecture: WelcomeHome has **no webhooks** (its documented sync pattern is CSV export polling with `updated_at_after` cursors), GoTo requires an authorization-code OAuth bootstrap and offers WebSocket notification channels, and Google push requires a public endpoint — so this module is poll/bridge-first, push-later.
-
-**Sync architecture (core)**:
-
-- A single ingest seam (`ingest_payload`) behind both the webhook route and a new in-app **connector sync loop** (lifespan task beside the automations engine loops): registered per-source runners fetch increments, translate, and ingest through the same receipt → normalize → resolve path; cursors/channel state in `connector_state`, credentials in env only
-- One-way inbound — external platforms stay source of truth; Nexus mirrors. Outbound is explicit gated actions (`send_sms`, `send_email`, `create_calendar_event`), unchanged in name, schema, and approval semantics
-- New canonical events (`lead.activity_logged`, `email.sent`, `calendar.event.created`) declared in the automations seam so triggers and M11 field tokens see them immediately
-
-**WelcomeHome CRM (18a)**: export-table polling (Prospects/Residents/Influencers/Activities), live-verified stage map onto the leads funnel (Inquiry→new … Start of Care→converted), prospect field mapping incl. new lead `zip`/`address`/`background` columns and a `lead_contacts` table for influencers/relationships, a resolution *update* path (matched events can patch the lead; stage moves emit `lead.stage_changed` so sequences fire), activities onto lead timelines, call transcriptions into RAG ingestion, and a one-time idempotent backfill script.
-
-**WellSky Personal Care (18b)** *(added 2026-07-20, superseding the 2026-07-18 deferral)*: direct sync with the line-of-business system (formerly ClearCare) — the system of record for active clients, caregivers, schedules, and EVV clock data that the M12 schedule board, M15 clients/census/EVV, and M17 roster surfaces (all built after the deferral) need real data for; the WelcomeHome sync only carries the sales-side funnel. Scope locked 2026-07-20: **active clients only** (prospects stay WelcomeHome's domain), **hired caregivers only** (the M10 pipeline owns hiring), **full schedule sync** — appointments into `schedules` and encounter clock-in/out into the M15 EVV columns through the existing seams (WellSky-authoritative for the board; Nexus board actions are local-only, divergence documented), and **client files (DocumentReference) into RAG** entity-tagged. Notable API facts from the public docs (`https://apidocs.clearcareonline.com/`): OAuth client-credentials with short-lived tokens; watermark search on people resources but windowed sweeps for shifts (no modified-since); webhook subscriptions need a public endpoint (polling now, subscriptions when deployed); the certificates API is disabled, so M17 credential data stays human-entered. No migration, no new tools, no new event types. **API credentials are a blocking ops step** (partner-gated via a WellSky rep) — build and tests run offline against recorded fixtures, live validations are credential-gated. Rides the 18a sync loop and ingest seam; one-way inbound like everything else.
-
-**GoTo Connect (18c)**: OAuth bootstrap script (one-time browser consent → refresh token in env), WebSocket notification-channel bridge feeding call/SMS events into the ingress (channel renewal via `connector_state`), and the real `send_sms` implementation behind the existing gated tool.
-
-**Gmail + Google Calendar (18d)**: Google OAuth bootstrap, Gmail `historyId` polling (new mail only, no backfill) with attachments of attributed senders ingested into RAG, real `send_email` (+ `email.sent` timeline events), Calendar `syncToken` polling, and safe `list_calendar_events` / gated `create_calendar_event` tools available to chat, MCP, and automations.
-
-**Deferred**: ~~the **WellSky direct adapter** stays a placeholder (user decision 2026-07-18)~~ — un-deferred into 18b (user decision 2026-07-20), see above. Still out: entity write-back to any platform, inbound-SMS conversation loops, Pub/Sub push, and any connectors/settings UI.
-
-**Infrastructure introduced**: connector sync loop + ingest seam, shared OAuth refresh helper + two bootstrap scripts, one vertical migration (lead sync fields + `lead_contacts`), `websockets` dependency, new env vars (`WELCOMEHOME_*`, `GOTO_CONNECT_*`, `GOOGLE_*`, `NEXUS_CONNECTORS_*`).
-
-**Deliverable for this module**: a new prospect entered in WelcomeHome appears as a Nexus lead within one poll cycle (stage-mapped, timeline populated, welcome sequence fired); WellSky's clients, caregivers, and schedules populate the schedule board, census, and roster without re-typing; a call to the business line lands `call.completed` on the right lead in seconds via the WebSocket bridge; an emailed PDF from a known lead is retrievable in chat; and "text her we'll call back" / "schedule a tour Friday 2pm" queue real gated sends that deliver on approval — every hop visible in the Event Log and LangSmith. Plans: `.agent/plans/18.external-connectors.md` (+ `18a.welcomehome-sync.md`, `18b.wellsky-sync.md`, `18c.goto-connect.md`, `18d.google-workspace.md`)
-
----
-
-## Subsequent Modules (summary)
-
-### Knowledge architecture rework — Communications tier & RAG hygiene (planned before Module 18c)
-
-**Motivation (decision 2026-07-20).** Module 18a routes long call/note narratives into the `documents` corpus (one `document` row per activity, generic type-label filename). That was fine at 18a's volume, but it conflates two different kinds of knowledge and does not survive the messaging connectors: 18c (GoTo — every call + SMS) and 18d (Gmail — every email) would pour a high-volume, low-value-per-item firehose straight into the curated document index. The limiting factor is **not** embedding cost (a single franchise's whole history is ~1–5M tokens, well inside Voyage's free tier) — it's **corpus pollution and category conflation**: a phone note competing with a care plan in the same vector pool degrades retrieval, and messages (high-volume, valuable-in-aggregate) want different storage, ingestion, and retrieval than authored documents (low-volume, valuable-each). This rework lands **before 18c** so the messaging connectors build into the right substrate.
-
-**Three tiers of knowledge, not one bucket:**
-1. **Documents** — authored, durable (care plans, assessments, contracts, uploads). Keep `documents`/`document_chunks` as-is but *clean*: only real documents enter the corpus.
-2. **Communications** — SMS, emails, call transcripts, notes in their own store (channel, direction, timestamp, body, entity link, optional embedding), **not** documents. Core rule: **decouple "store the message" from "embed the message."** Every message is stored and timeline-linked always (cheap, structured); only a policy-selected subset is embedded (summarize-then-embed › substantive channels only › lazy/on-demand › crude length threshold).
-3. **Derived knowledge** — per-entity **communication profile** (tone, responsiveness, channel/timing preferences) generated from message history and stored via the existing `entity_summaries` seam. Tone/style is a *summary* problem, not a retrieval one: one profile per entity beats vector-searching 500 messages, and it never touches the doc corpus.
-
-**Supporting mechanics:**
-- **`kind`/`source` discriminator** on searchable chunks (document | communication | summary) → scoped agent tools ("search care documents" vs "search this client's message history" vs "how does this family communicate"), plus **retention**: a message stays on the timeline forever but can leave the vector index after N months (timeline ≠ search index).
-- **Event as the spine** — a message is (or hangs off) an `events` row; the body attaches to it; any embedding links back to the event id, so timeline, tone-summary, and retrieved chunk all reference the same event. This is also where cross-source **de-duplication** happens (the WelcomeHome caller-ID-on-GoTo case: one call = one spine event with up to two source rows attached), not in the document layer.
-- **Split the history seed** — a fast **structured pass** (events + communication rows, no embeddings; the timeline and the agent's facts light up immediately) separate from an optional, **batched, resumable embed pass** (Voyage batches ~128 texts/call vs 18a's one-doc-at-a-time) and a **summary pass** that builds the tier-3 profiles.
-
-**Net:** documents stay a curated corpus, messages become a governed communications store with selective embedding, and "what is this family like to work with" becomes a cheap generated profile — three cleanly separated concerns instead of one pool. This is the "unified entity graph / knowledge management" investment that is the differentiated half of the system (system-of-intelligence over the external systems of record), not a mirror view.
-
-### Future Plans
-* Retention / at-risk view — rule-based flags (declining hours vs 4-week average, repeated no-shows, short tenure via a new `hire_date`) on the roster; deferred from Module 17 (user decision 2026-07-19).
-* Per-credential `credential.expiring` events — a flagging tool with dedup state so automations can trigger per credential with entity context; Module 17 ships the daily digest instead.
-* Credential-based scheduling blocks — matching/assign currently warn on qualification gaps; hard-blocking on expired credentials is a policy change deferred until asked for.
-* Fuzzy/alias referral-source matching — Module 16 joins partners to `leads.source` by exact name; revisit when the WelcomeHome sync (18a) surfaces messy real-world source strings.
-* `leads.referral_partner_id` FK — only if partner-rename stability becomes a real problem; the enrichment-by-name join is deliberate (user decision 2026-07-19).
-* Structured care-plan editor (goals, ADLs, care tasks) — Module 15 ships care plans as tagged documents + RAG plus a free-text care summary (user decision 2026-07-19); a structured editor waits for a real need.
-* Billing/payroll export of delivered hours — the Module 15 census computes delivered vs authorized; exporting it to a billing system is connector-shaped future work.
-* Home census StatCard — surface Module 15's leakage number on the Home page.
-* Chat document export — PDF/print export of document-style chat answers (e.g. a generated care plan); deferred from Module 14 (user decision 2026-07-19, formatting-only shipped there).
-* Mobile layouts for the schedule board and automation builder — Module 14 makes the core pages responsive; these two dense surfaces stay desktop-first with horizontal scroll until a real mobile need appears.
+| LLM | Anthropic Messages API (Claude Sonnet primary; Haiku for cheap high-volume classification/routing) |
+| Embeddings / Reranking | Voyage AI |
+| Agent tooling | MCP server (custom tools) |
+| Automations | Custom in-app engine — event listeners + cron, durable runs, steps via the tool seam (no n8n) |
+| Observability | LangSmith |

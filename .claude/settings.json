@@ -31,5 +31,17 @@
         "Bash(git push:*)"
       ],
       "defaultMode": "acceptEdits"
+    },
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "python .claude/scripts/roadmap_status.py"
+            }
+          ]
+        }
+      ]
     }
   }
