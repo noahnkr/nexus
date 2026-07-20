@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { CalendarDays, CheckCircle2, FileText, ListTodo, ScrollText, Zap } from "lucide-react";
 import { api, type EventOut, type HomeSummary } from "@/lib/api";
-import { useAuth } from "@/lib/auth";
+import { displayName, useAuth } from "@/lib/auth";
 import { StatCard } from "@/components/home/StatCard";
 import { QuickActions } from "@/components/home/QuickActions";
 import { RecentActivity } from "@/components/home/RecentActivity";
@@ -29,7 +29,7 @@ function longDate(): string {
 // Realtime here by design).
 export function HomePage() {
   const { session } = useAuth();
-  const name = (session?.user?.email ?? "").split("@")[0] || "there";
+  const name = displayName(session);
 
   const [summary, setSummary] = useState<HomeSummary | null>(null);
   const [events, setEvents] = useState<EventOut[]>([]);
