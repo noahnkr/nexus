@@ -14,7 +14,7 @@ tools/entities.py, and the connector writers.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from psycopg.rows import dict_row
 
@@ -68,7 +68,7 @@ async def week_hours(conn, resource_id: str, ref: datetime | str) -> float:
         return float((await cur.fetchone())["hours"])
 
 
-async def week_hours_map(conn, ref: datetime | str) -> dict[str, float]:
+async def week_hours_map(conn, ref: date | datetime | str) -> dict[str, float]:
     """{resource_id: scheduled_hours} for the ISO week containing `ref`, one query.
     The board's `hours_this_week` uses this; the matcher uses the same buckets."""
     async with conn.cursor(row_factory=dict_row) as cur:
@@ -168,11 +168,14 @@ async def rank_candidates(conn, schedule_row: dict) -> list[dict]:
         client_langs = {str(x) for x in (client["languages"] or [])}
         client_prefs = {str(x) for x in (client["preferences"] or [])}
 
-        # Roster.
+        # Roster. Inactive caregivers (M18) are excluded outright — they are off
+        # the schedule board too, so they can never be ranked for a shift. Their
+        # past visits are untouched; only future staffing ignores them.
         await cur.execute(
             """select id, name, phone, zip, languages, traits, region_ids,
                       qualification_ids, availability
-                 from public.resources"""
+                 from public.resources
+                where status = 'active'"""
         )
         roster = await cur.fetchall()
 

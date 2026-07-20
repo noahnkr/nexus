@@ -17,7 +17,7 @@ CORE_TABLES = [
 ]
 ENTITY_TABLES = [
     "regions", "qualifications", "leads", "clients", "resources", "schedules",
-    "referral_partners",
+    "referral_partners", "resource_credentials",
 ]
 
 

@@ -56,6 +56,7 @@ from ..services.automations.entities import (
     ENTITY_TABLES,
     EVENT_ENTITY_TYPES,
     EVENT_PAYLOAD_FIELDS,
+    EVENT_PREFIX_ENTITY_TYPES,
     entity_catalog,
     entity_field_suggestions,
     humanize,
@@ -77,6 +78,8 @@ _KNOWN_EVENT_TYPES = [
     "applicant.created", "applicant.stage_changed",
     "referral_partner.created", "referral_partner.updated",
     "referral_partner.deleted",
+    "resource.created", "resource.updated", "resource.status_changed",
+    "credential.added", "credential.updated", "credential.removed",
 ]
 
 # The five core trigger fields every event carries, with plain-language labels
@@ -346,7 +349,8 @@ async def _build_field_catalog(conn, event_types: list[str]) -> FieldCatalog:
     }
 
     # event -> entity: declared first, observed most-frequent fills unknowns, then
-    # the prefix heuristic (`lead.created` -> `lead`) covers anything left.
+    # the prefix heuristics cover anything left — the seam's prefix map
+    # (`credential.*` -> `resource`) before the plain `lead.created` -> `lead` rule.
     event_entity: dict[str, str] = dict(EVENT_ENTITY_TYPES)
     async with conn.cursor() as cur:
         await cur.execute(
@@ -359,7 +363,10 @@ async def _build_field_catalog(conn, event_types: list[str]) -> FieldCatalog:
     for event_type in event_types:
         if event_type not in event_entity:
             prefix = event_type.split(".")[0]
-            if prefix in ENTITY_TABLES:
+            mapped = EVENT_PREFIX_ENTITY_TYPES.get(prefix)
+            if mapped is not None:
+                event_entity[event_type] = mapped
+            elif prefix in ENTITY_TABLES:
                 event_entity[event_type] = prefix
 
     return FieldCatalog(

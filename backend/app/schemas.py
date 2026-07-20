@@ -447,6 +447,7 @@ class CaregiverRosterOut(BaseModel):
     qualification_ids: list[str] = []
     region_ids: list[str] = []
     availability: dict[str, Any] = {}
+    status: str = "active"  # M18 lifecycle; the board lists active caregivers only
     hours_this_week: float = 0.0  # scheduled hours in the board's ISO week
 
 
@@ -526,6 +527,8 @@ class RosterPatch(BaseModel):
     languages: list[str] | None = None
     traits: list[str] | None = None
     availability: dict[str, Any] | None = None
+    # M18: flipping this emits `resource.status_changed`, not `resource.updated`.
+    status: str | None = None
 
 
 class NotifyBody(BaseModel):
@@ -885,3 +888,75 @@ class ReferralMetrics(BaseModel):
     totals: ReferralTotals
     months: list[str] = []  # the ordered 'YYYY-MM' window (oldest first)
     monthly: list[MonthCount] = []  # ALL leads per month (the overall trend row)
+
+
+# ---------------------------------------------------------------------------
+# Workforce & compliance (Module 18) — the Roster tab's payloads. Credential
+# `status`/`days_left` are DERIVED at read time by services/views/workforce.py;
+# nothing here is stored, so a renewal is reflected the moment it is saved.
+# ---------------------------------------------------------------------------
+class CredentialOut(BaseModel):
+    """One dated credential on a caregiver, with its read-time expiry standing."""
+    id: str
+    resource_id: str
+    qualification_id: str
+    qualification_name: str
+    issued_at: date | None = None
+    expires_at: date | None = None  # null = does not expire
+    status: str  # valid | expiring | expired | no_expiry (derived)
+    days_left: int | None = None  # negative once past; null for a no-expiry row
+    notes: str | None = None
+
+
+class CredentialCreate(BaseModel):
+    resource_id: str
+    qualification_id: str
+    issued_at: date | None = None
+    expires_at: date | None = None
+    notes: str | None = None
+
+
+class CredentialPatch(BaseModel):
+    """Partial update of the dates/notes. The (caregiver, qualification) pair is
+    the row's identity — change it by deleting and re-adding, so the unique key
+    can never be edited into a collision."""
+    issued_at: date | None = None
+    expires_at: date | None = None
+    notes: str | None = None
+
+
+class RosterCaregiverOut(BaseModel):
+    """One Roster-tab row — ACTIVE AND INACTIVE caregivers appear here (unlike the
+    board's roster). `utilization` is null when capacity is unknown, never 0."""
+    id: str
+    name: str
+    phone: str | None = None
+    email: str | None = None
+    status: str = "active"
+    address: str | None = None
+    zip: str | None = None
+    languages: list[str] = []
+    traits: list[str] = []
+    qualification_ids: list[str] = []
+    region_ids: list[str] = []
+    availability: dict[str, Any] = {}
+    hours_this_week: float = 0.0
+    available_hours: float | None = None  # null when none declared
+    utilization: float | None = None  # % scheduled ÷ available; uncapped
+    credentials: list[CredentialOut] = []
+
+
+class RosterMetrics(BaseModel):
+    """The compliance strip's four numbers. Credential counts and the utilization
+    average cover ACTIVE caregivers only."""
+    active_count: int = 0
+    inactive_count: int = 0
+    avg_utilization: float | None = None  # null when nobody declares availability
+    expiring_count: int = 0
+    expired_count: int = 0
+    credential_count: int = 0
+
+
+class WorkforceRoster(BaseModel):
+    metrics: RosterMetrics
+    caregivers: list[RosterCaregiverOut] = []

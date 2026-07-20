@@ -21,6 +21,7 @@ TABLE_ALLOWLIST = frozenset({
     "leads",
     "clients",
     "resources",
+    "resource_credentials",
     "schedules",
     "regions",
     "qualifications",

@@ -553,6 +553,10 @@ export interface ScheduleVisit {
 // A weekday -> time-range list, e.g. { mon: ["08:00-16:00"] }.
 export type Availability = Record<string, string[]>;
 
+// M18 lifecycle. An `inactive` caregiver is excluded from matching and the board
+// roster; the Roster tab is the one surface that lists them.
+export type ResourceStatus = "active" | "inactive";
+
 export interface CaregiverRoster {
   id: string;
   name: string;
@@ -565,6 +569,7 @@ export interface CaregiverRoster {
   qualification_ids: string[];
   region_ids: string[];
   availability: Availability;
+  status: ResourceStatus;
   hours_this_week: number;
 }
 
@@ -636,6 +641,9 @@ export interface RosterPatch {
   languages?: string[];
   traits?: string[];
   availability?: Availability;
+  // Flipping this emits `resource.status_changed` (not `resource.updated`) — it is
+  // a staffing event, not a field edit.
+  status?: ResourceStatus;
 }
 
 export interface NotifyResult {
@@ -901,6 +909,72 @@ export interface ReferralMetrics {
   totals: ReferralTotals;
   months: string[]; // ordered 'YYYY-MM' window (oldest first)
   monthly: MonthCount[]; // ALL leads per month (the overall trend row)
+}
+
+// --- Workforce & compliance (Module 18, vertical seam) -----------------------
+// Every derived value below (`status`, `days_left`, `available_hours`,
+// `utilization`) is computed server-side by services/views/workforce.py. The
+// frontend formats them and does NO compliance or capacity math of its own.
+export type CredentialStatus = "valid" | "expiring" | "expired" | "no_expiry";
+
+export interface Credential {
+  id: string;
+  resource_id: string;
+  qualification_id: string;
+  qualification_name: string;
+  issued_at: string | null; // YYYY-MM-DD
+  expires_at: string | null; // null = does not expire
+  status: CredentialStatus; // derived at read time
+  days_left: number | null; // negative once past; null for a no-expiry row
+  notes: string | null;
+}
+
+export interface CredentialCreate {
+  resource_id: string;
+  qualification_id: string;
+  issued_at?: string | null;
+  expires_at?: string | null;
+  notes?: string | null;
+}
+
+export interface CredentialPatch {
+  issued_at?: string | null;
+  expires_at?: string | null;
+  notes?: string | null;
+}
+
+// One Roster-tab row — active AND inactive caregivers appear here.
+export interface RosterCaregiver {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  status: ResourceStatus;
+  address: string | null;
+  zip: string | null;
+  languages: string[];
+  traits: string[];
+  qualification_ids: string[];
+  region_ids: string[];
+  availability: Availability;
+  hours_this_week: number;
+  available_hours: number | null; // null when none declared
+  utilization: number | null; // % scheduled ÷ available; uncapped
+  credentials: Credential[];
+}
+
+export interface RosterMetrics {
+  active_count: number;
+  inactive_count: number;
+  avg_utilization: number | null; // null when nobody declares availability
+  expiring_count: number;
+  expired_count: number;
+  credential_count: number;
+}
+
+export interface WorkforceRoster {
+  metrics: RosterMetrics;
+  caregivers: RosterCaregiver[];
 }
 
 // --- Home summary ------------------------------------------------------------
@@ -1254,6 +1328,28 @@ export const api = {
     }).then(json<Partner>),
   deletePartner: (id: string) =>
     authFetch(`/api/referrals/partners/${id}`, { method: "DELETE" }).then((r) => {
+      if (!r.ok && r.status !== 204) throw new Error(`delete failed: ${r.status}`);
+    }),
+
+  // --- Workforce & compliance (Module 18) ---
+  getWorkforceRoster: (week?: string) =>
+    authFetch(`/api/workforce/roster${queryString({ week })}`).then(
+      json<WorkforceRoster>,
+    ),
+  createCredential: (body: CredentialCreate) =>
+    authFetch("/api/workforce/credentials", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<Credential>),
+  patchCredential: (id: string, body: CredentialPatch) =>
+    authFetch(`/api/workforce/credentials/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<Credential>),
+  deleteCredential: (id: string) =>
+    authFetch(`/api/workforce/credentials/${id}`, { method: "DELETE" }).then((r) => {
       if (!r.ok && r.status !== 204) throw new Error(`delete failed: ${r.status}`);
     }),
 };

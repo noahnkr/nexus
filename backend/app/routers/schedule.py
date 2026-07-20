@@ -61,6 +61,7 @@ from ..services.views.schedule import (
     create_visits,
     set_outcome,
 )
+from ..services.views.workforce import RESOURCE_STATUS_KEYS, is_valid_resource_status
 
 router = APIRouter(prefix="/api", tags=["schedule"])
 
@@ -150,13 +151,26 @@ async def _load_visits(conn, ids: list[str], qmap: dict[str, str]) -> list[Sched
     return [_visit_out(r, qmap) for r in rows]
 
 
-async def _roster(conn, ref: date) -> list[CaregiverRosterOut]:
+async def _roster(
+    conn, ref: date, resource_id: str | None = None
+) -> list[CaregiverRosterOut]:
+    """The board's caregiver rail — ACTIVE caregivers only (M18). Someone who has
+    left can't be staffed, so they don't belong on a staffing surface; the Roster
+    tab (`/api/workforce/roster`) is the one place that lists everyone.
+
+    Pass `resource_id` to fetch exactly one caregiver REGARDLESS of status — the
+    PATCH response must still describe a caregiver it just deactivated.
+    """
     hours = await week_hours_map(conn, ref)
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             """select id, name, phone, email, address, zip, languages, traits,
-                      qualification_ids, region_ids, availability
-                 from public.resources order by name"""
+                      qualification_ids, region_ids, availability, status
+                 from public.resources
+                where (%(id)s::uuid is null and status = 'active')
+                   or id = %(id)s::uuid
+                order by name""",
+            {"id": resource_id},
         )
         rows = await cur.fetchall()
     return [
@@ -172,6 +186,7 @@ async def _roster(conn, ref: date) -> list[CaregiverRosterOut]:
             qualification_ids=[str(x) for x in (r["qualification_ids"] or [])],
             region_ids=[str(x) for x in (r["region_ids"] or [])],
             availability=r["availability"] or {},
+            status=r["status"],
             hours_this_week=round(hours.get(str(r["id"]), 0.0), 2),
         )
         for r in rows
@@ -222,10 +237,22 @@ async def patch_roster(
     conn=Depends(tenant_conn),
     tenant_id: str = Depends(get_tenant_id),
 ):
-    """Edit a caregiver's contact/address/zip/languages/traits/availability. Emits
-    one resource.updated naming the changed fields; a no-op emits nothing."""
+    """Edit a caregiver's contact/address/zip/languages/traits/availability, and/or
+    flip their active/inactive status. Still the SINGLE writer of `resources`.
+
+    Field edits emit one `resource.updated` naming the changed fields; a status
+    change emits its own `resource.status_changed` (from/to), because deactivating
+    someone is a staffing event automations should be able to trigger on, not a
+    field edit. A mixed PATCH emits both. A no-op emits nothing.
+    """
     resource_id = _valid_uuid(resource_id, "resource_id")
     provided = body.model_fields_set
+
+    if "status" in provided and not is_valid_resource_status(body.status):
+        raise HTTPException(
+            status_code=422,
+            detail=f"status must be one of: {', '.join(RESOURCE_STATUS_KEYS)}",
+        )
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             "select * from public.resources where id = %s for update", (resource_id,)
@@ -276,7 +303,35 @@ async def patch_roster(
             },
         )
 
-    roster = await _roster(conn, _week_start(None))
+    # --- status change: its own event, so an automation can trigger on someone
+    # leaving without having to inspect a `fields` array (the stage-changed
+    # convention). Written after the field edits so one PATCH emits at most two
+    # events in a readable order.
+    if "status" in provided and body.status != current["status"]:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "update public.resources set status = %s where id = %s",
+                (body.status, resource_id),
+            )
+        name = updates.get("name", current["name"])
+        verb = "deactivated" if body.status == "inactive" else "reactivated"
+        await log_event(
+            conn,
+            tenant_id=tenant_id,
+            source_system="user",
+            event_type="resource.status_changed",
+            entity_type="resource",
+            entity_id=resource_id,
+            payload={
+                "summary": f"Caregiver '{name}' {verb}",
+                "from": current["status"],
+                "to": body.status,
+            },
+        )
+
+    # Fetch this one caregiver by id so the response still describes them after a
+    # deactivation (the unfiltered board roster would no longer list them).
+    roster = await _roster(conn, _week_start(None), resource_id=resource_id)
     match = next((c for c in roster if c.id == resource_id), None)
     assert match is not None
     return match

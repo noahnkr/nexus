@@ -127,9 +127,18 @@ async def _scenario():
             repl_row = {**base_row, "replaces_schedule_id": replaced_id}
             run_repl = await rank_candidates(conn, repl_row)
 
+            # M18: deactivating a caregiver removes them from the candidate pool
+            # outright — no score, no warning, just absent (they can't be staffed).
+            await conn.execute(
+                "update public.resources set status = 'inactive' where id = %s",
+                (ids["C"],),
+            )
+            run_inactive = await rank_candidates(conn, base_row)
+
             out["run1"] = run1
             out["run2"] = run2
             out["run_repl"] = run_repl
+            out["run_inactive"] = run_inactive
 
             # cleanup (schedules first for the FK), then resources + reference rows.
             for sid in sched_ids:
@@ -186,3 +195,16 @@ def test_matching():
 
     # Deterministic order across two runs.
     assert [c["resource_id"] for c in out["run2"]] == order
+
+
+def test_inactive_caregivers_are_not_candidates():
+    """M18: an inactive caregiver disappears from ranking entirely — the rest of
+    the ordering is untouched, so this is an exclusion, not a scoring penalty."""
+    out = asyncio.run(_scenario())
+    ids = out["ids"]
+    before = [c["resource_id"] for c in out["run1"]]
+    after = [c["resource_id"] for c in out["run_inactive"]]
+
+    assert ids["C"] in before
+    assert ids["C"] not in after
+    assert after == [rid for rid in before if rid != ids["C"]]

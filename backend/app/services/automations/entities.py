@@ -76,6 +76,13 @@ EVENT_ENTITY_TYPES: dict[str, str] = {
     "schedule.checked_out": "schedule",
     "resource.created": "resource",
     "resource.updated": "resource",
+    "resource.status_changed": "resource",
+    # Credential events ride the RESOURCE entity so they land on the caregiver's
+    # timeline — `resource_credentials` is dated evidence about a caregiver, not a
+    # canonical entity of its own (see EVENT_PREFIX_ENTITY_TYPES).
+    "credential.added": "resource",
+    "credential.updated": "resource",
+    "credential.removed": "resource",
     "applicant.created": "applicant",
     "applicant.updated": "applicant",
     "applicant.stage_changed": "applicant",
@@ -89,6 +96,14 @@ EVENT_ENTITY_TYPES: dict[str, str] = {
     "email.received": "lead",
     "message.received": "lead",
     "calendar.event.updated": "schedule",
+}
+
+# Event-type PREFIX -> entity type, for families whose prefix is not itself an
+# entity (`credential.added` is about a `resource`). The builder's field catalog
+# falls back to this before the plain `prefix in ENTITY_TABLES` heuristic, so a new
+# credential-ish event type is mapped without touching core.
+EVENT_PREFIX_ENTITY_TYPES: dict[str, str] = {
+    "credential": "resource",
 }
 
 _STAGE_CHANGE_FIELDS: list[tuple[str, str]] = [
@@ -108,6 +123,13 @@ EVENT_PAYLOAD_FIELDS: dict[str, list[tuple[str, str]]] = {
     "applicant.stage_changed": _STAGE_CHANGE_FIELDS,
     "schedule.called_out": [("replacement_schedule_id", "Replacement shift id")],
     "client.status_changed": [("from", "Previous status"), ("to", "New status")],
+    "resource.status_changed": [("from", "Previous status"), ("to", "New status")],
+    "credential.added": [
+        ("qualification", "Credential name"),
+        ("expires_at", "Expiry date"),
+    ],
+    "credential.updated": [("qualification", "Credential name"), ("fields", "Changed fields")],
+    "credential.removed": [("qualification", "Credential name")],
     "schedule.checked_out": [("actual_hours", "Actual hours worked")],
     "sms.received": [
         ("detail.message.from", "Sender number"),

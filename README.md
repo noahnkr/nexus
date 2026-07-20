@@ -1008,6 +1008,151 @@ the ≥ 3-lead bar surfaces `website` (33.3%) as the best converter — the plan
 that it would stay null on the seed was a miscount; the code follows the explicit
 ≥ 3 contract.
 
+### Workforce & compliance — backend (Module 18a)
+
+Who can actually work, how booked they are, and whose paperwork is about to lapse.
+An expired credential can mean a caregiver legally *can't* work a shift, so this is
+the one compliance surface in the app. The Roster **rides the Caregivers surface**
+(it is not a fifth sanctioned vertical surface): its seam is
+`services/views/workforce.py` + `routers/workforce.py`, alongside
+`services/views/matching.py` and the `entities_workforce` migration.
+
+**Credentials are dated evidence over qualifications.** `qualifications` stays an
+undated per-tenant vocabulary and `resources.qualification_ids` stays the *matching*
+input ("has this skill"). A `resource_credentials` row — one per (caregiver,
+qualification), unique — adds "…issued on X, expires on Y". Only credentials that
+actually renew need a row; a one-time sign-off is a null `expires_at`.
+
+**Status is derived at read time, never stored** (the M16a EVV-flag rule): from
+`expires_at` and the in-seam `EXPIRING_DAYS = 60` constant —
+
+| status | meaning |
+| --- | --- |
+| `expired` | `expires_at` is before today |
+| `expiring` | expires today through +60 days |
+| `valid` | expires more than 60 days out |
+| `no_expiry` | `expires_at` is null — does not renew |
+
+No status column, no detector loop, no LLM. Entering a renewal fixes the badge
+instantly, and a badge can never go stale.
+
+**Active / inactive.** `resources.status` (`active` default) is a lifecycle flag,
+not a delete — home-care staff leave and come back, and their visit history has to
+survive either way. An **inactive** caregiver is excluded from
+`matching.rank_candidates` and from the schedule board's roster
+(`routers/schedule._roster`); `GET /api/workforce/roster` is the one surface that
+lists everyone. Their credentials also drop out of the compliance counts — a lapsed
+CPR for someone who isn't working is not an emergency.
+
+**Endpoints.**
+
+| method | path | notes |
+| --- | --- | --- |
+| `GET` | `/api/workforce/roster?week=YYYY-MM-DD` | `{metrics, caregivers}` — active **and** inactive rows with `hours_this_week`, `available_hours`, `utilization`, and their credentials |
+| `POST` | `/api/workforce/credentials` | duplicate (caregiver, qualification) → 409; unknown id → 404; `expires_at < issued_at` → 422 |
+| `PATCH` | `/api/workforce/credentials/{id}` | dates/notes; names the changed fields; a no-op emits nothing |
+| `DELETE` | `/api/workforce/credentials/{id}` | 204; the caregiver keeps the underlying qualification |
+| `PATCH` | `/api/roster/{resource_id}` | gains `status` — still the **single** writer of `resources` |
+
+Utilization is deterministic seam math: `available_hours` sums the
+`resources.availability` jsonb windows (via the matcher's own `_hm`, so "available"
+means one thing everywhere), and `utilization = scheduled ÷ available` as an
+uncapped percentage. A caregiver with **no declared availability gets `null`, not
+0%** — we don't know their capacity, and 0 would read as "idle".
+
+**Events.** All credential writes are human REST (`source_system='user'` — an office
+user recording a renewal is the approver, so no approval gate) and carry
+`entity_type='resource'`, so `credential.added` / `credential.updated` /
+`credential.removed` land on the *caregiver's* timeline. Flipping the status emits
+its own `resource.status_changed` (from/to + "Caregiver 'Derek Hsu' deactivated"),
+not a `resource.updated` — deactivation is a staffing event automations trigger on.
+A mixed PATCH emits both.
+
+**Agent tool.** `list_expiring_credentials(days_ahead?)` — `safe=True`, read-only,
+active caregivers only, already-expired rows included, soonest first. `days_ahead`
+is clamped 1–365 rather than rejected. Its content line is the plain-language digest
+text ("2 credentials need attention: Brian Okafor's HHA expired 10 days ago; Carmen
+Ruiz's Dementia Care expires in 30 days."), so an automation can file it verbatim.
+
+**The daily credential-digest recipe.** Not seeded — build it in the Automations
+builder (or POST it, then activate; create always lands `paused`). This exact JSON
+is exercised end-to-end through the real engine by
+`backend/tests/test_credential_digest.py`:
+
+```jsonc
+{
+  "name": "Daily credential digest",
+  "trigger": { "type": "cron", "expression": "0 7 * * *" },
+  "conditions": [],
+  "steps": [
+    { "type": "tool", "tool": "list_expiring_credentials",
+      "input": { "days_ahead": 60 }, "save_as": "expiry" },
+    { "type": "condition",
+      "conditions": [{ "field": "context.expiry.count", "op": "gt", "value": 0 }] },
+    { "type": "tool", "tool": "create_task",
+      "input": { "title": "Caregiver credentials need attention",
+                 "description": "{{context.expiry.summary}}",
+                 "priority": "high" } }
+  ]
+}
+```
+
+```bash
+# create (lands paused), then activate
+curl -s -X POST localhost:8000/api/automations \
+  -H "Authorization: Bearer $JWT" -H 'content-type: application/json' \
+  -d @digest.json | jq -r .id            # -> <id>
+curl -s -X PATCH localhost:8000/api/automations/<id> \
+  -H "Authorization: Bearer $JWT" -H 'content-type: application/json' \
+  -d '{"status":"active"}'
+```
+
+A step's `save_as` result resolves under the **`context.`** scope root
+(`context.expiry.count`), which is why the IF reads the way it does. The step
+short-circuits on a quiet day, so no empty "0 credentials" task ever reaches the
+queue. No `generate` step — deliberately, so the recipe (and its test) runs with no
+Anthropic key.
+
+### Roster tab — workforce frontend (Module 18b)
+
+`/caregivers` is now **one people surface with two tabs** (user-locked — no new nav
+entry): **Pipeline** (the hiring funnel, moved verbatim into
+`components/caregivers/PipelineTab.tsx`) and **Roster** (the working staff). The
+active tab lives in the URL, so `/caregivers?tab=roster` is linkable and survives a
+reload; switching to Roster drops the pipeline's own `stage`/`source`/`q` filters,
+which are meaningless there.
+
+**Roster tab** (`RosterTab`) makes one call to `GET /api/workforce/roster` and
+renders both halves of the response:
+
+- **`ComplianceStrip`** — Active caregivers (inactive count as a subline), Average
+  utilization, Expiring soon (warning tone only when > 0), Expired (destructive tone
+  only when > 0). A clean compliance strip looks clean.
+- **`RosterTable`** — active first then inactive (muted), with hours-this-week /
+  available hours, a hand-rolled utilization bar (warning-toned and pegged full past
+  100%; an em dash when availability is undeclared), and `CredentialBadges` chips
+  ordered worst-first. Search and the status filter (`ui/Select`) are client-side —
+  the roster is low tens of people.
+
+**Shared drawer, not forked.** `components/schedule/CaregiverDrawer` is still ONE
+component, used by both the schedule board and the Roster tab, and now carries a
+**Credentials** editor (`CredentialsEditor` — add / edit dates+notes / delete, with
+the duplicate-pair 409 shown inline beside the picker) and an **active/inactive**
+toggle (deactivation is confirmed: "removed from the schedule board and matching;
+visit history is kept"). Both sections write *immediately* rather than on "Save
+changes" — deactivating someone pulls them off staffing surfaces, so batching it
+behind a Save button would hide it. The drawer fetches its own credentials and
+status from the workforce roster, which is what lets one component serve a board
+payload that has neither.
+
+**No client-side compliance math.** Every credential status, day count, available-
+hours figure, and utilization percentage comes from 18a's response;
+`lib/workforce.ts` (status meta + tones, `fmtUtilization` / `fmtDaysLeft` /
+`fmtHours` / `fmtDate`, credential and roster sorting, the client-side filter) only
+formats and orders them, and is vitest-covered. Realtime on `resources` +
+`resource_credentials` debounce-refetches the single roster call, so adding a
+credential in the drawer moves the strip without a refresh.
+
 ## Notes on Templating
 
 This repo is designed so that a second deployment, in a different vertical, requires:
