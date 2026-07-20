@@ -45,6 +45,10 @@ const SOURCE_ACCENT: Record<string, string> = {
   mcp: "bg-warning",
   webhook: "bg-destructive",
   system: "bg-muted-foreground",
+  // Connector sources (Module 18). They share the `webhook` accent because to a
+  // reader scanning the log they mean the same thing — "this came from outside" —
+  // regardless of whether it was pushed to us or polled by us.
+  welcomehome: "bg-destructive",
 };
 
 export function sourceAccent(source: string | null | undefined): string {

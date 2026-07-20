@@ -34,14 +34,13 @@ from ..schemas import (
     LeadSummaryOut,
     RegionRef,
 )
-from ..services.automations import supersede_sequence_runs
 from ..services.events import log_event
 from ..services.views.leads import (
     LEAD_SUMMARY_INTRO,
     LEAD_SUMMARY_SPAN,
+    change_stage,
     funnel_metrics,
     is_valid_stage,
-    stage_label,
 )
 from ..services.views.summary import (
     SummaryUnavailable,
@@ -260,39 +259,26 @@ async def patch_lead(
         assert row is not None
         return _lead_out(row)
 
-    set_parts: list[str] = []
-    params: list = []
-    for field, value in basic_updates.items():
-        set_parts.append(f"{field} = %s")
-        params.append(value)
-    if status_change:
-        set_parts.append("status = %s")
-        params.append(status_change[1])
-    params.append(lead_id)
-    async with conn.cursor() as cur:
-        await cur.execute(
-            f"update public.leads set {', '.join(set_parts)} where id = %s", params
-        )
+    # Basic fields first, so a rename landing in the same PATCH is already visible
+    # when change_stage reads the name for its event summary (and so the
+    # stage_changed event still precedes lead.updated, as it always has).
+    if basic_updates:
+        set_parts: list[str] = []
+        params: list = []
+        for field, value in basic_updates.items():
+            set_parts.append(f"{field} = %s")
+            params.append(value)
+        params.append(lead_id)
+        async with conn.cursor() as cur:
+            await cur.execute(
+                f"update public.leads set {', '.join(set_parts)} where id = %s", params
+            )
 
     name = basic_updates.get("name", current["name"])
     if status_change:
-        frm, to = status_change
-        # Advancing a lead ends any in-flight sequence bound to the leads view for
-        # this lead, so it can't receive a colder stage's message after moving on.
-        await supersede_sequence_runs(conn, tenant_id, "lead", lead_id, view="leads")
-        await log_event(
-            conn,
-            tenant_id=tenant_id,
-            source_system="user",
-            event_type="lead.stage_changed",
-            entity_type="lead",
-            entity_id=lead_id,
-            payload={
-                "summary": f"Lead '{name}' moved from {stage_label(frm)} to {stage_label(to)}",
-                "from": frm,
-                "to": to,
-            },
-        )
+        # The one writer of leads.status (18a) — same event this route used to
+        # emit inline, now shared with the tool handler and the CRM sync.
+        await change_stage(conn, tenant_id, "user", lead_id, status_change[1])
     if basic_updates:
         changed = ", ".join(sorted(basic_updates.keys()))
         await log_event(

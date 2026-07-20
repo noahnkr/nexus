@@ -1,12 +1,12 @@
-"""Connector webhook ingress — the single inbound path for external systems.
+"""Connector webhook ingress — the HTTP door onto the shared ingest seam.
 
 POST /api/webhooks/{source}
 
-Every inbound event enters here (real webhooks now; poll/export sources re-POST
-through the same URL in M7). The order is deliberate and enforces the CLAUDE.md
-rules: verify the signature BEFORE any DB access (unauthenticated garbage never
-touches the database), then write the raw receipt to `events`, then resolve each
-normalized event to a canonical entity via `external_ids`.
+This route owns HTTP concerns only: verify the signature BEFORE any DB access
+(unauthenticated garbage never touches the database), parse the body, map
+failures to status codes. Everything after that — the raw receipt, adapter
+normalization, entity resolution — lives in `services/connectors/ingest.py`, the
+single ingest seam that poll-based sync runners share (Module 18a).
 
 Tenant identity comes from `get_machine_tenant_id` (env `NEXUS_TENANT_ID`), not a
 user JWT: this ingress authenticates by HMAC signature, so it must never require
@@ -19,12 +19,9 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ..db import tenant_tx
 from ..deps import get_machine_tenant_id
-from ..llm import traceable
 from ..services.connectors import get_adapter
-from ..services.connectors.resolution import route_normalized_event
-from ..services.events import log_event
+from ..services.connectors.ingest import WEBHOOK_RECEIPT, ingest_payload
 
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
@@ -53,36 +50,12 @@ async def receive_webhook(
     except (json.JSONDecodeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=f"Malformed JSON body: {exc}")
 
-    # Headers as a plain dict so the traced function doesn't hold the Request.
+    # Headers as a plain dict so the ingest seam doesn't hold the Request.
     headers = {k.lower(): v for k, v in request.headers.items()}
-    return await _process_ingress(adapter, tenant_id, payload, headers)
-
-
-@traceable(run_type="chain", name="webhook_ingress")
-async def _process_ingress(adapter, tenant_id: str, payload: dict, headers: dict) -> dict:
-    async with tenant_tx(tenant_id) as conn:
-        # 1. Raw receipt — audit-worthy on its own, kept even for ack-only pings.
-        receipt_id = await log_event(
-            conn,
-            tenant_id=tenant_id,
-            source_system=adapter.source,
-            event_type="webhook.received",
-            payload={"source": adapter.source, "body": payload},
-        )
-
-        # 2. Normalize (async: real ping+fetch-back adapters call the source here).
-        result = await adapter.normalize(payload, headers)
-        if result.ack_only:
-            return {"status": "ack"}
-
-        # 3. Resolve each event to a canonical entity.
-        counts = {"received": len(result.events), "matched": 0, "created": 0, "tasks": 0}
-        for ev in result.events:
-            outcome = await route_normalized_event(conn, tenant_id, adapter, ev, receipt_id)
-            if outcome.resolution == "matched":
-                counts["matched"] += 1
-            elif outcome.resolution == "created":
-                counts["created"] += 1
-            else:
-                counts["tasks"] += 1
-        return counts
+    return await ingest_payload(
+        source,
+        payload,
+        headers,
+        tenant_id=tenant_id,
+        receipt_event_type=WEBHOOK_RECEIPT,
+    )

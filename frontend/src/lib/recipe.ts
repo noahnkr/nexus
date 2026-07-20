@@ -140,6 +140,7 @@ export const EVENT_TYPE_LABELS: Record<string, string> = {
   "lead.created": "Lead created",
   "lead.updated": "Lead updated",
   "lead.stage_changed": "Lead stage changed",
+  "lead.activity_logged": "Lead activity logged",
   "applicant.created": "Applicant created",
   "applicant.updated": "Applicant updated",
   "applicant.stage_changed": "Applicant stage changed",

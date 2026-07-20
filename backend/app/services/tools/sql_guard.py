@@ -19,6 +19,7 @@ import re
 # NOT chat_* (conversation content), NOT tenants (tenant registry).
 TABLE_ALLOWLIST = frozenset({
     "leads",
+    "lead_contacts",
     "clients",
     "resources",
     "resource_credentials",

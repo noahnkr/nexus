@@ -96,6 +96,36 @@ on conflict (id) do update set
   is_primary   = excluded.is_primary,
   notes        = excluded.notes;
 
+-- Lead location + background (18a) — CRM-fed columns. Updated in place so a
+-- re-seed refreshes them; the two leads below are the ones the connector tests
+-- and the Start-of-Care promotion path exercise.
+update public.leads set
+  address    = '412 Rosewood Lane, Carlsbad',
+  zip        = '92008',
+  background = 'Daughter called after a fall in the kitchen. Lives alone; needs help with bathing and meals four mornings a week.'
+where id = '33333333-0000-0000-0000-000000000001';
+
+update public.leads set
+  address    = '77 Birchwood Court, San Diego',
+  zip        = '92101',
+  background = 'Discharge planner referred after a hip replacement. Family reviewing the care plan.'
+where id = '33333333-0000-0000-0000-000000000002';
+
+-- Lead contacts (18a) — the family decision-makers behind an inquiry. Same shape
+-- as client_contacts by construction: Start-of-Care conversion copies these rows
+-- straight across rather than translating them.
+insert into public.lead_contacts (id, tenant_id, lead_id, name, relationship, phone, email, is_primary, notes, source) values
+  ('dddddddd-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', '33333333-0000-0000-0000-000000000001', 'Claire Ellison-Boyd', 'daughter', '+16195550301', 'claire.eb@example.com', true,  'Point of contact; works days, prefers texts after 5pm.', 'seed'),
+  ('dddddddd-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', '33333333-0000-0000-0000-000000000001', 'Trevor Ellison',      'son',      '+16195550302', null,                    false, 'Out of state; loops in on major decisions.',            'seed')
+on conflict (id) do update set
+  name         = excluded.name,
+  relationship = excluded.relationship,
+  phone        = excluded.phone,
+  email        = excluded.email,
+  is_primary   = excluded.is_primary,
+  notes        = excluded.notes,
+  source       = excluded.source;
+
 -- Resources (caregivers) with overlapping regions/qualifications. address/zip/
 -- languages/traits feed the matching engine (12a); update-in-place so a re-seed
 -- refreshes them. zips: Alicia 92008 (same zip as Walter), Carmen 92009 (North

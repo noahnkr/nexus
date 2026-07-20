@@ -32,6 +32,7 @@ from .routers import (
     workforce,
 )
 from .services.automations.scheduler import engine_loop
+from .services.connectors.sync import connectors_loop
 from .services.mcp_server import build_mcp_asgi_app, session_manager
 
 
@@ -41,19 +42,24 @@ async def lifespan(app: FastAPI):
     # The automations engine loops run in-process (one process, one pool). Started
     # only when enabled and only once the pool is open; tests use httpx
     # ASGITransport, which never runs the lifespan, so the loop stays off there.
-    engine_task: asyncio.Task | None = None
+    background: list[asyncio.Task] = []
     if settings.nexus_automations_enabled:
-        engine_task = asyncio.create_task(engine_loop())
+        background.append(asyncio.create_task(engine_loop()))
+    # The connector sync loop polls sources with no webhooks (Module 18a). Same
+    # shape as the automations loop; a runner with no credentials simply never
+    # registers, so this is a no-op cycle on an unconfigured deployment.
+    if settings.nexus_connectors_enabled:
+        background.append(asyncio.create_task(connectors_loop()))
     # The MCP session manager owns a task group for all /mcp sessions; its run()
     # context must wrap the app's serving lifetime.
     async with session_manager.run():
         try:
             yield
         finally:
-            if engine_task is not None:
-                engine_task.cancel()
+            for task in background:
+                task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
-                    await engine_task
+                    await task
             await close_pool()
 
 

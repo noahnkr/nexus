@@ -20,7 +20,7 @@ from ..events import log_event
 from ..views.clients import STATUS_KEYS as CLIENT_STATUSES
 from ..views.clients import status_label as client_status_label
 from ..views.clients import census_metrics, client_week_hours, payer_label
-from ..views.leads import stage_label
+from ..views.leads import StageChangeError, change_stage, stage_label
 from ..views.matching import rank_candidates
 from ..views.schedule import (
     ScheduleError,
@@ -486,46 +486,36 @@ async def _update_lead_status(conn, args: dict) -> ToolResult:
     status = args.get("status")
     if status not in LEAD_STATUSES:
         raise ToolInputError(f"'status' must be one of: {', '.join(LEAD_STATUSES)}.")
-    # Read the current status first so the stage_changed `from` is truthful.
-    row = await _fetch_one(
-        conn, "select name, status from public.leads where id=%s", (lead_id,)
-    )
-    if row is None:
-        raise ToolInputError("No lead found with that id.")
-    name, previous = row["name"], row["status"]
-    await conn.execute("update public.leads set status=%s where id=%s", (status, lead_id))
-
-    # Emit the first-class stage event (9a) so chat/MCP/automation stage moves
-    # appear in the lead's timeline and (chat/MCP only — the M7 loop guard skips
-    # automation-sourced events) fire 9b's per-stage sequences. Same payload shape
-    # as the REST PATCH. Only on an actual change, so `from`/`to` differ.
-    if status != previous:
-        inv = current_invocation()
-        if inv is not None:
-            # Advancing the lead ends any in-flight sequence bound to the leads view
-            # for it (same supersede the REST route applies). Lazy import avoids the
-            # tools<->automations cycle (the engine imports execute_tool).
-            from ..automations import supersede_sequence_runs
-
-            await supersede_sequence_runs(
-                conn, inv["tenant_id"], "lead", lead_id, view="leads"
+    # Delegate to the ONE writer of leads.status (18a). It emits the first-class
+    # stage event (9a) — so chat/MCP/automation stage moves appear in the lead's
+    # timeline and (chat/MCP only — the M7 loop guard skips automation-sourced
+    # events) fire 9b's per-stage sequences — and supersedes in-flight sequences,
+    # all in this handler's transaction. Identical behavior to the REST PATCH,
+    # because it is now literally the same code.
+    inv = current_invocation()
+    if inv is None:
+        # No invocation context (never true through execute_tool, which is the only
+        # sanctioned caller). Fall back to the bare write rather than guessing a
+        # tenant to attribute the event to.
+        row = await _fetch_one(
+            conn, "select name, status from public.leads where id=%s", (lead_id,)
+        )
+        if row is None:
+            raise ToolInputError("No lead found with that id.")
+        await conn.execute(
+            "update public.leads set status=%s where id=%s", (status, lead_id)
+        )
+        name = row["name"]
+    else:
+        try:
+            result = await change_stage(
+                conn, inv["tenant_id"], inv["source_system"], lead_id, status
             )
-            await log_event(
-                conn,
-                tenant_id=inv["tenant_id"],
-                source_system=inv["source_system"],
-                event_type="lead.stage_changed",
-                entity_type="lead",
-                entity_id=lead_id,
-                payload={
-                    "summary": (
-                        f"Lead '{name}' moved from {stage_label(previous)} "
-                        f"to {stage_label(status)}"
-                    ),
-                    "from": previous,
-                    "to": status,
-                },
+        except StageChangeError as exc:
+            raise ToolInputError(
+                "No lead found with that id." if exc.not_found else str(exc)
             )
+        name = result["name"]
     return ToolResult(
         f"Updated lead '{name}' to {status}.", {"lead_id": lead_id, "status": status}
     )
@@ -1291,7 +1281,16 @@ current tenant — never add a tenant_id condition):
 
 leads(id uuid, name text, phone text, email text, source text,
       status text {new|contacted|qualified|converted|lost},
-      region_id uuid -> regions.id, requirements jsonb, created_at timestamptz)
+      region_id uuid -> regions.id, requirements jsonb,
+      address text, zip text, background text, created_at timestamptz)
+      -- address/zip/background are CRM-fed (Module 18a). `background` is the
+      -- free-text story behind the inquiry; a converted lead hands address/zip
+      -- to its client row.
+lead_contacts(id uuid, lead_id uuid -> leads.id, name text, relationship text,
+              phone text, email text, is_primary boolean, notes text, source text,
+              created_at timestamptz)
+              -- family / decision-maker contacts for a lead. Same shape as
+              -- client_contacts; copied across on Start-of-Care conversion.
 clients(id uuid, lead_id uuid -> leads.id, name text, phone text, email text,
         status text {active|hospital_hold|discharged}, requirements jsonb,
         address text, zip text, languages text[], preferences text[],

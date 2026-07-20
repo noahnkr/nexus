@@ -41,6 +41,10 @@ def summarize_event(event_type: str, source_system: str, payload: dict | None) -
         return "Assistant replied in chat"
     if event_type == "webhook.received":
         return f"Received a webhook from {source_system}"
+    # The polled twin of the above (Module 18a): sources with no webhooks are
+    # swept by the connector sync loop, and the Event Log should say so.
+    if event_type == "connector.received":
+        return f"Synced a record from {source_system}"
 
     # 3. Generic fallback: humanize the event_type.
     return _humanize(event_type)

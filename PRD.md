@@ -538,6 +538,21 @@ The naming above (`resources`, `regions`, `qualifications`) is intentionally gen
 
 ## Subsequent Modules (summary)
 
+### Knowledge architecture rework — Communications tier & RAG hygiene (planned before Module 18c)
+
+**Motivation (decision 2026-07-20).** Module 18a routes long call/note narratives into the `documents` corpus (one `document` row per activity, generic type-label filename). That was fine at 18a's volume, but it conflates two different kinds of knowledge and does not survive the messaging connectors: 18c (GoTo — every call + SMS) and 18d (Gmail — every email) would pour a high-volume, low-value-per-item firehose straight into the curated document index. The limiting factor is **not** embedding cost (a single franchise's whole history is ~1–5M tokens, well inside Voyage's free tier) — it's **corpus pollution and category conflation**: a phone note competing with a care plan in the same vector pool degrades retrieval, and messages (high-volume, valuable-in-aggregate) want different storage, ingestion, and retrieval than authored documents (low-volume, valuable-each). This rework lands **before 18c** so the messaging connectors build into the right substrate.
+
+**Three tiers of knowledge, not one bucket:**
+1. **Documents** — authored, durable (care plans, assessments, contracts, uploads). Keep `documents`/`document_chunks` as-is but *clean*: only real documents enter the corpus.
+2. **Communications** — SMS, emails, call transcripts, notes in their own store (channel, direction, timestamp, body, entity link, optional embedding), **not** documents. Core rule: **decouple "store the message" from "embed the message."** Every message is stored and timeline-linked always (cheap, structured); only a policy-selected subset is embedded (summarize-then-embed › substantive channels only › lazy/on-demand › crude length threshold).
+3. **Derived knowledge** — per-entity **communication profile** (tone, responsiveness, channel/timing preferences) generated from message history and stored via the existing `entity_summaries` seam. Tone/style is a *summary* problem, not a retrieval one: one profile per entity beats vector-searching 500 messages, and it never touches the doc corpus.
+
+**Supporting mechanics:**
+- **`kind`/`source` discriminator** on searchable chunks (document | communication | summary) → scoped agent tools ("search care documents" vs "search this client's message history" vs "how does this family communicate"), plus **retention**: a message stays on the timeline forever but can leave the vector index after N months (timeline ≠ search index).
+- **Event as the spine** — a message is (or hangs off) an `events` row; the body attaches to it; any embedding links back to the event id, so timeline, tone-summary, and retrieved chunk all reference the same event. This is also where cross-source **de-duplication** happens (the WelcomeHome caller-ID-on-GoTo case: one call = one spine event with up to two source rows attached), not in the document layer.
+- **Split the history seed** — a fast **structured pass** (events + communication rows, no embeddings; the timeline and the agent's facts light up immediately) separate from an optional, **batched, resumable embed pass** (Voyage batches ~128 texts/call vs 18a's one-doc-at-a-time) and a **summary pass** that builds the tier-3 profiles.
+
+**Net:** documents stay a curated corpus, messages become a governed communications store with selective embedding, and "what is this family like to work with" becomes a cheap generated profile — three cleanly separated concerns instead of one pool. This is the "unified entity graph / knowledge management" investment that is the differentiated half of the system (system-of-intelligence over the external systems of record), not a mirror view.
 
 ### Future Plans
 * Retention / at-risk view — rule-based flags (declining hours vs 4-week average, repeated no-shows, short tenure via a new `hire_date`) on the roster; deferred from Module 17 (user decision 2026-07-19).

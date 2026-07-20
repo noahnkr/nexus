@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from psycopg.rows import dict_row
 
 from ..events import log_event
-from .entity_writers import WRITERS
+from .entity_writers import UPDATERS, WRITERS
 
 
 @dataclass
@@ -54,12 +54,18 @@ async def route_normalized_event(
             "update public.external_ids set last_synced_at = now() where id = %s",
             (mapping["id"],),
         )
+        # A polled source re-sends the whole record; apply the changes before
+        # logging so the event and the row it describes agree. An entity type with
+        # no registered updater keeps the original log-only behavior.
+        updater = UPDATERS.get(ev.entity_type) if ev.updates_entity else None
+        if updater is not None:
+            await updater(conn, tenant_id, entity_id, ev.attributes, adapter.source)
         event_id = await _log(conn, tenant_id, adapter, ev, "matched", entity_id)
         return RouteOutcome("matched", event_id, entity_id=entity_id)
 
     writer = WRITERS.get(ev.entity_type) if ev.creates_entity else None
     if writer is not None:
-        entity_id = await writer(conn, tenant_id, ev.attributes)
+        entity_id = await writer(conn, tenant_id, ev.attributes, adapter.source)
         await conn.execute(
             """insert into public.external_ids
                  (tenant_id, entity_type, entity_id, source_system, external_id)
