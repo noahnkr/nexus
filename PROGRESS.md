@@ -15,30 +15,25 @@ Task status: `[ ]` not started · `[-]` in progress · `[x]` done.
 ## Next up
 
 ### v1.1.4 — One smart summary per entity · fix
-No plan yet. Merge the separate communication-profile card into the smart summary so one "at a glance" section covers the record, activity, communication history, and significant facts. Leads and clients lose the second card and its `comm-profile` endpoints; caregivers gain comms coverage in the summary they already have. Seam-local to `services/views/summary.py` — the `entity_summaries.kind` column stays.
+No plan yet. Merge the separate communication-profile card into the smart summary so one "at a glance" section covers the record, activity, communication history, and significant facts. The summary draws on the entity's correspondence through retrieval over the communications tier rather than a second cached artifact. Leads and clients lose the second card and its `comm-profile` endpoints; caregivers gain comms coverage in the summary they already have. Seam-local to `services/views/summary.py` — the `entity_summaries.kind` column stays.
+
+**Buildable now** — it depends on the comms *tier*, not on which connector fills it. Expect thin comms coverage until v1.2.0/v1.3.0 land (and thinner again after v1.3.1 retires WelcomeHome as a source); the structure is right either way, so this is sequenced first deliberately rather than waiting on the connectors.
 
 ## Queued (planned, blocked or later)
 
-### v1.2.0 — WellSky Personal Care sync · new capability
-Plan: `.claude/plans/v1.2.0-wellsky-sync.md`. **Blocked: API credentials from a WellSky rep** — build/tests run offline against fixtures; live checks are credential-gated. Rides the v1.0.0 sync loop + ingest seam. Client files land in the **documents** tier; any message/note content goes through `ingest_communication` (v1.1.0), never into `documents`.
-- `[ ]` Config (`WELLSKY_*`) + `ws_client.py` (token cache, pagination, retries) + fixtures; offline + credential-gated live token test
-- `[ ]` `ws_map.py` (active-clients-only, deactivation→discharge, hired-caregivers-only, appointments/encounters/contacts); offline mapping tests
-- `[ ]` People sync: link-or-create writers (phone→name match vs promoted/manual rows, ambiguity → review task); gated tests
-- `[ ]` Schedule seam `sync_upsert_visit` + EVV `check_in`/`check_out` (idempotent re-sweeps); gated seam tests
-- `[ ]` Window sweeps (per-client horizon, encounter lookback) with DB diffing; offline two-cycle tests
-- `[ ]` Client files (DocumentReference) → RAG, entity-tagged; offline + gated retrieval tests
-- `[ ]` Wrap-up: README scope table, `.env.example`, event accent; full pytest + build green
+_Reordered 2026-07-21 around one framing: **one authoritative source per channel, feeding one summary per entity.** GoTo and Gmail move ahead of WellSky (their OAuth is self-service; WellSky waits on a third party), the WelcomeHome comms retirement follows them, and the old v1.5.0 cross-source reconciler is retired — see `ROADMAP.md`._
 
-### v1.3.0 — GoTo Connect · new capability
-Plan: `.claude/plans/v1.3.0-goto-connect.md`. **Ops step: one-time browser OAuth consent → refresh token in `.env`.**
+### v1.2.0 — GoTo Connect · new capability
+Plan: `.claude/plans/v1.2.0-goto-connect.md`. **The authoritative source for calls + SMS** — transcripts land in the communications tier and therefore in RAG. **Ops step: one-time browser OAuth consent → refresh token in `.env`** (self-service).
 - `[ ]` OAuth bootstrap script + shared refresh helper; gated live token test
 - `[ ]` WebSocket channel + call/SMS subscription manager (state/renewal in `connector_state`)
 - `[ ]` WebSocket bridge runner (reconnect/backoff → `ingest_payload`); fake-WS test + live call → timeline
+- `[ ]` Known-numbers guard so WelcomeHome's bridge number doesn't ingest as real client calls
 - `[ ]` Real `send_sms` behind the existing gated tool; mocked tests + live approved delivery
 - `[ ]` Wrap-up: README bootstrap runbook; full pytest; live walks recorded
 
-### v1.4.0 — Gmail & Google Calendar · new capability
-Plan: `.claude/plans/v1.4.0-google-workspace.md`. **Ops step: GCP OAuth client + consent → `GOOGLE_*` in `.env`.** Scope: ongoing correspondence + calendar — **lead intake stays WelcomeHome's job; Gmail never creates leads.**
+### v1.3.0 — Gmail & Google Calendar · new capability
+Plan: `.claude/plans/v1.3.0-google-workspace.md`. **The authoritative source for email.** Lead intake stays WelcomeHome's job — Gmail never creates leads. **Ops step: GCP OAuth client + consent → `GOOGLE_*` in `.env`** (self-service).
 - `[ ]` Google OAuth bootstrap + `google_client.py` (shared TokenSource); gated live profile test
 - `[ ]` Gmail poll runner (historyId cursor, no backfill, SENT filtered); aggregator-notification senders skipped, human correspondence → comms; live email → timeline/RAG
 - `[ ]` Real `send_email` (gate unchanged, `email.sent` event); mocked + live approved delivery
@@ -46,8 +41,18 @@ Plan: `.claude/plans/v1.4.0-google-workspace.md`. **Ops step: GCP OAuth client +
 - `[ ]` Calendar tools: safe `list_calendar_events`, gated `create_calendar_event`; gated tests + live chat-scheduled tour
 - `[ ]` Wrap-up: README Google runbook; full pytest; `connector_sync` spans verified
 
-### v1.5.0 — Cross-source communication identity · new capability
-No plan yet. **After v1.3.0 + v1.4.0** — the duplicates don't exist until GoTo and Gmail do, and the merge rules need real payloads to tune. One interaction = one row whatever it came in through: a canonical action shape + fuzzy reconciler in the `ingest_communication` seam, channel classification lifted out of per-adapter maps, and suppression of WelcomeHome's provisional bridge-call legs. The narrow bridge-number guard lands earlier, inside v1.3.0.
+### v1.3.1 — Retire WelcomeHome as a communications source · fix
+No plan yet. **After v1.2.0 + v1.3.0** — with real sources live, WelcomeHome goes back to leads + referrers and stops feeding the communications tier; its activity data is unstructured and lossy. Absorbs the retired v1.5.0. Open scope: the fate of CRM-native activities (Notes, Assessments, Home Visits) on the timeline, and whether existing WH-sourced `communications` rows are pruned.
+
+### v1.4.0 — WellSky Personal Care sync · new capability
+Plan: `.claude/plans/v1.4.0-wellsky-sync.md`. **Deferred to last — blocked on API credentials from a WellSky rep**, the only dependency that isn't self-service. Build/tests run offline against fixtures; live checks are credential-gated. Rides the v1.0.0 sync loop + ingest seam. Client files land in the **documents** tier; any message/note content goes through `ingest_communication`, never into `documents`.
+- `[ ]` Config (`WELLSKY_*`) + `ws_client.py` (token cache, pagination, retries) + fixtures; offline + credential-gated live token test
+- `[ ]` `ws_map.py` (active-clients-only, deactivation→discharge, hired-caregivers-only, appointments/encounters/contacts); offline mapping tests
+- `[ ]` People sync: link-or-create writers (phone→name match vs promoted/manual rows, ambiguity → review task); gated tests
+- `[ ]` Schedule seam `sync_upsert_visit` + EVV `check_in`/`check_out` (idempotent re-sweeps); gated seam tests
+- `[ ]` Window sweeps (per-client horizon, encounter lookback) with DB diffing; offline two-cycle tests
+- `[ ]` Client files (DocumentReference) → RAG, entity-tagged; offline + gated retrieval tests
+- `[ ]` Wrap-up: README scope table, `.env.example`, event accent; full pytest + build green
 
 ## Carried-over pending validations
 

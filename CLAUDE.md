@@ -81,7 +81,7 @@ See `PRD.md` for full scope, module breakdown, and success criteria. This file g
 ## Planning
 
 - Save all plans to `.claude/plans/`, one per version
-- Naming convention: `vX.Y.Z-{name}.md` (e.g. `v1.0.0-welcomehome-sync.md`, `v1.2.0-wellsky-sync.md`)
+- Naming convention: `vX.Y.Z-{name}.md` (e.g. `v1.0.0-welcomehome-sync.md`, `v1.2.0-goto-connect.md`)
 - Plans should be detailed enough to execute without ambiguity
 - Each task in the plan must include at least one validation test to verify it works
 - Assess complexity and single-pass feasibility — can an agent realistically complete this in one go?
