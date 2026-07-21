@@ -2,6 +2,15 @@
 
 Notable changes to the Nexus Control Center, newest first. Each entry is a high-level summary of what the version delivers; implementation detail lives in the plans (`.claude/plans/`) and the code. Versioning follows `ROADMAP.md` (semantic, by impact).
 
+## v1.1.4 — One summary per person · 2026-07-21
+
+Lead and client profiles used to carry two AI cards: a summary of the record and activity, and a separate communication profile describing how the person communicates. Two cards meant two Regenerate buttons and a split read of the same person. Now there's one:
+
+- **A single "at a glance" summary** covering who they are, what has happened, and — when their correspondence shows it — how they communicate: preferred channel, tone, how readily they reply.
+- **Caregiver profiles gained correspondence coverage** they never had. The old communication profile only ever existed for leads and clients; the merged summary is generic, so applicants pick it up automatically.
+- **One cache, one Regenerate.** The summary is built on demand and refreshed when you ask for it.
+- After a WelcomeHome history import, touched leads' summaries are **cleared rather than rebuilt**, so the next time you open a profile it reflects the newly-imported messages — at no cost for leads nobody opens.
+
 ## v1.1.3 — Timelines you can actually read · 2026-07-21
 
 Entity timelines are the office's read on what has been happening with a lead, and most of what's on them comes from the CRM. They were a wall of one-line summaries with a raw-JSON expander. Now:
