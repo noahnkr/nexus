@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, HeartPulse } from "lucide-react";
+import { ArrowLeft, HeartPulse, MessageSquare } from "lucide-react";
 import { api, type ClientDetail, type ClientFacets, type ClientPatch } from "@/lib/api";
 import { parseApiError } from "@/lib/utils";
 import { statusMeta } from "@/lib/clients";
@@ -132,6 +132,15 @@ export function ClientProfilePage() {
             entityId={client.id}
             getSummary={() => api.getClientSummary(client.id)}
             regenerateSummary={() => api.regenerateClientSummary(client.id)}
+          />
+
+          <SmartSummary
+            entityId={client.id}
+            label="Communication profile"
+            icon={MessageSquare}
+            unavailableText="Communication profiles are unavailable — no language-model key is configured."
+            getSummary={() => api.getClientCommProfile(client.id)}
+            regenerateSummary={() => api.regenerateClientCommProfile(client.id)}
           />
 
           <div className="grid gap-4 lg:grid-cols-2">

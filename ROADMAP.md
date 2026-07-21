@@ -19,7 +19,7 @@ Each planned version has a plan at `.claude/plans/vX.Y.Z-<name>.md` before it's 
 
 ## Shipped
 
-The foundation (v0.1.0 → v0.18.0) and the first live connector (v1.0.0). Full notes in `CHANGELOG.md`.
+The foundation (v0.1.0 → v0.18.0), the first live connector (v1.0.0), and the communications knowledge tier (v1.1.0). Full notes in `CHANGELOG.md`.
 
 | Version | Capability |
 |---|---|
@@ -42,6 +42,7 @@ The foundation (v0.1.0 → v0.18.0) and the first live connector (v1.0.0). Full 
 | v0.17.0 | Referral-source dashboard |
 | v0.18.0 | Workforce & compliance (roster + credentials) |
 | **v1.0.0** | **WelcomeHome CRM sync** — first live external data flowing end-to-end |
+| **v1.1.0** | **Communications tier & RAG hygiene** — messages get their own store; per-entity communication profile |
 
 ## Planned
 
@@ -49,7 +50,6 @@ In build order. The next thing to build is the top of this list.
 
 | Version | Capability | Plan | Notes |
 |---|---|---|---|
-| v1.1.0 | Communications tier & RAG hygiene | *(to plan)* | Separate messages from documents; store-all/embed-selectively; per-entity comms profile. **Foundational — lands before the messaging connectors so they build into the right substrate.** |
 | v1.2.0 | WellSky Personal Care sync | `v1.2.0-wellsky-sync.md` | Line-of-business system: active clients, hired caregivers, full schedule + EVV, client files → RAG. **Blocked on API credentials (WellSky rep).** |
 | v1.3.0 | GoTo Connect | `v1.3.0-goto-connect.md` | Calls + SMS via WebSocket bridge; real `send_sms`. One-time OAuth consent ops step. |
 | v1.4.0 | Gmail & Google Calendar | `v1.4.0-google-workspace.md` | Correspondence (not lead intake — WelcomeHome owns that) + calendar; real `send_email`, gated `create_calendar_event`. One-time OAuth ops step. |
@@ -67,3 +67,6 @@ Unslotted ideas. Each gets a version and a plan when prioritized — until then 
 - **Home census stat card** — surface the revenue-leakage number on the Home page.
 - **Chat document export** — PDF/print export of document-style chat answers.
 - **Mobile layouts for the schedule board & automation builder** — the two dense surfaces that stay desktop-first today.
+- **Test-suite isolation from dev-DB residue** — several tests assert on exact seed counts (e.g. `run_report` expecting exactly six leads), so rows left behind by an interrupted run fail them spuriously and cost real debugging time. Either seed/teardown per run or assert on relative deltas.
+- **Manual "log a communication" entry** — the communications tier is connector/seed-fed only; an office user can't record a walk-in or a personal-phone call. Would need the write path plus a UI surface.
+- **Comm-profile freshness** — profiles are cached until someone hits Regenerate, so they silently go stale as new messages arrive. Options: show the message count the profile was built from, or invalidate on new communications.

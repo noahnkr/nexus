@@ -127,29 +127,32 @@ async def generate_entity_summary(
 # M10 reuses. Tenant scoping is by RLS on the connection; the upsert passes
 # tenant_id explicitly so the stored value is never ambiguous (events.py pattern).
 # ---------------------------------------------------------------------------
-async def _read_cache(conn, entity_type: str, entity_id: str) -> dict | None:
+async def _read_cache(
+    conn, entity_type: str, entity_id: str, kind: str = "smart_summary"
+) -> dict | None:
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             "select summary, generated_at from public.entity_summaries "
-            "where entity_type = %s and entity_id = %s",
-            (entity_type, entity_id),
+            "where entity_type = %s and entity_id = %s and kind = %s",
+            (entity_type, entity_id, kind),
         )
         row = await cur.fetchone()
     return {"summary": row["summary"], "generated_at": row["generated_at"]} if row else None
 
 
 async def _write_cache(
-    conn, tenant_id: str, entity_type: str, entity_id: str, result: dict
+    conn, tenant_id: str, entity_type: str, entity_id: str, result: dict,
+    kind: str = "smart_summary",
 ) -> None:
     await conn.execute(
         """insert into public.entity_summaries
-             (tenant_id, entity_type, entity_id, summary, model, generated_at)
-           values (%s, %s, %s, %s, %s, %s)
-           on conflict (tenant_id, entity_type, entity_id) do update
+             (tenant_id, entity_type, entity_id, kind, summary, model, generated_at)
+           values (%s, %s, %s, %s, %s, %s, %s)
+           on conflict (tenant_id, entity_type, entity_id, kind) do update
              set summary = excluded.summary,
                  model = excluded.model,
                  generated_at = excluded.generated_at""",
-        (tenant_id, entity_type, entity_id, result["summary"],
+        (tenant_id, entity_type, entity_id, kind, result["summary"],
          settings.fast_model, result["generated_at"]),
     )
 
@@ -195,4 +198,115 @@ async def regenerate_entity_summary(
         prompt_intro=prompt_intro, span_name=span_name,
     )
     await _write_cache(conn, tenant_id, entity_type, entity_id, result)
+    return result
+
+
+# ===========================================================================
+# Communication profile (v1.1.0) — tier-3 DERIVED KNOWLEDGE. A per-entity read of
+# how someone communicates (tone, responsiveness, preferred channel, recurring
+# topics), generated from their communications history and cached under the
+# `comm_profile` kind alongside the smart summary. Tone/style is a summary
+# problem, not a retrieval one — so this reads whole messages, it does not embed.
+# ===========================================================================
+COMM_PROFILE_KIND = "comm_profile"
+_MAX_COMMS = 30
+
+COMM_PROFILE_INTRO = (
+    "You are profiling how one person communicates, for a coordinator who is about "
+    "to reach out to them. From the messages below, describe their tone, how "
+    "responsive they are, which channel they seem to prefer, and any recurring "
+    "topics or requests. Base it only on the messages provided; do not invent "
+    "details or give scheduling advice."
+)
+
+
+async def _recent_communications(conn, entity_type: str, entity_id: str) -> list[str]:
+    """The entity's recent communications as plain lines (oldest first). Bodies are
+    trimmed to a snippet so a long transcript can't dominate the prompt."""
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """select channel, direction, occurred_at, body
+                 from public.communications
+                where entity_type = %s and entity_id = %s
+                order by occurred_at desc
+                limit %s""",
+            (entity_type, entity_id, _MAX_COMMS),
+        )
+        rows = await cur.fetchall()
+    rows.reverse()  # chronological reads better for a "how do they communicate" view
+    lines = []
+    for r in rows:
+        body = " ".join((r["body"] or "").split())
+        if len(body) > 300:
+            body = body[:297].rstrip() + "…"
+        direction = f" {r['direction']}" if r["direction"] else ""
+        lines.append(f"{r['occurred_at'].date()} [{r['channel']}{direction}]: {body}")
+    return lines
+
+
+async def generate_comm_profile(
+    conn, *, entity_type: str, entity_id: str, span_name: str = "comm_profile",
+) -> dict:
+    """Generate a communication profile from the entity's messages. Returns
+    `{"summary": str, "generated_at": datetime}`. With no messages, returns a plain
+    placeholder without calling the model. Raises SummaryUnavailable when messages
+    exist but no Anthropic key is configured."""
+    comms = await _recent_communications(conn, entity_type, entity_id)
+    now = datetime.now(timezone.utc)
+    if not comms:
+        return {
+            "summary": "No communications on record yet for this contact.",
+            "generated_at": now,
+        }
+    if not settings.anthropic_api_key:
+        raise SummaryUnavailable("communication profiles require an Anthropic API key")
+
+    user_content = "Messages (oldest first):\n" + "\n".join(comms)
+    system = (
+        f"{COMM_PROFILE_INTRO}\n\n"
+        "Write 2-4 short sentences of plain prose for a busy office coordinator. "
+        "No preamble, no bullet points, no headings — just the profile."
+    )
+
+    @traceable(run_type="chain", name=span_name)
+    async def _run() -> str:
+        client = get_anthropic()
+        response = await client.messages.create(
+            model=settings.fast_model,
+            max_tokens=_MAX_TOKENS,
+            system=system,
+            messages=[{"role": "user", "content": user_content}],
+        )
+        parts = [
+            getattr(b, "text", "")
+            for b in response.content
+            if getattr(b, "type", None) == "text"
+        ]
+        return "".join(parts).strip()
+
+    return {"summary": await _run(), "generated_at": now}
+
+
+async def get_or_generate_comm_profile(
+    conn, tenant_id: str, *, entity_type: str, entity_id: str,
+) -> dict:
+    """Cached comm profile, or generate + cache once. Cheap on repeat opens."""
+    cached = await _read_cache(conn, entity_type, entity_id, COMM_PROFILE_KIND)
+    if cached is not None:
+        return cached
+    result = await generate_comm_profile(
+        conn, entity_type=entity_type, entity_id=entity_id,
+    )
+    await _write_cache(conn, tenant_id, entity_type, entity_id, result, COMM_PROFILE_KIND)
+    return result
+
+
+async def regenerate_comm_profile(
+    conn, tenant_id: str, *, entity_type: str, entity_id: str,
+) -> dict:
+    """Always regenerate the comm profile and overwrite its cache row."""
+    result = await generate_comm_profile(
+        conn, entity_type=entity_type, entity_id=entity_id,
+    )
+    await _write_cache(conn, tenant_id, entity_type, entity_id, result, COMM_PROFILE_KIND)
     return result

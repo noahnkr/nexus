@@ -44,7 +44,9 @@ from ..services.views.leads import (
 )
 from ..services.views.summary import (
     SummaryUnavailable,
+    get_or_generate_comm_profile,
     get_or_generate_entity_summary,
+    regenerate_comm_profile,
     regenerate_entity_summary,
 )
 
@@ -346,6 +348,49 @@ async def regenerate_lead_summary(
             entity_id=lead_id,
             prompt_intro=LEAD_SUMMARY_INTRO,
             span_name=LEAD_SUMMARY_SPAN,
+        )
+    except SummaryUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return LeadSummaryOut(**result)
+
+
+@router.get("/leads/{lead_id}/comm-profile", response_model=LeadSummaryOut)
+async def lead_comm_profile(
+    lead_id: str,
+    conn=Depends(tenant_conn),
+    tenant_id: str = Depends(get_tenant_id),
+):
+    """AI communication profile for a lead (tier-3 derived knowledge): tone,
+    responsiveness, preferred channel, recurring topics, from their message
+    history. Cached under the `comm_profile` kind. 503 when a profile would need
+    generating but no Anthropic key is configured."""
+    lead_id = _valid_uuid(lead_id, "lead_id")
+    row = await _load_lead(conn, lead_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="lead not found")
+    try:
+        result = await get_or_generate_comm_profile(
+            conn, tenant_id, entity_type="lead", entity_id=lead_id,
+        )
+    except SummaryUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return LeadSummaryOut(**result)
+
+
+@router.post("/leads/{lead_id}/comm-profile/regenerate", response_model=LeadSummaryOut)
+async def regenerate_lead_comm_profile(
+    lead_id: str,
+    conn=Depends(tenant_conn),
+    tenant_id: str = Depends(get_tenant_id),
+):
+    """Force a fresh communication profile and overwrite its cache row."""
+    lead_id = _valid_uuid(lead_id, "lead_id")
+    row = await _load_lead(conn, lead_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="lead not found")
+    try:
+        result = await regenerate_comm_profile(
+            conn, tenant_id, entity_type="lead", entity_id=lead_id,
         )
     except SummaryUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))

@@ -59,7 +59,9 @@ from ..services.views.clients import (
 )
 from ..services.views.summary import (
     SummaryUnavailable,
+    get_or_generate_comm_profile,
     get_or_generate_entity_summary,
+    regenerate_comm_profile,
     regenerate_entity_summary,
 )
 # Reuse the Schedule board's visit shaping so the profile's visit rows are byte-for-
@@ -708,6 +710,47 @@ async def regenerate_client_summary(
             entity_id=client_id,
             prompt_intro=CLIENT_SUMMARY_INTRO,
             span_name=CLIENT_SUMMARY_SPAN,
+        )
+    except SummaryUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return ClientSummaryOut(**result)
+
+
+@router.get("/clients/{client_id}/comm-profile", response_model=ClientSummaryOut)
+async def client_comm_profile(
+    client_id: str,
+    conn=Depends(tenant_conn),
+    tenant_id: str = Depends(get_tenant_id),
+):
+    """AI communication profile for a client (tier-3 derived knowledge): tone,
+    responsiveness, preferred channel, recurring topics, from their message
+    history. Cached under the `comm_profile` kind. 503 when generating would need
+    an Anthropic key that isn't configured."""
+    client_id = _valid_uuid(client_id, "client_id")
+    await _require_client(conn, client_id)
+    try:
+        result = await get_or_generate_comm_profile(
+            conn, tenant_id, entity_type="client", entity_id=client_id,
+        )
+    except SummaryUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return ClientSummaryOut(**result)
+
+
+@router.post(
+    "/clients/{client_id}/comm-profile/regenerate", response_model=ClientSummaryOut
+)
+async def regenerate_client_comm_profile(
+    client_id: str,
+    conn=Depends(tenant_conn),
+    tenant_id: str = Depends(get_tenant_id),
+):
+    """Force a fresh communication profile and overwrite its cache row."""
+    client_id = _valid_uuid(client_id, "client_id")
+    await _require_client(conn, client_id)
+    try:
+        result = await regenerate_comm_profile(
+            conn, tenant_id, entity_type="client", entity_id=client_id,
         )
     except SummaryUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RefreshCw, Sparkles } from "lucide-react";
+import { LucideIcon, RefreshCw, Sparkles } from "lucide-react";
 import { parseApiError, relativeTime } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -22,10 +22,16 @@ export function SmartSummary({
   entityId,
   getSummary,
   regenerateSummary,
+  label = "Smart summary",
+  icon: Icon = Sparkles,
+  unavailableText = "AI summaries are unavailable — no language-model key is configured.",
 }: {
   entityId: string;
   getSummary: () => Promise<SummaryResult>;
   regenerateSummary: () => Promise<SummaryResult>;
+  label?: string;
+  icon?: LucideIcon;
+  unavailableText?: string;
 }) {
   const fns = useRef({ getSummary, regenerateSummary });
   fns.current = { getSummary, regenerateSummary };
@@ -64,8 +70,8 @@ export function SmartSummary({
       <CardContent className="p-4">
         <div className="mb-2 flex items-center justify-between">
           <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-            <Sparkles className="h-3.5 w-3.5 text-primary" />
-            Smart summary
+            <Icon className="h-3.5 w-3.5 text-primary" />
+            {label}
             {generatedAt && !loading && (
               <span className="font-normal">· {relativeTime(generatedAt)}</span>
             )}
@@ -89,9 +95,7 @@ export function SmartSummary({
             <Skeleton className="h-4 w-3/4" />
           </div>
         ) : unavailable ? (
-          <p className="text-sm text-muted-foreground">
-            AI summaries are unavailable — no language-model key is configured.
-          </p>
+          <p className="text-sm text-muted-foreground">{unavailableText}</p>
         ) : error ? (
           <p className="text-sm text-muted-foreground">{error}</p>
         ) : (

@@ -43,7 +43,7 @@ Re-templating for a new vertical touches only the seam: the entity migration, th
 
 ### Canonical Data Model & Tenancy
 
-The single source of truth every other component reads and writes. Core operational tables (identical across deployments): `events`, `tasks`, `pending_actions`, `external_ids`, `documents`/`document_chunks`, `chat_threads`/`chat_messages`, `connector_state`, `automations`/`automation_runs`, `entity_summaries`, `tenant_settings`.
+The single source of truth every other component reads and writes. Core operational tables (identical across deployments): `events`, `tasks`, `pending_actions`, `external_ids`, `documents`/`document_chunks`, `communications`/`communication_chunks`, `chat_threads`/`chat_messages`, `connector_state`, `automations`/`automation_runs`, `entity_summaries`, `tenant_settings`.
 
 - **Cross-system identity** — `external_ids` maps every external record to its canonical entity. Every inbound connector event resolves through it before anything else is written, so one real-world thing is one entity no matter how many systems report it.
 - **Tenancy** — every table carries `tenant_id` and is protected by Postgres row-level security (four policies each), so isolation is enforced at the database, not just in application code. The backend connects as a dedicated RLS-subject role (`nexus_app`, no bypass) and sets the tenant per request; the service-role key is reserved for migrations/ops and storage. Single active tenant this phase, tenant-aware throughout to keep the multi-tenant path open.
@@ -58,9 +58,9 @@ How unstructured context becomes answerable. Documents (PDF/DOCX/HTML/Markdown) 
 
 Knowledge is organized as **three tiers**, kept deliberately separate so a high-volume, low-value stream never pollutes the curated corpus:
 
-1. **Documents** — authored, durable material (care plans, assessments, contracts). The curated RAG corpus.
-2. **Communications** — messages, calls, emails: their own store, timeline-linked always, embedded *selectively* (store ≠ embed). *(Foundational tier planned as v1.1.0, ahead of the messaging connectors.)*
-3. **Derived knowledge** — per-entity summaries and communication profiles (tone, responsiveness) generated from history via the `entity_summaries` seam. Tone/style is a summary problem, not a retrieval one.
+1. **Documents** — uploaded or connector-fed *files* (care plans, assessments, contracts). The curated RAG corpus, retrieved by `search_documents`. Untouched by the communications tier.
+2. **Communications** — messages, calls, emails: their own store (`communications`/`communication_chunks`), timeline-linked always via an `events` spine, embedded *selectively* (store ≠ embed — short messages are stored but not embedded; long-form correspondence is chunked into its own index). Retrieved by a separate `search_communications` tool so a high-volume stream never pollutes the curated corpus. `ingest_communication` is the one entry every message source (CRM activities, and the v1.3/v1.4 messaging connectors) writes through. *(Built in v1.1.0, ahead of the messaging connectors.)*
+3. **Derived knowledge** — per-entity summaries and communication profiles (tone, responsiveness, preferred channel) generated from history via the `entity_summaries` seam (discriminated by `kind`). Tone/style is a summary problem, not a retrieval one.
 
 ### Tool Layer & MCP
 

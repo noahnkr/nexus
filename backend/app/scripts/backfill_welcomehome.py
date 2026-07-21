@@ -11,9 +11,9 @@ Design points that matter if you change this:
 
   * IDEMPOTENT AND RESUMABLE. Everything goes through the same ingest seam the
     loop uses, so re-running is safe — prospects re-match by external id, contacts
-    upsert, transcripts dedupe by activity id. Progress is checkpointed under its
-    own `connector_state` key, so an interrupted run resumes at the table it was
-    on rather than starting over.
+    upsert, messages dedupe by (source, activity id) in the communications tier.
+    Progress is checkpointed under its own `connector_state` key, so an interrupted
+    run resumes at the table it was on rather than starting over.
   * IT NEVER PRINTS RECORD CONTENTS. Counts and table names only. This is real
     client health information and an operator's terminal scrollback is not a
     place for it.
@@ -48,8 +48,13 @@ from ..services.connectors.ingest import SYNC_RECEIPT, ingest_payload
 from ..services.connectors.sync import read_state, write_state
 from ..services.connectors.wh_client import WelcomeHomeClient, WelcomeHomeError
 from ..services.connectors.wh_map import build_refs, map_activity, map_prospect
-from ..services.connectors.wh_runner import SOURCE, _collect
-from ..services.ingestion import ingest_text
+from ..services.connectors.wh_runner import SOURCE, _activity_event_id, _collect
+from ..services.communications import (
+    embed_communication,
+    ingest_communication,
+    should_embed,
+)
+from ..services.views.summary import SummaryUnavailable, regenerate_comm_profile
 
 # Its own cursor key, so an interrupted backfill never disturbs the live loop's.
 BACKFILL_KEY = "welcomehome_backfill"
@@ -62,10 +67,80 @@ def _progress(label: str, n: int) -> None:
     print(f"  {label}: {n}", flush=True)
 
 
+async def _ingest_communications(tenant_id: str, pending: list[tuple]) -> int:
+    """The split history-seed for messages, in three passes so a large import stays
+    efficient (bulk-store first, then embed, then summarize) rather than doing an
+    embeddings round-trip inline per row:
+
+      1. STRUCTURED — store every message (embed=False), fast, no network. Idempotent
+         by (source, activity id), so a resumed run re-finds rows instead of dupes.
+      2. BATCHED EMBED — embed only the messages the policy selects (should_embed).
+      3. SUMMARY — regenerate the communication profile for each touched lead.
+
+    All three run outside any transaction; a single bad row is logged and skipped."""
+    print(f"Storing {len(pending)} messages (structured pass)…", flush=True)
+    to_embed: list[tuple[str, str, str]] = []   # (comm_id, body, lead_id)
+    touched_leads: set[str] = set()
+    stored = 0
+    for channel, direction, occurred_at, body, lead_id, external_id in pending:
+        try:
+            source_event_id = await _activity_event_id(tenant_id, lead_id, external_id)
+            comm_id = await ingest_communication(
+                tenant_id, channel=channel, direction=direction,
+                occurred_at=occurred_at, body=body, entity_type="lead",
+                entity_id=lead_id, source=SOURCE, external_id=external_id,
+                source_event_id=source_event_id, embed=False,
+            )
+            if comm_id is None:
+                continue
+            stored += 1
+            touched_leads.add(lead_id)
+            if should_embed(channel, body):
+                to_embed.append((comm_id, body, lead_id))
+        except Exception:  # noqa: BLE001 — one bad message is not a failed import
+            log.exception("could not store WelcomeHome message %s", external_id)
+    _progress("messages stored", stored)
+
+    print(f"Embedding {len(to_embed)} messages (batched pass)…", flush=True)
+    embedded = 0
+    for comm_id, body, lead_id in to_embed:
+        try:
+            await embed_communication(
+                tenant_id, comm_id, body=body, entity_type="lead",
+                entity_id=lead_id, source=SOURCE,
+            )
+            embedded += 1
+        except Exception:  # noqa: BLE001
+            log.exception("could not embed WelcomeHome message %s", comm_id)
+    _progress("messages embedded", embedded)
+
+    print(f"Building communication profiles for {len(touched_leads)} leads…", flush=True)
+    profiled = 0
+    for lead_id in sorted(touched_leads):
+        try:
+            async with tenant_tx(tenant_id) as conn:
+                await regenerate_comm_profile(
+                    conn, tenant_id, entity_type="lead", entity_id=lead_id,
+                )
+            profiled += 1
+        except SummaryUnavailable:
+            # No Anthropic key — profiles are optional derived knowledge; the
+            # messages are stored and retrievable regardless.
+            log.info("skipping comm profiles — no Anthropic key configured")
+            break
+        except Exception:  # noqa: BLE001
+            log.exception("could not build comm profile for lead %s", lead_id)
+    _progress("comm profiles built", profiled)
+
+    return stored
+
+
 async def _run(dry_run: bool, since: str | None) -> int:
     tenant_id = get_machine_tenant_id()
-    counts = {"prospects": 0, "activities": 0, "skipped": 0, "transcripts": 0}
-    transcripts: list[tuple] = []
+    counts = {"prospects": 0, "activities": 0, "skipped": 0, "messages": 0}
+    # (channel, direction, occurred_at, body, lead_id, activity_id) collected during
+    # the activity pass, ingested into the communications tier afterwards.
+    communications: list[tuple] = []
 
     async with WelcomeHomeClient() as client:
         print("Fetching reference vocabularies…", flush=True)
@@ -142,7 +217,8 @@ async def _run(dry_run: bool, since: str | None) -> int:
                             conn=conn,
                         )
                         counts["activities"] += 1
-                        if mapped.get("narrative") and result.get("matched"):
+                        comm = mapped.get("communication")
+                        if comm and result.get("matched"):
                             lead = await (
                                 await conn.execute(
                                     "select entity_id from public.external_ids "
@@ -151,9 +227,11 @@ async def _run(dry_run: bool, since: str | None) -> int:
                                 )
                             ).fetchone()
                             if lead:
-                                transcripts.append((
-                                    f"{mapped['activity_type']} — WelcomeHome activity",
-                                    mapped.get("notes") or "",
+                                communications.append((
+                                    comm["channel"],
+                                    comm["direction"],
+                                    comm["occurred_at"],
+                                    comm["body"],
                                     str(lead[0]),
                                     mapped["activity_id"],
                                 ))
@@ -165,20 +243,11 @@ async def _run(dry_run: bool, since: str | None) -> int:
                         conn, tenant_id, BACKFILL_KEY, {"completed_tables": sorted(done)}
                     )
 
-    # --- transcripts, outside any transaction (embeddings are network calls) ---
-    if transcripts and not dry_run:
-        print(f"Ingesting {len(transcripts)} transcripts…", flush=True)
-        for title, text, lead_id, external_id in transcripts:
-            try:
-                await ingest_text(
-                    tenant_id, title, text,
-                    entity_type="lead", entity_id=lead_id,
-                    source=SOURCE, external_id=external_id,
-                )
-                counts["transcripts"] += 1
-            except Exception:  # noqa: BLE001 — one bad transcript is not a failed import
-                log.exception("could not ingest transcript %s", external_id)
-        _progress("transcripts", counts["transcripts"])
+    # --- messages -> communications tier, outside any transaction (embeddings are
+    # network calls). See _ingest_communications for the structured / batched-embed
+    # / summary pass split.
+    if communications and not dry_run:
+        counts["messages"] = await _ingest_communications(tenant_id, communications)
 
     print("\nDone." if not dry_run else "\nDone (dry run — nothing written).")
     for key, value in counts.items():
