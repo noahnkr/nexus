@@ -2,6 +2,10 @@
 
 Notable changes to the Nexus Control Center, newest first. Each entry is a high-level summary of what the version delivers; implementation detail lives in the plans (`.claude/plans/`) and the code. Versioning follows `ROADMAP.md` (semantic, by impact).
 
+## v1.1.5 — The backend starts on Windows · 2026-07-21
+
+- **Fixed: the documented start command didn't work on Windows.** `python -m uvicorn app.main:app` would start, then fail 30 seconds later with a database pool timeout that read like a credentials problem. The real cause was an event-loop mismatch — the database driver can't use the loop Windows picks by default. The app now selects the right one at startup, so the command in the README works as written. Found during the first in-browser walk, and very likely the reason that walk kept getting deferred.
+
 ## v1.1.4 — One summary per person · 2026-07-21
 
 Lead and client profiles used to carry two AI cards: a summary of the record and activity, and a separate communication profile describing how the person communicates. Two cards meant two Regenerate buttons and a split read of the same person. Now there's one:
