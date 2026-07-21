@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, MessageSquare } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { api, type Lead, type LeadFacets, type LeadPatch } from "@/lib/api";
 import { parseApiError } from "@/lib/utils";
 import { stageLabel, stageTone } from "@/lib/leads";
@@ -117,15 +117,6 @@ export function LeadProfilePage() {
             entityId={lead.id}
             getSummary={() => api.getLeadSummary(lead.id)}
             regenerateSummary={() => api.regenerateLeadSummary(lead.id)}
-          />
-
-          <SmartSummary
-            entityId={lead.id}
-            label="Communication profile"
-            icon={MessageSquare}
-            unavailableText="Communication profiles are unavailable — no language-model key is configured."
-            getSummary={() => api.getLeadCommProfile(lead.id)}
-            regenerateSummary={() => api.regenerateLeadCommProfile(lead.id)}
           />
 
           <LeadInfoCard lead={lead} facets={facets} onPatch={onPatch} busy={busy} />

@@ -1,10 +1,12 @@
 """Split history-seed (v1.1.0, Task 7): the backfill's three-pass message ingest.
 
 `_ingest_communications` stores every message (structured pass, embed=False), then
-embeds only the should_embed-selected ones (batched pass), then builds a comm
-profile per touched entity (summary pass). Gated on NEXUS_APP_DB_URL + VOYAGE (the
-profile pass additionally needs ANTHROPIC_API_KEY; it degrades gracefully without).
-A full re-run must add no duplicate rows, chunks, or profiles.
+embeds only the should_embed-selected ones (batched pass), then INVALIDATES each
+touched entity's cached summary (v1.1.4 — the pass used to pre-build a comm
+profile; with one lazily-generated summary the right move is to drop the stale
+cache and let the next profile open rebuild it over the new correspondence).
+Gated on NEXUS_APP_DB_URL + VOYAGE. A full re-run must add no duplicate rows or
+chunks, and must leave the cache invalidated.
 """
 import asyncio
 import os
@@ -50,13 +52,13 @@ async def _row(conn, external_id):
     return comm
 
 
-async def _profile_count(conn):
+async def _summary_cache_count(conn):
     from psycopg.rows import dict_row
 
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             "select count(*) n from public.entity_summaries "
-            "where entity_id = %s and kind = 'comm_profile'", (LEAD,)
+            "where entity_id = %s and kind = 'smart_summary'", (LEAD,)
         )
         return (await cur.fetchone())["n"]
 
@@ -75,17 +77,29 @@ async def _scenario():
     out: dict = {}
     await db.open_pool()
     try:
+        # A stale cached summary predating the import — the pass must clear it.
+        async with db.tenant_tx(conftest.DEMO_TENANT) as conn:
+            await conn.execute(
+                """insert into public.entity_summaries
+                     (tenant_id, entity_type, entity_id, kind, summary)
+                   values (%s, 'lead', %s, 'smart_summary', 'stale pre-import summary')
+                   on conflict (tenant_id, entity_type, entity_id, kind) do update
+                     set summary = excluded.summary""",
+                (conftest.DEMO_TENANT, LEAD),
+            )
+            out["cached_before"] = await _summary_cache_count(conn)
+
         out["stored"] = await _ingest_communications(conftest.DEMO_TENANT, pending)
         async with db.tenant_tx(conftest.DEMO_TENANT) as conn:
             out["call_row"] = await _row(conn, call_id)
             out["sms_row"] = await _row(conn, sms_id)
-            out["profiles"] = await _profile_count(conn)
+            out["cached_after"] = await _summary_cache_count(conn)
 
-        # full re-run: idempotent — no new rows, chunks, or profiles.
+        # full re-run: idempotent — no new rows or chunks, cache still clear.
         out["stored_replay"] = await _ingest_communications(conftest.DEMO_TENANT, pending)
         async with db.tenant_tx(conftest.DEMO_TENANT) as conn:
             out["call_row_replay"] = await _row(conn, call_id)
-            out["profiles_replay"] = await _profile_count(conn)
+            out["cached_replay"] = await _summary_cache_count(conn)
             async with conn.cursor() as cur:
                 await cur.execute(
                     "select count(*) from public.communications where external_id like %s",
@@ -129,14 +143,17 @@ def test_short_message_is_stored_but_never_embedded(result):
 
 
 def test_full_rerun_is_idempotent(result):
-    """A re-run adds no duplicate rows, chunks, or profiles."""
+    """A re-run adds no duplicate rows or chunks."""
     assert result["comm_count_replay"] == 2  # still exactly our two rows
     assert result["stored_replay"] == 2
     a, b = result["call_row"], result["call_row_replay"]
     assert b["chunks"] == a["chunks"]        # chunk count stable across re-embed
-    assert result["profiles_replay"] == result["profiles"]
+    assert result["cached_replay"] == 0
 
 
-@pytest.mark.skipif(not _has_key, reason="ANTHROPIC_API_KEY required")
-def test_summary_pass_builds_one_profile_for_the_touched_lead(result):
-    assert result["profiles"] == 1
+def test_summary_pass_invalidates_the_touched_leads_cached_summary(result):
+    """The stale pre-import summary is dropped so the next profile open rebuilds it
+    over the newly-imported correspondence. No model call during the backfill —
+    which is why this needs no Anthropic key."""
+    assert result["cached_before"] == 1
+    assert result["cached_after"] == 0

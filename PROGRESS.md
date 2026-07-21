@@ -10,27 +10,26 @@ Task status: `[ ]` not started · `[-]` in progress · `[x]` done.
 
 ## Now
 
-**v1.1.3 shipped (2026-07-21) — nothing mid-build.** Entity timelines and the Event Log detail are readable: email bodies render as plain text instead of raw HTML, long entries expand to their full text instead of clipping at 120 chars, every row carries a per-activity icon and a source accent, and a shared best-effort renderer shows structured detail with the raw JSON one click further down. **The browser walk is still unwalked** — deferred with the rest to after v1.1.4. Next is **v1.1.4**. Run `/plan` to plan it.
+**v1.1.5 shipped (2026-07-21) — nothing mid-build.** A one-line fix with an outsized effect: the backend now starts on Windows via the command the README documents. It was failing 30 seconds in with a database pool timeout caused by an event-loop mismatch — almost certainly why the browser walk kept getting deferred across four versions.
+
+**The browser walk is done** (see _Carried-over pending validations_). v1.1.1-v1.1.4 all verified in Chrome; two defects found — the Windows startup bug, now fixed as v1.1.5, and a measured finding that WelcomeHome truncates 85% of email bodies at source, which is recorded against v1.3.1.
+
+Next is **v1.2.0 — GoTo Connect**, the authoritative source for calls and SMS. **It opens with an ops step you have to do:** a one-time browser OAuth consent producing a refresh token in `.env`. The offline scaffolding can be built without it, but the version cannot go green until that consent is done.
 
 ## Next up
 
-### v1.1.4 — One smart summary per entity · fix
-No plan yet. Merge the separate communication-profile card into the smart summary so one "at a glance" section covers the record, activity, communication history, and significant facts. The summary draws on the entity's correspondence through retrieval over the communications tier rather than a second cached artifact. Leads and clients lose the second card and its `comm-profile` endpoints; caregivers gain comms coverage in the summary they already have. Seam-local to `services/views/summary.py` — the `entity_summaries.kind` column stays.
-
-**Buildable now** — it depends on the comms *tier*, not on which connector fills it. Expect thin comms coverage until v1.2.0/v1.3.0 land (and thinner again after v1.3.1 retires WelcomeHome as a source); the structure is right either way, so this is sequenced first deliberately rather than waiting on the connectors.
-
-## Queued (planned, blocked or later)
-
-_Reordered 2026-07-21 around one framing: **one authoritative source per channel, feeding one summary per entity.** GoTo and Gmail move ahead of WellSky (their OAuth is self-service; WellSky waits on a third party), the WelcomeHome comms retirement follows them, and the old v1.5.0 cross-source reconciler is retired — see `ROADMAP.md`._
-
 ### v1.2.0 — GoTo Connect · new capability
-Plan: `.claude/plans/v1.2.0-goto-connect.md`. **The authoritative source for calls + SMS** — transcripts land in the communications tier and therefore in RAG. **Ops step: one-time browser OAuth consent → refresh token in `.env`** (self-service).
+Plan: `.claude/plans/v1.2.0-goto-connect.md`. **The authoritative source for calls + SMS** — transcripts land in the communications tier and therefore in RAG. **Ops step: one-time browser OAuth consent → refresh token in `.env`** (self-service, but blocking for the live checks).
 - `[ ]` OAuth bootstrap script + shared refresh helper; gated live token test
 - `[ ]` WebSocket channel + call/SMS subscription manager (state/renewal in `connector_state`)
 - `[ ]` WebSocket bridge runner (reconnect/backoff → `ingest_payload`); fake-WS test + live call → timeline
 - `[ ]` Known-numbers guard so WelcomeHome's bridge number doesn't ingest as real client calls
 - `[ ]` Real `send_sms` behind the existing gated tool; mocked tests + live approved delivery
 - `[ ]` Wrap-up: README bootstrap runbook; full pytest; live walks recorded
+
+## Queued (planned, blocked or later)
+
+_Reordered 2026-07-21 around one framing: **one authoritative source per channel, feeding one summary per entity.** GoTo and Gmail move ahead of WellSky (their OAuth is self-service; WellSky waits on a third party), the WelcomeHome comms retirement follows them, and the old v1.5.0 cross-source reconciler is retired — see `ROADMAP.md`._
 
 ### v1.3.0 — Gmail & Google Calendar · new capability
 Plan: `.claude/plans/v1.3.0-google-workspace.md`. **The authoritative source for email.** Lead intake stays WelcomeHome's job — Gmail never creates leads. **Ops step: GCP OAuth client + consent → `GOOGLE_*` in `.env`** (self-service).
@@ -74,7 +73,9 @@ Plan: `.claude/plans/v1.4.0-wellsky-sync.md`. **Deferred to last — blocked on 
 
 - **v1.1.1 full-suite run never completed** — *superseded:* the v1.1.2 full run above completed all 416 tests with no hang, so the `idle in transaction` blocker is gone. Original note: The targeted suites are green — `test_chat_tools`, `test_chat_stop`, `test_chat_stream_tracing`, `test_chat_api`, `test_chat_schema` pass together (24), the fail-first tripwire was proven (reverting the fix → 9 failures), and `test_leads_api` passes on its own. But `pytest backend/tests` (415 tests) **hung twice at test 213/415, `test_leads_api`**, blocked by a session left `idle in transaction` on `public.leads` by a previously-killed run. Clearing it needs `pg_terminate_backend` on the live DB (not done — permission-gated). Re-run the full suite once that session is cleared. Two pre-existing defects surfaced and are now in the roadmap backlog: the hang itself (dev-DB residue) and a flaky stop-contract test (4/15 on unmodified HEAD, 1/15 with v1.1.1 — not caused by this version).
 
-- **v1.1.3 browser walk not done** (deferred by decision to after v1.1.4, joining the standing walk below). The whole version is visual, so build + 118 unit tests are the only evidence: nobody has *looked* at a rendered timeline row, the clamped preview, or the expanded `EventDetail`. When walked, check an email-heavy lead (plain-text body, mail icon, no tags), a long Note (~4,500 chars, expands fully, no horizontal scroll), a stage-change row (From → To grid), and a client/caregiver profile (credential and call events get real icons, not the alert fallback).
+- **Browser walk DONE (2026-07-21). Closed.** Signed in and walked v1.1.1-v1.1.4 in Chrome against the live dev DB. **All verified:** seven even-width funnel columns in order with "in pipeline" summing only the five non-terminal stages, six sequence chips (none on Lost), the stage dropdown listing all seven; derived timeline titles with per-type icons (mail/phone/person), source accent bars, plain-text clamped previews, and `EventDetail` working on both the Event Log and entity timelines (body → labeled grid → Technical detail toggle, raw JSON scrolling in its own container); one AI card on lead, client and caregiver profiles, with the merged summary carrying real correspondence insight, the no-comms case stated honestly ("No correspondence is on file yet…"), and applicant summaries referencing correspondence for the first time. Freshly-synced events confirm the v1.1.3 write-side HTML strip in production. **Two defects found — see below.**
+- **Event Log is dominated by connector receipts.** The same "Synced a record from welcomehome" pair repeats every ~2 minutes for records that have not changed, alongside a `lead.updated` ingest receipt per prospect per sweep. Correct by design (the raw receipt is written before normalization, and v1.1.2's no-op suppression only silences *field-patch* events), but it makes the log hard for an office user to read. Not a regression — route as an idea if it should change.
+- **Age-based lead metrics are skewed by the v1.1.2 re-import.** "New this week" reads 101 of 101 leads and "Avg days to convert" is blank, because re-importing every prospect reset `created_at`. A data artifact of the corrective re-sweep, not a metrics bug; it ages out on its own.
 - **Live in-browser walks** for the v0.10+ surfaces. The auth ops step is **done** — the office user exists, is confirmed, carries the `app_metadata.tenant_id` claim, and last signed in 2026-07-21, so this is no longer blocked; what remains is walking the surfaces in a browser (`uvicorn` + `npm run dev`, sign in at `/login`). Automated suites were green at each ship (`pytest backend/tests`, `npm run test`, `npm run build`).
 - **v1.0.0 live steps** (operator actions, not code): a real WelcomeHome write-backfill (imports real PII, leaves immutable `events` rows) and the live incremental walk (change a WH stage → observe the lead update within one poll). As of v1.1.0 the backfill also seeds the communications tier in three passes (store → embed → comm profiles), so a live run now costs embedding and summary API calls it previously didn't.
 - **v1.1.0 LangSmith trace confirmation** (operator action, not code): the four new spans are instrumented and exercised by the green gated suite — `ingest_communication` and `embed_communication` (chains), `retrieve_communications` (retriever), `comm_profile` (chain). Eyeballing them in the LangSmith UI needs a running app against a configured `LANGSMITH_API_KEY`; not done from this session.

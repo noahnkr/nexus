@@ -60,7 +60,7 @@ Knowledge is organized as **three tiers**, kept deliberately separate so a high-
 
 1. **Documents** — uploaded or connector-fed *files* (care plans, assessments, contracts). The curated RAG corpus, retrieved by `search_documents`. Untouched by the communications tier.
 2. **Communications** — messages, calls, emails: their own store (`communications`/`communication_chunks`), timeline-linked always via an `events` spine, embedded *selectively* (store ≠ embed — short messages are stored but not embedded; long-form correspondence is chunked into its own index). Retrieved by a separate `search_communications` tool so a high-volume stream never pollutes the curated corpus. `ingest_communication` is the one entry every message source (CRM activities, and the v1.3/v1.4 messaging connectors) writes through. *(Built in v1.1.0, ahead of the messaging connectors.)*
-3. **Derived knowledge** — per-entity summaries and communication profiles (tone, responsiveness, preferred channel) generated from history via the `entity_summaries` seam (discriminated by `kind`). Tone/style is a summary problem, not a retrieval one.
+3. **Derived knowledge** — one smart summary per entity covering the record, activity, communication history, and significant facts (tone/responsiveness/preferred channel included when the correspondence shows it), generated via the `entity_summaries` seam (discriminated by `kind`; `smart_summary` is the one kind in use). Tone/style is a summary problem, not a retrieval one.
 
 ### Tool Layer & MCP
 

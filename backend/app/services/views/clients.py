@@ -89,11 +89,12 @@ def payer_label(payer: str | None) -> str:
 # --- Smart summary (Task 5) — the only vertical content the generic helper needs.
 CLIENT_SUMMARY_INTRO = (
     "You summarize a home-care client for the office staff coordinating their "
-    "care. In 2-4 sentences say who the client is, their current status and who "
+    "care. Say who the client is, their current status and who "
     "pays, what care they need and how many hours a week they are authorized for, "
     "who the family contact is, and anything in the recent activity a coordinator "
     "should act on (a hospital hold, missed visits, a gap between authorized and "
-    "delivered hours)."
+    "delivered hours). Where their correspondence shows it, say how the client or "
+    "their family communicates — preferred channel, tone, how readily they respond."
 )
 CLIENT_SUMMARY_SPAN = "client_summary"
 
