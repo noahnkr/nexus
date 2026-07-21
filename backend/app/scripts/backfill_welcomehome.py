@@ -54,7 +54,6 @@ from ..services.communications import (
     ingest_communication,
     should_embed,
 )
-from ..services.views.summary import SummaryUnavailable, regenerate_comm_profile
 
 # Its own cursor key, so an interrupted backfill never disturbs the live loop's.
 BACKFILL_KEY = "welcomehome_backfill"
@@ -69,13 +68,14 @@ def _progress(label: str, n: int) -> None:
 
 async def _ingest_communications(tenant_id: str, pending: list[tuple]) -> int:
     """The split history-seed for messages, in three passes so a large import stays
-    efficient (bulk-store first, then embed, then summarize) rather than doing an
+    efficient (bulk-store first, then embed, then invalidate) rather than doing an
     embeddings round-trip inline per row:
 
       1. STRUCTURED — store every message (embed=False), fast, no network. Idempotent
          by (source, activity id), so a resumed run re-finds rows instead of dupes.
       2. BATCHED EMBED — embed only the messages the policy selects (should_embed).
-      3. SUMMARY — regenerate the communication profile for each touched lead.
+      3. INVALIDATE — drop each touched lead's cached summary so the next profile
+         open regenerates it over the newly-imported correspondence.
 
     All three run outside any transaction; a single bad row is logged and skipped."""
     print(f"Storing {len(pending)} messages (structured pass)…", flush=True)
@@ -114,23 +114,26 @@ async def _ingest_communications(tenant_id: str, pending: list[tuple]) -> int:
             log.exception("could not embed WelcomeHome message %s", comm_id)
     _progress("messages embedded", embedded)
 
-    print(f"Building communication profiles for {len(touched_leads)} leads…", flush=True)
-    profiled = 0
+    # Pass 3 used to pre-build a communication profile per touched lead. With one
+    # merged, lazily-generated summary (v1.1.4), the right behavior is to INVALIDATE
+    # instead: drop the cached summary so the next profile open regenerates it with
+    # the newly-imported correspondence. Costs nothing during the backfill, and
+    # avoids paying for summaries of leads nobody opens.
+    print(f"Invalidating summary caches for {len(touched_leads)} leads…", flush=True)
+    invalidated = 0
     for lead_id in sorted(touched_leads):
         try:
             async with tenant_tx(tenant_id) as conn:
-                await regenerate_comm_profile(
-                    conn, tenant_id, entity_type="lead", entity_id=lead_id,
+                await conn.execute(
+                    "delete from public.entity_summaries "
+                    "where entity_type = 'lead' and entity_id = %s "
+                    "and kind = 'smart_summary'",
+                    (lead_id,),
                 )
-            profiled += 1
-        except SummaryUnavailable:
-            # No Anthropic key — profiles are optional derived knowledge; the
-            # messages are stored and retrievable regardless.
-            log.info("skipping comm profiles — no Anthropic key configured")
-            break
+            invalidated += 1
         except Exception:  # noqa: BLE001
-            log.exception("could not build comm profile for lead %s", lead_id)
-    _progress("comm profiles built", profiled)
+            log.exception("could not invalidate summary cache for lead %s", lead_id)
+    _progress("summary caches invalidated", invalidated)
 
     return stored
 
