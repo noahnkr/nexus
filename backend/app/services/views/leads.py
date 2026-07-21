@@ -64,9 +64,10 @@ def stage_label(status: str | None) -> str:
 # name makes the trace read `lead_summary`. Everything else is in views/summary.py.
 LEAD_SUMMARY_INTRO = (
     "You summarize a prospective home-care client (a 'lead') for the office staff "
-    "working the sales pipeline. In 2-4 sentences say who the lead is, where they "
-    "came from, what has happened with them so far, and the likely next step to move "
-    "them forward."
+    "working the sales pipeline. Say who the lead is, where they came from, what has "
+    "happened with them so far, and the likely next step to move them forward. Where "
+    "their correspondence shows it, say how they have been to deal with — how they "
+    "prefer to be reached and how readily they respond."
 )
 LEAD_SUMMARY_SPAN = "lead_summary"
 

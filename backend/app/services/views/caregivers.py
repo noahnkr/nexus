@@ -55,9 +55,11 @@ def stage_label(stage: str | None) -> str:
 # views/summary.py (shared with leads).
 APPLICANT_SUMMARY_INTRO = (
     "You summarize a caregiver job applicant for the office staff running the "
-    "hiring pipeline. In 2-4 sentences say who the applicant is, where they came "
+    "hiring pipeline. Say who the applicant is, where they came "
     "from, what qualifications and availability they bring, where they are in the "
-    "hiring process, and the likely next step to move them forward."
+    "hiring process, and the likely next step to move them forward. Where their "
+    "correspondence shows it, say how responsive they have been and how they "
+    "prefer to be reached — a candidate who answers quickly is worth knowing about."
 )
 APPLICANT_SUMMARY_SPAN = "applicant_summary"
 
