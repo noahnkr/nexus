@@ -94,7 +94,9 @@ class LeadOut(BaseModel):
     phone: str | None = None
     email: str | None = None
     source: str | None = None
-    status: str  # new | contacted | qualified | converted | lost (leads.status)
+    # new | contact_attempted | contacted | visit_scheduled | visit_completed |
+    # converted | lost (leads.status)
+    status: str
     region_id: str | None = None
     region_name: str | None = None  # left-joined from regions
     requirements: dict[str, Any] = {}

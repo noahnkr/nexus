@@ -71,12 +71,16 @@ def _mapped(prospect_id: str) -> dict:
 def test_stage_map_covers_every_live_stage():
     refs = _refs()
     by_name = {s["name"]: str(s["id"]) for s in _json("stages.json")}
-    assert stage_status(by_name["Inquiry"], refs) == "new"                 # new_lead
-    assert stage_status(by_name["Contact Attempted"], refs) == "contacted"  # pos 1
-    assert stage_status(by_name["Contact Made"], refs) == "contacted"       # pos 2
-    assert stage_status(by_name["Home Visit Scheduled"], refs) == "qualified"   # pos 3
-    assert stage_status(by_name["Home Visit Completed"], refs) == "qualified"   # visit
-    assert stage_status(by_name["Start of Care"], refs) == "converted"          # move_in
+    # One Nexus stage per WelcomeHome stage (v1.1.2) — no collapsing.
+    assert stage_status(by_name["Inquiry"], refs) == "new"                        # new_lead
+    assert stage_status(by_name["Contact Attempted"], refs) == "contact_attempted"  # pos 1
+    assert stage_status(by_name["Contact Made"], refs) == "contacted"             # pos 2
+    assert stage_status(by_name["Home Visit Scheduled"], refs) == "visit_scheduled"  # pos 3
+    assert stage_status(by_name["Home Visit Completed"], refs) == "visit_completed"  # visit
+    assert stage_status(by_name["Start of Care"], refs) == "converted"            # move_in
+    assert len({
+        stage_status(sid, refs) for sid in by_name.values()
+    }) == len(by_name)  # the mapping is injective
 
 
 def test_an_unknown_stage_maps_to_nothing_rather_than_guessing():

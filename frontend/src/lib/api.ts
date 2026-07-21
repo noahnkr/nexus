@@ -345,8 +345,10 @@ export interface AutomationDraft {
 // --- Leads view (Module 9, vertical seam) ------------------------------------
 export type LeadStatus =
   | "new"
+  | "contact_attempted"
   | "contacted"
-  | "qualified"
+  | "visit_scheduled"
+  | "visit_completed"
   | "converted"
   | "lost";
 

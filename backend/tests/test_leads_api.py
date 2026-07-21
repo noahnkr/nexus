@@ -266,9 +266,10 @@ def test_lead_metrics():
     assert out["noauth_code"] == 401
 
     m = out["metrics"]
-    # all five stages present, counts sum to the total lead count
+    # all seven stages present, counts sum to the total lead count
     assert [s["stage"] for s in m["stages"]] == [
-        "new", "contacted", "qualified", "converted", "lost"
+        "new", "contact_attempted", "contacted", "visit_scheduled",
+        "visit_completed", "converted", "lost",
     ]
     assert sum(s["count"] for s in m["stages"]) == out["db_total"]
 

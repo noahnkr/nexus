@@ -2,6 +2,7 @@ import { Users, TrendingUp, Sparkle, Timer } from "lucide-react";
 import type { ComponentType } from "react";
 import { cn } from "@/lib/utils";
 import type { LeadMetrics as LeadMetricsData } from "@/lib/api";
+import { IN_PIPELINE_STAGES } from "@/lib/leads";
 
 // Conversion widgets beside the funnel: four semantic stat tiles + a top-sources
 // card. No charts this phase (locked) — tones carry the meaning. Tiles are
@@ -43,9 +44,10 @@ function Tile({
 }
 
 export function LeadMetrics({ metrics }: { metrics: LeadMetricsData | null }) {
+  // Non-terminal stages only, taken from the seam config rather than named here.
   const inPipeline =
     metrics?.stages
-      .filter((s) => s.stage === "new" || s.stage === "contacted" || s.stage === "qualified")
+      .filter((s) => (IN_PIPELINE_STAGES as string[]).includes(s.stage))
       .reduce((sum, s) => sum + s.count, 0) ?? 0;
 
   return (

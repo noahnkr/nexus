@@ -35,7 +35,10 @@ from ..views.workforce import EXPIRING_DAYS, describe_expiry, expiring_credentia
 from .core import ToolDef, ToolInputError, ToolResult, _jsonable, current_invocation
 from .registry import register
 
-LEAD_STATUSES = ["new", "contacted", "qualified", "converted", "lost"]
+LEAD_STATUSES = [
+    "new", "contact_attempted", "contacted", "visit_scheduled",
+    "visit_completed", "converted", "lost",
+]
 # Client statuses come from the clients seam (views/clients.CLIENT_STATUSES) — one
 # source, so the tool enum can never drift from the DB CHECK or the REST surface.
 SCHEDULE_STATUSES = ["open", "scheduled", "called_out", "completed", "cancelled", "no_show"]
@@ -1071,8 +1074,8 @@ register(ToolDef(
     name="update_lead_status",
     description=(
         "Change a lead's pipeline status (e.g. mark a lead as contacted or "
-        "qualified). This changes a record and requires human approval before it "
-        "takes effect."
+        "visit_scheduled). This changes a record and requires human approval "
+        "before it takes effect."
     ),
     input_schema=_obj({
         "lead_id": {"type": "string", "description": "The lead's id."},
@@ -1280,7 +1283,8 @@ Tables available for read-only reporting (rows are automatically filtered to the
 current tenant — never add a tenant_id condition):
 
 leads(id uuid, name text, phone text, email text, source text,
-      status text {new|contacted|qualified|converted|lost},
+      status text {new|contact_attempted|contacted|visit_scheduled|
+                   visit_completed|converted|lost},
       region_id uuid -> regions.id, requirements jsonb,
       address text, zip text, background text, created_at timestamptz)
       -- address/zip/background are CRM-fed (Module 18a). `background` is the

@@ -2,6 +2,17 @@
 
 Notable changes to the Nexus Control Center, newest first. Each entry is a high-level summary of what the version delivers; implementation detail lives in the plans (`.claude/plans/`) and the code. Versioning follows `ROADMAP.md` (semantic, by impact).
 
+## v1.1.2 — The funnel now mirrors WelcomeHome stage for stage · 2026-07-21
+
+A lead's position in Nexus used to be blurrier than what the office sees in the CRM: "Contact Attempted" and "Contact Made" both showed as *Contacted*, and both home-visit stages collapsed into *Qualified*. Now every WelcomeHome stage has its own:
+
+- **Seven stages instead of five** — New, Contact Attempted, Contacted, Visit Scheduled, Visit Completed, Converted, and Lost. *Qualified* is gone; those leads moved to Visit Scheduled, and the WelcomeHome re-sync then placed each one exactly where the CRM has it. Lost stays what it was: a terminal archive for don't-contact and not-applicable inquiries, with no sequence attached.
+- **Sequences on all six worked stages**, so the two newly-visible stages can be automated like any other.
+- **A re-sync no longer clutters timelines.** Polled sources re-send whole records every sweep; an unchanged record now records nothing, instead of logging an "updated" entry for an edit nobody made.
+- **Even funnel blocks.** Stage widths were proportional to lead count, which squeezed quieter stages — worse at seven stages. Every stage now gets equal width; share is still shown as a count and a percentage.
+
+Deliberately sequenced before the WellSky connector, so that integration begins writing into a settled stage set rather than one reshaped underneath it.
+
 ## v1.1.1 — Chat turns no longer fail on tool-calling questions · 2026-07-21
 
 - **Fixed: some questions failed outright in chat** with a `'NoneType' object has no attribute 'outputs'` message — including "what is my most recent touch point with…" and phone-number lookups. The fault was in the observability layer, not the questions: the LangSmith tracing wrapper crashed while recording the model's streamed reply. Chat now reads the reply in a way that avoids that path, with tracing intact and unchanged.

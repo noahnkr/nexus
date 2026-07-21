@@ -7,10 +7,13 @@ imports this — `routers/leads.py` (itself seam), the `update_lead_status` tool
 handler (`services/tools/entities.py`, also seam), and the connector entity
 writers (`services/connectors/entity_writers.py`, seam) are the only readers.
 
-Stages are `leads.status` values (Module 0 CHECK: new/contacted/qualified/
-converted/lost) — there is no stage table and no new column. This config is the
-label/order/terminal overlay on those raw values, mirrored on the frontend in
-`frontend/src/lib/leads.ts`.
+Stages are `leads.status` values (entity-seam CHECK: new/contact_attempted/
+contacted/visit_scheduled/visit_completed/converted/lost) — there is no stage
+table and no new column. This config is the label/order/terminal overlay on those
+raw values, mirrored on the frontend in `frontend/src/lib/leads.ts`.
+
+The seven stages reflect WelcomeHome's funnel one-to-one (v1.1.2), so a lead's
+position here is exactly what the office sees in the CRM; `wh_map` translates.
 
 `change_stage()` is THE writer of `leads.status` (Module 18a). It was extracted
 from two places that had drifted into near-copies — the REST PATCH and the
@@ -26,13 +29,16 @@ from psycopg.rows import dict_row
 
 from ..events import log_event
 
-# Ordered funnel: the four worked stages then the terminal drop-off. `terminal`
+# Ordered funnel: the five worked stages then the two terminal ones. `terminal`
 # marks a stage a lead ends at (converted = won, lost = dropped) — used by the
-# funnel/metrics (9b) for the "in pipeline" (non-terminal) count.
+# funnel/metrics (9b) for the "in pipeline" (non-terminal) count. Anything asking
+# "is this lead still in play" derives it from these flags; never a fresh list.
 LEAD_STAGES: list[dict] = [
     {"key": "new", "label": "New", "terminal": False},
+    {"key": "contact_attempted", "label": "Contact Attempted", "terminal": False},
     {"key": "contacted", "label": "Contacted", "terminal": False},
-    {"key": "qualified", "label": "Qualified", "terminal": False},
+    {"key": "visit_scheduled", "label": "Visit Scheduled", "terminal": False},
+    {"key": "visit_completed", "label": "Visit Completed", "terminal": False},
     {"key": "converted", "label": "Converted", "terminal": True},
     {"key": "lost", "label": "Lost", "terminal": True},
 ]

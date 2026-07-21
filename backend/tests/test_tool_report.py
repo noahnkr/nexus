@@ -77,7 +77,7 @@ def test_run_report():
     assert counts == {
         "new": 1,
         "contacted": 1,
-        "qualified": 1,
+        "visit_scheduled": 1,
         "converted": 2,
         "lost": 1,
     }

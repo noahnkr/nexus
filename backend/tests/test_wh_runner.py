@@ -84,14 +84,31 @@ async def _leads_by_external(conn, external_ids):
         return {r["external_id"]: dict(r) for r in await cur.fetchall()}
 
 
+def _fixture_external_ids() -> list[str]:
+    """Every external id THIS fixture sweep can create, derived from the CSVs the
+    way wh_map namespaces them.
+
+    Narrow by construction, and it has to stay that way: this used to match on
+    `external_id like 'wh:%'`, which on a dev database that also holds real
+    WelcomeHome sync output matches every synced lead, contact and client — the
+    test would delete the live pipeline along with its own six prospects.
+    """
+    ids = [f"wh:prospect:{r['prospects.id']}" for page in PROSPECT_PAGES for r in _csv(page)]
+    ids += [f"wh:resident:{r['residents.id']}" for r in _csv("residents.csv")]
+    ids += [f"wh:influencer:{r['influencers.id']}" for r in _csv("influencers.csv")]
+    return [i for i in ids if not i.endswith(":")]
+
+
 async def _cleanup(conn):
     """Remove everything the fixture sweep created, by external id."""
     from psycopg.rows import dict_row
 
+    external_ids = _fixture_external_ids()
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             "select entity_type, entity_id from public.external_ids "
-            "where external_id like 'wh:%'"
+            "where external_id = any(%s)",
+            (external_ids,),
         )
         rows = await cur.fetchall()
     tables = {
@@ -115,7 +132,9 @@ async def _cleanup(conn):
             await conn.execute(
                 f"delete from public.{tables[etype]} where id = %s", (row["entity_id"],)
             )
-    await conn.execute("delete from public.external_ids where external_id like 'wh:%'")
+    await conn.execute(
+        "delete from public.external_ids where external_id = any(%s)", (external_ids,)
+    )
     await conn.execute(
         "delete from public.connector_state where source_system = 'welcomehome'"
     )
@@ -182,6 +201,13 @@ async def _two_cycle_scenario(second_cycle_empty: bool):
                 )
                 out["activities"] = [r["payload"] for r in await cur.fetchall()]
 
+                # The writer's field-patch events specifically: the ingest receipt
+                # uses the same event type but carries no `fields` key.
+                await cur.execute(
+                    "select payload from public.events where event_type = 'lead.updated' "
+                    "and payload ? 'fields' and created_at >= %s", (since,))
+                out["field_patches"] = [r["payload"] for r in await cur.fetchall()]
+
                 await cur.execute(
                     "select c.name, c.lead_id, c.status from public.clients c "
                     "where c.lead_id = any(%s)", (lead_ids,)
@@ -213,8 +239,10 @@ def test_a_sweep_imports_prospects_with_their_mapped_stages():
     assert leads["wh:prospect:9001"]["name"] == "Margaret Ellison"
     assert leads["wh:prospect:9001"]["status"] == "new"
     assert leads["wh:prospect:9001"]["zip"] == "60540"
+    # One-to-one with the WelcomeHome stage (v1.1.2): Contact Made -> contacted,
+    # Home Visit Completed -> visit_completed (it no longer collapses to a bucket).
     assert leads["wh:prospect:9002"]["status"] == "contacted"
-    assert leads["wh:prospect:9003"]["status"] == "qualified"
+    assert leads["wh:prospect:9003"]["status"] == "visit_completed"
     assert leads["wh:prospect:9004"]["status"] == "converted"
     assert leads["wh:prospect:9005"]["status"] == "lost"
     # The unmapped stage defaults to 'new' on CREATE (a brand-new lead has to
@@ -237,6 +265,89 @@ def test_a_second_cycle_matches_rather_than_duplicating():
     }
     # Nothing was created on the second pass.
     assert r["event_counts"].get("lead.created", 0) == 0
+    # …and no lead recorded a field EDIT: the second cycle re-sends identical
+    # records, so no-op patch suppression keeps them off every timeline. A full
+    # re-sweep must not read as six edits nobody made. (Each prospect still writes
+    # its ingest receipt — that is the audit trail, and it stays.)
+    assert r["field_patches"] == []
+
+
+async def _noop_patch_scenario():
+    """update_lead twice on the same lead: identical attributes, then one changed
+    field. Drives the writer directly — no runner, no fixtures."""
+    from psycopg.rows import dict_row
+
+    from app import db
+    from app.services.connectors.entity_writers import update_lead, write_lead
+
+    token = uuid.uuid4().hex[:8]
+    attributes = {
+        "name": f"No-op Probe {token}",
+        "phone": "+16195550199",
+        "email": f"probe-{token}@example.com",
+        "source": "website",
+        "status": "contacted",
+    }
+    out: dict = {}
+
+    await db.open_pool()
+    try:
+        async with db.tenant_tx(conftest.DEMO_TENANT) as conn:
+            lead_id = await write_lead(
+                conn, conftest.DEMO_TENANT, attributes, "welcomehome"
+            )
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute("select now()")
+                since = (await cur.fetchone())["now"]
+
+            # 1) the source re-sends exactly what we hold -> nothing happens.
+            await update_lead(
+                conn, conftest.DEMO_TENANT, lead_id, attributes, "welcomehome"
+            )
+            out["events_after_identical"] = await _updated_events(conn, lead_id, since)
+
+            # 2) one field really changed -> one event naming only that field.
+            await update_lead(
+                conn,
+                conftest.DEMO_TENANT,
+                lead_id,
+                {**attributes, "phone": "+16195550200"},
+                "welcomehome",
+            )
+            out["events_after_change"] = await _updated_events(conn, lead_id, since)
+
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    "select phone from public.leads where id = %s", (lead_id,)
+                )
+                out["phone"] = (await cur.fetchone())["phone"]
+
+            await conn.execute("delete from public.events where entity_id = %s", (lead_id,))
+            await conn.execute("delete from public.leads where id = %s", (lead_id,))
+        return out
+    finally:
+        await db.close_pool()
+
+
+async def _updated_events(conn, lead_id: str, since) -> list[dict]:
+    from psycopg.rows import dict_row
+
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            "select payload from public.events where entity_id = %s "
+            "and event_type = 'lead.updated' and created_at >= %s order by created_at",
+            (lead_id, since),
+        )
+        return [r["payload"] for r in await cur.fetchall()]
+
+
+def test_a_resend_of_unchanged_fields_writes_no_update_event():
+    out = asyncio.run(_noop_patch_scenario())
+
+    assert out["events_after_identical"] == []          # nothing changed, nothing logged
+    assert len(out["events_after_change"]) == 1         # exactly the real edit
+    assert out["events_after_change"][0]["fields"] == ["phone"]
+    assert out["phone"] == "+16195550200"
 
 
 def test_the_second_cycle_asks_only_for_rows_past_the_cursor():
