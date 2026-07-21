@@ -2,6 +2,15 @@
 
 Notable changes to the Nexus Control Center, newest first. Each entry is a high-level summary of what the version delivers; implementation detail lives in the plans (`.claude/plans/`) and the code. Versioning follows `ROADMAP.md` (semantic, by impact).
 
+## v1.1.3 — Timelines you can actually read · 2026-07-21
+
+Entity timelines are the office's read on what has been happening with a lead, and most of what's on them comes from the CRM. They were a wall of one-line summaries with a raw-JSON expander. Now:
+
+- **Emails read as text, not markup.** Email activity that arrived as HTML showed its tags in the timeline (`<b>Come See Us…</b><br><br>`). It now renders as plain, readable text — both for the ~330 emails already stored and for everything synced from here on.
+- **Nothing is cut off any more.** Long calls and notes were clipped mid-sentence at a fixed limit even though the full text was recorded. Rows now show a short preview and expand to the complete text, however long — the longest note in the corpus runs about 4,500 characters.
+- **Every row says what it is at a glance** — a mail, phone, message, note, or assessment icon per activity, and a colour bar keying the row to where it came from. Client and caregiver timelines got real icons too, instead of the warning symbol they were falling back to.
+- **Expanding an entry shows the entry, not a data dump.** The full text comes first, then the details that matter (direction, when it happened, which stage moved, which fields changed) in plain labels. The raw record is still there, one click further down.
+
 ## v1.1.2 — The funnel now mirrors WelcomeHome stage for stage · 2026-07-21
 
 A lead's position in Nexus used to be blurrier than what the office sees in the CRM: "Contact Attempted" and "Contact Made" both showed as *Contacted*, and both home-visit stages collapsed into *Qualified*. Now every WelcomeHome stage has its own:

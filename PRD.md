@@ -70,6 +70,8 @@ The one governed path to structured data and actions. Every agent-callable tool 
 
 The immutable spine. Every tool call, webhook/connector event, automation step, and gated-action resolution appends a row to `events`. The Event Log surface renders these as plain-language summaries (derived at read time for types that lack one), filterable down to a single entity's history, with raw technical detail one click away — never in the summary line.
 
+Because events are immutable, **display is the only place a badly-written summary can be corrected**: the expanded view of an event is a shared best-effort renderer (used by the Event Log and every entity timeline alike) that derives what it shows from the payload's structured fields rather than trusting the stored one-liner — long text first, then a labeled field grid, then the raw JSON behind a toggle. Payload shapes are deliberately heterogeneous (each writer chooses its own), so the renderer reads what it recognizes, shows the rest generically, and never fails on a shape it hasn't seen.
+
 ### Tasks & the Approval Gate
 
 How the system acts safely. Any tool that changes state visible outside Nexus (send SMS/email, update a record, trigger an external effect) defaults to **gated**: instead of executing, it writes a plain-language, human-reviewable task and a `pending_actions` row. Approval executes the *same* call through the *same* audited seam (optionally with human-edited fields the tool declares editable); rejection and failure stay visible. A queued gated call is a successful result the agent reports plainly, not an error. The Tasks interface is where staff clear that queue alongside connector review-tasks and their own to-dos.
