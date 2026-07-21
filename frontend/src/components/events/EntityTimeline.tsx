@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { relativeTime } from "@/lib/utils";
+import { eventDisplay, eventIcon, sourceAccent } from "@/lib/events";
+import { EventDetail } from "@/components/events/EventDetail";
 
 // A compact, entity-scoped event feed — the timeline on a profile page. Generic on
 // purpose (entityType/entityId props, no lead-specific copy) so M10's caregiver
@@ -19,11 +21,28 @@ function isError(ev: EventOut): boolean {
   );
 }
 
+// One timeline entry. Two visual keys borrowed from the Event Log — an icon for
+// WHAT happened, a left accent for WHERE it came from — plus, for events that
+// carry prose (a call transcript, an email), a clamped preview of the actual
+// text. The title and body are DERIVED (lib/events.eventDisplay), not the stored
+// summary: summaries written before v1.1.3 carry HTML and a 120-char clip, and
+// events are immutable, so display is the only place that can be fixed.
 function TimelineRow({ event }: { event: EventOut }) {
   const [expanded, setExpanded] = useState(false);
+  const error = isError(event);
+  const Icon = eventIcon(event.event_type, event.payload);
+  const { title, body } = eventDisplay(event);
+
   return (
-    <div className="border-b last:border-b-0">
-      <div className="flex items-start gap-3 px-3 py-2.5">
+    <div className="relative border-b last:border-b-0">
+      <span
+        aria-hidden
+        className={cn(
+          "absolute inset-y-0 left-0 w-0.5",
+          error ? "bg-destructive" : sourceAccent(event.source_system),
+        )}
+      />
+      <div className="flex items-start gap-2.5 py-2.5 pl-3 pr-3">
         <button
           onClick={() => setExpanded((v) => !v)}
           className="mt-0.5 shrink-0 text-muted-foreground hover:text-foreground"
@@ -35,11 +54,25 @@ function TimelineRow({ event }: { event: EventOut }) {
             <ChevronRight className="h-3.5 w-3.5" />
           )}
         </button>
+
+        <Icon
+          className={cn(
+            "mt-0.5 h-4 w-4 shrink-0",
+            error ? "text-destructive" : "text-muted-foreground",
+          )}
+          aria-hidden
+        />
+
         <div className="min-w-0 flex-1">
-          <p className={cn("text-sm", isError(event) ? "text-destructive" : "text-foreground")}>
-            {event.summary}
+          <p className={cn("text-sm", error ? "text-destructive" : "text-foreground")}>
+            {title}
           </p>
-          <div className="mt-1 flex items-center gap-2">
+          {body && !expanded && (
+            <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap break-words text-[13px] leading-snug text-muted-foreground">
+              {body}
+            </p>
+          )}
+          <div className="mt-1 flex flex-wrap items-center gap-2">
             <Badge variant="outline" className="shrink-0 text-[10px]">
               {event.source_system}
             </Badge>
@@ -52,11 +85,7 @@ function TimelineRow({ event }: { event: EventOut }) {
           </div>
         </div>
       </div>
-      {expanded && (
-        <pre className="mx-3 mb-2.5 overflow-x-auto rounded-md bg-muted p-2.5 text-xs text-muted-foreground">
-          {JSON.stringify(event.payload, null, 2)}
-        </pre>
-      )}
+      {expanded && <EventDetail event={event} className="mx-3 mb-2.5 pl-6" />}
     </div>
   );
 }
