@@ -133,6 +133,8 @@ Then sign in at `/login`. *(This step is the one gating live in-browser walks of
 
 Home (`/`) is a light landing page — greeting, at-a-glance counts, recent activity, quick actions. Chat (`/chat`) streams answers over SSE with citations and renders markdown (including document-style tables); the send button becomes a **stop** button mid-answer, and stopping keeps a valid, resumable thread. Knowledge (`/knowledge`) is drag-and-drop document upload with live status. Tasks, Event Log, and Settings round out the shell; the sidebar collapses and the core pages are mobile-friendly (the schedule board and automation builder stay desktop-first).
 
+**Knowledge comes in three tiers**, kept separate so a high-volume stream never dilutes the curated corpus. **Documents** are uploaded or connector-fed *files* — the `/knowledge` view — searched by `search_documents`. **Communications** are calls, emails, texts, and notes: every one is stored and linked to its timeline event, but only long-form correspondence is embedded (a text message is stored, not indexed), and chat searches them with a separate `search_communications`. **Derived knowledge** is the per-entity AI cards on a profile — the Smart summary, and a **Communication profile** describing how someone communicates (tone, responsiveness, preferred channel, recurring topics). All of it works with no extra configuration; the embedding threshold is an in-code policy, not an env var.
+
 ### The approval gate
 
 State-changing tools don't fire — they queue. Ask chat to change a lead's status and it visibly *stalls* (record unchanged, a task created) until you approve it in **Tasks**, at which point the change lands and the Event Log shows the whole `action.queued → action.approved → tool.called` trail in plain language. You can edit a drafted text/email right in the approval before sending.
@@ -184,7 +186,7 @@ WelcomeHome has no webhooks, so it's polled. It mirrors the CRM's sales pipeline
 | Lead source | `leads.source` **verbatim** — the referral-partner join key |
 | Influencers + extra Residents | `lead_contacts` rows |
 | Activities (calls, emails, notes, visits) | `lead.activity_logged` timeline events |
-| Long call/note narratives | ingested to RAG, tagged to the lead |
+| Calls, emails, texts, notes | stored in the **communications tier**, linked to the timeline event; long-form is embedded for chat retrieval (short messages are stored, not embedded) |
 | **Start of Care** | promotes the lead to an **active client** (`lead_id` set) |
 
 Stage mapping keys on WelcomeHome's stable stage `system_type` (falling back to position), so a renamed stage keeps working and a genuinely new stage leaves the lead's status unchanged with a warning — never a guess.

@@ -5,7 +5,7 @@ One sweep, in dependency order:
     references (stages / activity_types / lead_sources)   fetched once per cycle
     Residents + Influencers      -> held in memory, keyed by prospect
     Prospects                    -> lead create/update + contacts + promotion
-    Activities                   -> lead timeline events (+ transcripts to RAG)
+    Activities                   -> lead timeline events (+ messages to comms tier)
 
 Residents and Influencers are read BEFORE prospects and buffered rather than
 ingested on their own: a WelcomeHome prospect row carries no name — the care
@@ -19,11 +19,15 @@ The window is deliberately re-overlapped by `_CURSOR_OVERLAP_SECONDS`: export
 watermarks are server-side timestamps, and re-seeing a handful of rows is free
 (ingestion is idempotent by external id) while missing one is silent data loss.
 
-TRANSCRIPTS. Activities whose type carries prose past a length threshold
-(`wh_map.is_narrative`) are additionally ingested as documents, entity-tagged to
-the lead via the M15 tag, so a call transcript is retrievable in chat. The
-ingestion runs OUTSIDE the runner's transaction — it makes network calls to the
-embeddings API, and holding a database transaction open across those is how a
+COMMUNICATIONS (v1.1.0). Every message/interaction activity (Call, Email, Text,
+Note, Assessment, Other — see `wh_map.ACTIVITY_CHANNELS`) is stored in the
+communications tier, entity-tagged to the lead and linked to its
+`lead.activity_logged` event as the spine. Store-all: a short text and a long
+call transcript alike become communication rows; `communications.should_embed`
+decides which are embedded and thus retrievable in chat. This replaced the
+pre-v1.1.0 path that routed only long narratives into the `documents` corpus.
+The ingestion runs OUTSIDE the runner's transaction — it makes network calls to
+the embeddings API, and holding a database transaction open across those is how a
 sync loop turns into a connection-pool outage.
 """
 from __future__ import annotations
@@ -83,9 +87,10 @@ class WelcomeHomeRunner:
     source = SOURCE
 
     def __init__(self) -> None:
-        # (title, text, lead_id, external_id) discovered by a sweep, ingested by
-        # after_commit once the transaction that found them has landed.
-        self._pending_documents: list[tuple] = []
+        # (channel, direction, occurred_at, body, lead_id, external_id) discovered
+        # by a sweep, ingested into the communications tier by after_commit once the
+        # transaction that found them (and wrote their timeline events) has landed.
+        self._pending_communications: list[tuple] = []
 
     def enabled(self) -> bool:
         return bool(settings.welcomehome_api_key)
@@ -93,7 +98,7 @@ class WelcomeHomeRunner:
     async def run(self, conn, tenant_id: str, state: dict) -> dict:
         cursors = dict(state.get("cursors") or {})
         started = _now_iso()
-        pending_documents: list[tuple] = []
+        pending_communications: list[tuple] = []
 
         async with WelcomeHomeClient() as client:
             refs = build_refs(
@@ -113,40 +118,47 @@ class WelcomeHomeRunner:
 
             activities_seen = await self._sync_activities(
                 conn, tenant_id, client, refs, _watermark(cursors.get("Activities")),
-                pending_documents,
+                pending_communications,
             )
             cursors["Activities"] = started
 
         log.info(
-            "welcomehome sweep: %s prospects, %s activities, %s transcripts queued",
-            prospects_seen, activities_seen, len(pending_documents),
+            "welcomehome sweep: %s prospects, %s activities, %s messages queued",
+            prospects_seen, activities_seen, len(pending_communications),
         )
-        self._pending_documents = pending_documents
+        self._pending_communications = pending_communications
         return {"cursors": cursors, "last_sweep_at": started}
 
     async def after_commit(self, tenant_id: str) -> int:
-        """Ingest the transcripts this sweep queued, now that its transaction has
+        """Ingest into the communications tier the messages this sweep queued, now
+        that its transaction (and the timeline events those messages link to) has
         landed — the embeddings round-trips happen with no transaction held open.
-        A transcript that fails to ingest is logged and skipped: a bad document
-        must not cost the sweep its cursor."""
-        from ..ingestion import ingest_text
+        A message that fails to ingest is logged and skipped: a bad row must not
+        cost the sweep its cursor."""
+        from ..communications import ingest_communication
 
-        pending, self._pending_documents = self._pending_documents, []
+        pending, self._pending_communications = self._pending_communications, []
         ingested = 0
-        for title, text, lead_id, external_id in pending:
+        for channel, direction, occurred_at, body, lead_id, external_id in pending:
             try:
-                await ingest_text(
+                # Event-as-spine: link the communication to the timeline event this
+                # activity already wrote (its wh_activity_id is on the event detail).
+                source_event_id = await _activity_event_id(tenant_id, lead_id, external_id)
+                await ingest_communication(
                     tenant_id,
-                    title,
-                    text,
+                    channel=channel,
+                    direction=direction,
+                    occurred_at=occurred_at,
+                    body=body,
                     entity_type="lead",
                     entity_id=lead_id,
                     source=SOURCE,
                     external_id=external_id,
+                    source_event_id=source_event_id,
                 )
                 ingested += 1
             except Exception:  # noqa: BLE001
-                log.exception("could not ingest WelcomeHome transcript %s", external_id)
+                log.exception("could not ingest WelcomeHome message %s", external_id)
         return ingested
 
     # -- prospects ---------------------------------------------------------
@@ -195,14 +207,17 @@ class WelcomeHomeRunner:
                     conn=conn,
                 )
                 seen += 1
-                # Only ingest a transcript once we know which lead it belongs to —
-                # an activity that resolved to a review task has no lead to tag.
-                if mapped.get("narrative") and result.get("matched"):
+                # Store the message once we know which lead it belongs to — an
+                # activity that resolved to a review task has no lead to tag.
+                comm = mapped.get("communication")
+                if comm and result.get("matched"):
                     lead_id = await _lead_id_for(conn, mapped["external_id"])
                     if lead_id:
                         pending.append((
-                            f"{mapped['activity_type']} — WelcomeHome activity",
-                            mapped.get("notes") or "",
+                            comm["channel"],
+                            comm["direction"],
+                            comm["occurred_at"],
+                            comm["body"],
                             lead_id,
                             mapped["activity_id"],
                         ))
@@ -225,6 +240,24 @@ async def _lead_id_for(conn, external_id: str) -> str | None:
     return str(row[0]) if row else None
 
 
+async def _activity_event_id(tenant_id: str, lead_id: str, activity_id: str) -> str | None:
+    """The `lead.activity_logged` event this activity wrote, for the comm's
+    event-as-spine link. Matched on the wh_activity_id the adapter stamps into the
+    event detail. Best-effort — a missing event just leaves source_event_id null."""
+    from ...db import tenant_tx
+
+    async with tenant_tx(tenant_id) as conn:
+        row = await (
+            await conn.execute(
+                "select id from public.events "
+                "where entity_type = 'lead' and entity_id = %s "
+                "  and event_type = 'lead.activity_logged' "
+                "  and payload->'detail'->>'wh_activity_id' = %s "
+                "order by created_at desc limit 1",
+                (lead_id, activity_id),
+            )
+        ).fetchone()
+    return str(row[0]) if row else None
 
 
 

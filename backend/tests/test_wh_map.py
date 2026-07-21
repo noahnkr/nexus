@@ -10,10 +10,9 @@ import json
 import pathlib
 
 from app.services.connectors.wh_map import (
-    NARRATIVE_MIN_CHARS,
+    activity_channel,
     activity_summary,
     build_refs,
-    is_narrative,
     map_activity,
     map_contact,
     map_prospect,
@@ -219,22 +218,48 @@ def test_not_applicable_direction_is_dropped():
 
 
 # ---------------------------------------------------------------------------
-# narrative gate (what reaches RAG)
+# communications classification (store-all; embedding is decided later, by
+# communications.should_embed — not here)
 # ---------------------------------------------------------------------------
-def test_long_narrative_activities_are_flagged_for_ingestion():
-    acts = _activities()
-    assert map_activity(acts["5301"], _refs())["narrative"] is True   # long Call
-    assert map_activity(acts["5305"], _refs())["narrative"] is True   # long Note
+def test_channel_map_classifies_message_types():
+    assert activity_channel("Call") == "call"
+    assert activity_channel("Email") == "email"
+    assert activity_channel("Text") == "sms"
+    assert activity_channel("Note") == "note"
+    assert activity_channel("Assessment") == "other"
+    assert activity_channel("Other") == "other"
+    # Not correspondence -> no channel, timeline-only.
+    assert activity_channel("Home Visit") is None
+    assert activity_channel("Appointment") is None
+    assert activity_channel(None) is None
 
 
-def test_short_and_non_narrative_activities_are_not_ingested():
+def test_every_message_activity_carries_a_communication_regardless_of_length():
+    """Store-all: a long Call transcript AND a short Text both become
+    communications — the length gate is gone from the map."""
     acts = _activities()
-    assert map_activity(acts["5302"], _refs())["narrative"] is False  # short Text
-    assert map_activity(acts["5303"], _refs())["narrative"] is False  # short Email
-    # A long note on a type that never carries prose still isn't a document.
-    assert is_narrative("Home Visit", "x" * (NARRATIVE_MIN_CHARS + 10)) is False
-    assert is_narrative("Call", "x" * (NARRATIVE_MIN_CHARS - 1)) is False
-    assert is_narrative("Call", "x" * NARRATIVE_MIN_CHARS) is True
+
+    long_call = map_activity(acts["5301"], _refs())["communication"]
+    assert long_call["channel"] == "call"
+    assert long_call["direction"] == "inbound"
+    assert long_call["occurred_at"] == "2026-06-01T15:10:00.000Z"
+    assert long_call["body"].startswith("Intake call transcript.")
+
+    short_text = map_activity(acts["5302"], _refs())["communication"]
+    assert short_text["channel"] == "sms"           # a Text is an SMS
+    assert short_text["direction"] == "outbound"
+
+    short_email = map_activity(acts["5303"], _refs())["communication"]
+    assert short_email["channel"] == "email"
+
+    long_note = map_activity(acts["5305"], _refs())["communication"]
+    assert long_note["channel"] == "note"
+    assert long_note["direction"] is None            # not_applicable -> unknown
+
+
+def test_non_correspondence_activities_carry_no_communication():
+    """A Home Visit lands on the timeline but is not a message."""
+    assert map_activity(_activities()["5304"], _refs())["communication"] is None
 
 
 def test_activity_summary_truncates_and_never_leaks_a_whole_transcript():

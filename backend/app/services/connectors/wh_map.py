@@ -33,12 +33,16 @@ out to be incomplete in a way that matters:
     table (`Advance Stage` alone was 539 of 1,365 rows). They are skipped. We emit
     `lead.stage_changed` ourselves from the prospect's stage, so importing these
     would double every stage move in the timeline with a worse summary.
-  * NARRATIVE types (`Call`, `Email`, `Note`, `Assessment`, `Other`) are the ones
-    that actually carry long-form prose — call transcripts up to 3,045 chars, care
-    narratives up to 4,547. Past `NARRATIVE_MIN_CHARS` these are also routed to
-    document ingestion so they are retrievable in chat (decision 8).
-  * Everything else (`Text`, `Home Visit`, `Appointment`, …) lands on the lead
-    timeline only. `Text` maxed out at 197 chars — it is a message, not a document.
+  * MESSAGE/INTERACTION types (`Call`, `Email`, `Text`, `Note`, `Assessment`,
+    `Other`) are correspondence. As of v1.1.0 EVERY one is stored in the
+    communications tier (store-all) via the `communication` sub-payload — a call
+    transcript, a text, a care narrative alike — keyed to a channel by
+    `ACTIVITY_CHANNELS`. The embed-selectively policy
+    (`communications.should_embed`) decides which get chunked/embedded; there is no
+    length gate here anymore. This replaces the pre-v1.1.0 path that routed only
+    long narratives into the `documents` corpus.
+  * Everything else (`Home Visit`, `Appointment`, …) has no channel and lands on
+    the lead timeline only.
 """
 from __future__ import annotations
 
@@ -53,12 +57,19 @@ SYSTEM_ACTIVITY_TYPES = frozenset({
     "Score Changed",
 })
 
-# Types that carry prose worth retrieving in chat, when long enough.
-NARRATIVE_ACTIVITY_TYPES = frozenset({"Call", "Email", "Note", "Assessment", "Other"})
-
-# Below this, a "narrative" activity is a one-liner ("left a voicemail") — timeline
-# material, not a document. Set from the live length distribution.
-NARRATIVE_MIN_CHARS = 500
+# WelcomeHome activity type -> communications channel. Every message/interaction
+# activity is STORED as a communication (store-all, v1.1.0); the embed-selectively
+# policy (communications.should_embed) decides which are chunked/embedded, so the
+# old length gate no longer lives here. Types absent from this map (Home Visit,
+# Appointment, …) land on the lead timeline only — they are not correspondence.
+ACTIVITY_CHANNELS = {
+    "Call": "call",
+    "Email": "email",
+    "Text": "sms",
+    "Note": "note",
+    "Assessment": "other",
+    "Other": "other",
+}
 
 # system_type -> Nexus lead status. WelcomeHome's stable milestone markers.
 _SYSTEM_TYPE_STATUS = {
@@ -278,18 +289,25 @@ def map_prospect(
 # ---------------------------------------------------------------------------
 # activities
 # ---------------------------------------------------------------------------
-def is_narrative(activity_type: str | None, notes: str | None) -> bool:
-    """True when this activity's notes are long-form prose worth ingesting for
-    retrieval (a call transcript, a care narrative) rather than a timeline line."""
-    if not activity_type or activity_type not in NARRATIVE_ACTIVITY_TYPES:
-        return False
-    return len(notes or "") >= NARRATIVE_MIN_CHARS
+def activity_channel(activity_type: str | None) -> str | None:
+    """The communications channel this activity type maps to, or None when the
+    activity is not correspondence (a home visit, an appointment) — those land on
+    the lead timeline only."""
+    if not activity_type:
+        return None
+    return ACTIVITY_CHANNELS.get(activity_type)
 
 
 def map_activity(row: dict, refs: dict) -> dict | None:
     """One Activities export row -> the payload the adapter normalizes into a
     `lead.activity_logged` event. None for rows that must not reach a timeline:
     system bookkeeping, deleted rows, and anything not about a prospect.
+
+    A message/interaction type (Call, Email, Text, Note, Assessment, Other) also
+    carries a `communication` sub-payload: the runner stores EVERY one of these in
+    the communications tier (store-all), and `communications.should_embed` decides
+    which get embedded. Types that are not correspondence carry `communication`:
+    None and stay timeline-only.
     """
     if _s(row, "activities.discarded_at"):
         return None
@@ -309,8 +327,23 @@ def map_activity(row: dict, refs: dict) -> dict | None:
 
     notes = _s(row, "activities.notes")
     direction = _s(row, "activities.direction")
-    if direction == "not_applicable":
-        direction = None
+    if direction not in ("inbound", "outbound"):
+        direction = None  # 'not_applicable' and any unexpected value -> unknown
+    occurred_at = (
+        _s(row, "activities.completed_at")
+        or _s(row, "activities.scheduled_at")
+        or _s(row, "activities.created_at")
+    )
+
+    channel = activity_channel(type_name)
+    communication = None
+    if channel is not None and notes:
+        communication = {
+            "channel": channel,
+            "direction": direction,
+            "occurred_at": occurred_at,
+            "body": notes,
+        }
 
     return {
         "external_id": f"wh:prospect:{prospect_id}",
@@ -318,13 +351,9 @@ def map_activity(row: dict, refs: dict) -> dict | None:
         "activity_type": type_name or "Activity",
         "direction": direction,
         "notes": notes,
-        "occurred_at": (
-            _s(row, "activities.completed_at")
-            or _s(row, "activities.scheduled_at")
-            or _s(row, "activities.created_at")
-        ),
+        "occurred_at": occurred_at,
         "summary": activity_summary(type_name, direction, notes),
-        "narrative": is_narrative(type_name, notes),
+        "communication": communication,
     }
 
 

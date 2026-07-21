@@ -1166,6 +1166,12 @@ export const api = {
     authFetch(`/api/leads/${id}/summary/regenerate`, { method: "POST" }).then(
       json<LeadSummary>,
     ),
+  getLeadCommProfile: (id: string) =>
+    authFetch(`/api/leads/${id}/comm-profile`).then(json<LeadSummary>),
+  regenerateLeadCommProfile: (id: string) =>
+    authFetch(`/api/leads/${id}/comm-profile/regenerate`, { method: "POST" }).then(
+      json<LeadSummary>,
+    ),
   getLeadMetrics: () => authFetch("/api/leads/metrics").then(json<LeadMetrics>),
 
   // Caregivers view (Module 10)
@@ -1287,6 +1293,12 @@ export const api = {
     authFetch(`/api/clients/${id}/summary`).then(json<ClientSummary>),
   regenerateClientSummary: (id: string) =>
     authFetch(`/api/clients/${id}/summary/regenerate`, { method: "POST" }).then(
+      json<ClientSummary>,
+    ),
+  getClientCommProfile: (id: string) =>
+    authFetch(`/api/clients/${id}/comm-profile`).then(json<ClientSummary>),
+  regenerateClientCommProfile: (id: string) =>
+    authFetch(`/api/clients/${id}/comm-profile/regenerate`, { method: "POST" }).then(
       json<ClientSummary>,
     ),
   createContact: (clientId: string, body: ClientContactCreate) =>
