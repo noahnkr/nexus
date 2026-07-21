@@ -8,10 +8,22 @@ and the static-bearer `/mcp` mount.
 """
 import asyncio
 import contextlib
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+# psycopg's async pool cannot run on Windows' default ProactorEventLoop — it needs
+# a selector loop. Uvicorn builds its loop AFTER importing this module, so setting
+# the policy here (before anything creates one) is what makes the documented
+# `python -m uvicorn app.main:app` command work on Windows at all. Without it the
+# app starts, then dies 30 seconds later with `PoolTimeout: pool initialization
+# incomplete` — a message that reads like bad credentials rather than a loop
+# mismatch. The test harness (conftest) and the backfill script each set the same
+# policy for the same reason; this is the third and last place that needed it.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from .config import settings
 from .db import close_pool, open_pool
