@@ -2,6 +2,11 @@
 
 Notable changes to the Nexus Control Center, newest first. Each entry is a high-level summary of what the version delivers; implementation detail lives in the plans (`.claude/plans/`) and the code. Versioning follows `ROADMAP.md` (semantic, by impact).
 
+## v1.1.1 — Chat turns no longer fail on tool-calling questions · 2026-07-21
+
+- **Fixed: some questions failed outright in chat** with a `'NoneType' object has no attribute 'outputs'` message — including "what is my most recent touch point with…" and phone-number lookups. The fault was in the observability layer, not the questions: the LangSmith tracing wrapper crashed while recording the model's streamed reply. Chat now reads the reply in a way that avoids that path, with tracing intact and unchanged.
+- **Errors in chat now speak plainly.** A failed turn says so in ordinary language instead of printing an internal error into the conversation; the technical detail goes to the server log, where it can actually be diagnosed.
+
 ## v1.1.0 — Communications tier & RAG hygiene · 2026-07-21
 
 Conversations and documents are now two different things. Messages get their own home instead of being mixed into the document corpus, so the curated knowledge base stays clean as message volume grows:
