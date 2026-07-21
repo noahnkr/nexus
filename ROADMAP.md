@@ -50,6 +50,9 @@ In build order. The next thing to build is the top of this list.
 
 | Version | Capability | Plan | Notes |
 |---|---|---|---|
+| v1.1.1 | Fix `NoneType … 'outputs'` on tool-calling chat turns | *(to plan)* | Live bug: some chat questions fail (e.g. "most recent touch point with X", "which caregiver has phone +1…"). `.outputs` is a LangSmith SDK attribute — the tracing wrapper, not the query logic. Chat is a core surface, so this goes first. |
+| v1.1.2 | WelcomeHome stage reflection + lost-lead nurture | *(to plan)* | Map WelcomeHome's lead stages **one-to-one** onto the funnel, and add a `lost`-stage sequence with long (~3-month) waits that supersedes on re-engagement. Ordinary stage-bound automation, no new machinery. **Lands before v1.2.0 so WellSky writes into a settled stage set.** |
+| v1.1.3 | Entity timeline readability | *(to plan)* | Structure and legibility pass on entity timelines: per-activity-type icons, headings/colour, a best-effort renderer for the variable JSON detail, plus two defects — **email bodies render raw HTML tags**, and **long timeline entries get cut off**. Start with an analysis of real activity payloads. |
 | v1.2.0 | WellSky Personal Care sync | `v1.2.0-wellsky-sync.md` | Line-of-business system: active clients, hired caregivers, full schedule + EVV, client files → RAG. **Blocked on API credentials (WellSky rep).** |
 | v1.3.0 | GoTo Connect | `v1.3.0-goto-connect.md` | Calls + SMS via WebSocket bridge; real `send_sms`. One-time OAuth consent ops step. |
 | v1.4.0 | Gmail & Google Calendar | `v1.4.0-google-workspace.md` | Correspondence (not lead intake — WelcomeHome owns that) + calendar; real `send_email`, gated `create_calendar_event`. One-time OAuth ops step. |
