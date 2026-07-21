@@ -2,6 +2,16 @@
 
 Notable changes to the Nexus Control Center, newest first. Each entry is a high-level summary of what the version delivers; implementation detail lives in the plans (`.claude/plans/`) and the code. Versioning follows `ROADMAP.md` (semantic, by impact).
 
+## v1.1.0 — Communications tier & RAG hygiene · 2026-07-21
+
+Conversations and documents are now two different things. Messages get their own home instead of being mixed into the document corpus, so the curated knowledge base stays clean as message volume grows:
+
+- **Calls, emails, texts, and notes are stored as communications** — every one of them, linked to the entry it created on the lead's timeline. Previously only long narratives were kept, as documents; short messages left no searchable record at all.
+- **Long-form correspondence is searchable in chat**, through its own search that's kept separate from document search — so asking "what did we discuss with the Ellisons?" looks at conversations, while "what does her care plan say?" looks at files. Short messages are stored but not indexed, since a two-line text is a record, not a reference.
+- **A Communication profile on lead and client profiles** — an on-demand read of how someone communicates: tone, how responsive they are, which channel they prefer, and topics that keep coming up. It sits alongside the existing Smart summary.
+- **The Knowledge view is now files-only.** WelcomeHome call and note transcripts no longer appear there as pseudo-documents.
+- Groundwork for the messaging connectors: the upcoming GoTo (calls/SMS) and Gmail integrations write into this store rather than each inventing their own.
+
 ## v1.0.0 — WelcomeHome CRM sync · 2026-07-20
 
 First live external data flowing end-to-end. Nexus now polls the WelcomeHome CRM and mirrors its sales pipeline into the canonical model:
