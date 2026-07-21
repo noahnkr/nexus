@@ -274,3 +274,28 @@ def test_activity_summary_truncates_and_never_leaks_a_whole_transcript():
 
     assert activity_summary("Note", None, "") == "Note logged in WelcomeHome"
     assert activity_summary(None, None, None) == "Activity logged in WelcomeHome"
+
+
+def test_activity_summary_strips_html_from_email_notes():
+    # The real dev-corpus email shape: HTML in the notes.
+    notes = (
+        "<b>Come See Us at the DuPage County Fair This Week!</b><br><br>"
+        "Hi Margaret! We&#39;ll have a booth all week &amp; would love to say hello."
+    )
+    summary = activity_summary("Email", "outbound", notes)
+
+    assert "<" not in summary  # no tags leak into the stored one-liner
+    assert summary.startswith("Email (outbound): ")
+    # First line of the plain text — the bold heading, tags gone, entity decoded.
+    assert "Come See Us at the DuPage County Fair This Week!" in summary
+    assert len(summary) < 150  # the 120-char cap still applies
+
+
+def test_activity_summary_is_unchanged_for_plain_text_notes():
+    # A note with no markup must be byte-identical to before the HTML strip —
+    # the strip is a no-op on the common case.
+    plain = "Called the family. Left a voicemail; will retry Tuesday morning."
+    assert (
+        activity_summary("Call", "inbound", plain)
+        == f"Call (inbound): {plain}"
+    )

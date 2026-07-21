@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { eventIcon, sourceAccent } from "@/lib/events";
 import { eventTypeLabel, sourceLabel } from "@/lib/recipe";
+import { EventDetail } from "@/components/events/EventDetail";
 import type { EventOut } from "@/lib/api";
 
 function formatTime(iso: string): string {
@@ -38,7 +39,7 @@ export function EventRow({
   const [expanded, setExpanded] = useState(false);
   const hasEntity = Boolean(event.entity_type && event.entity_id);
   const error = isErrorEvent(event);
-  const Icon = eventIcon(event.event_type);
+  const Icon = eventIcon(event.event_type, event.payload);
 
   return (
     <div className="relative border-b last:border-b-0">
@@ -97,11 +98,7 @@ export function EventRow({
         </div>
       </div>
 
-      {expanded && (
-        <pre className="mx-4 mb-3 overflow-x-auto rounded-md bg-muted p-3 text-xs text-muted-foreground">
-          {JSON.stringify(event.payload, null, 2)}
-        </pre>
-      )}
+      {expanded && <EventDetail event={event} className="mx-4 mb-3 pl-8" />}
     </div>
   );
 }

@@ -48,6 +48,8 @@ out to be incomplete in a way that matters:
 """
 from __future__ import annotations
 
+import re
+
 # WelcomeHome's own bookkeeping rows. Not in /activity_types; skipped wholesale.
 SYSTEM_ACTIVITY_TYPES = frozenset({
     "Advance Stage",
@@ -367,6 +369,34 @@ def map_activity(row: dict, refs: dict) -> dict | None:
     }
 
 
+_TAG_RE = re.compile(r"<[^>]*>")
+_BLOCK_RE = re.compile(
+    r"<\s*(?:br\s*/?|/\s*(?:p|div|li|tr|h[1-6]))\s*>", re.IGNORECASE
+)
+_ENTITIES = {
+    "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"',
+    "&apos;": "'", "&#39;": "'", "&nbsp;": " ",
+}
+
+
+def _html_to_text(text: str) -> str:
+    """Strip markup from a note so the stored summary is readable everywhere it
+    surfaces — chat, tasks, traces — not only where the frontend re-derives it.
+
+    WelcomeHome's Email activities are HTML fragments; without this the stored
+    one-liner reads "Email (outbound): <b>Come See Us at the…". Deliberately tiny
+    and lossy: this feeds a 120-char summary, and the full text is preserved
+    verbatim in the event's `detail.notes`. Mirrors `frontend/src/lib/text.ts`.
+    """
+    if "<" not in text and "&" not in text:
+        return text  # the common case: plain text passes through untouched
+    text = _BLOCK_RE.sub(" ", text)
+    text = _TAG_RE.sub("", text)
+    for entity, char in _ENTITIES.items():
+        text = text.replace(entity, char)
+    return text
+
+
 def activity_summary(
     activity_type: str | None, direction: str | None, notes: str | None
 ) -> str:
@@ -376,6 +406,7 @@ def activity_summary(
     label = activity_type or "Activity"
     if direction:
         label = f"{label} ({direction})"
+    notes = _html_to_text(notes) if notes else notes
     first_line = (notes or "").strip().splitlines()[0] if (notes or "").strip() else ""
     if not first_line:
         return f"{label} logged in WelcomeHome"
