@@ -67,7 +67,8 @@ async def _scenario():
 
             # --- different stage, same view -> allowed ---
             r2 = await ac.post("/api/automations", json=_body(
-                f"seq-qualified {token}", {"view": view, "stage": "qualified"}))
+                f"seq-visit-scheduled {token}",
+                {"view": view, "stage": "visit_scheduled"}))
             out["diff_stage_code"] = r2.status_code
             if r2.status_code == 201:
                 out["created_ids"].append(r2.json()["id"])
@@ -141,7 +142,7 @@ def test_automation_binding():
     assert "already has a sequence" in str(out["dup_detail"]).lower()
 
     assert out["diff_stage_code"] == 201
-    assert out["view_list_stages"] == ["contacted", "qualified"]
+    assert out["view_list_stages"] == ["contacted", "visit_scheduled"]
     assert len(out["view_list_ids"]) == 2
 
     assert out["not_object_code"] == 422

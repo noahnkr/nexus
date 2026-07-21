@@ -89,20 +89,20 @@ async def _scenario():
             transport=transport, base_url="http://t", headers=bearer_headers()
         ) as ac:
             async with db.tenant_tx(DEMO_TENANT) as conn:
-                await _clear_leads_sequences(conn, ["contacted", "qualified"])
+                await _clear_leads_sequences(conn, ["contacted", "visit_scheduled"])
 
-            # contacted sequence parks on a delay; qualified completes fast.
+            # contacted sequence parks on a delay; visit_scheduled completes fast.
             contacted = (await ac.post("/api/automations", json=await _seq_body(
                 f"contacted {token}", "contacted",
                 [{"type": "delay", "minutes": 60},
                  {"type": "function", "function": "now", "save_as": "ts"}],
             ))).json()
-            qualified = (await ac.post("/api/automations", json=await _seq_body(
-                f"qualified {token}", "qualified",
+            visit_scheduled = (await ac.post("/api/automations", json=await _seq_body(
+                f"visit_scheduled {token}", "visit_scheduled",
                 [{"type": "function", "function": "now", "save_as": "ts"}],
             ))).json()
-            out["automations"] += [contacted["id"], qualified["id"]]
-            for aid in (contacted["id"], qualified["id"]):
+            out["automations"] += [contacted["id"], visit_scheduled["id"]]
+            for aid in (contacted["id"], visit_scheduled["id"]):
                 await ac.patch(f"/api/automations/{aid}", json={"status": "active"})
 
             lead = (await ac.post("/api/leads", json={"name": f"Supersede {token}"})).json()
@@ -122,14 +122,14 @@ async def _scenario():
             async with db.tenant_tx(DEMO_TENANT) as conn:
                 out["contacted_parked"] = (await _run_for(conn, contacted["id"]))["status"]
 
-            # --- advance to qualified: the contacted run is superseded ---
-            await ac.patch(f"/api/leads/{lead_id}", json={"status": "qualified"})
+            # --- advance to visit_scheduled: the contacted run is superseded ---
+            await ac.patch(f"/api/leads/{lead_id}", json={"status": "visit_scheduled"})
             async with db.tenant_tx(DEMO_TENANT) as conn:
                 out["contacted_after"] = (await _run_for(conn, contacted["id"]))["status"]
             await dispatch_once(DEMO_TENANT)
             async with db.tenant_tx(DEMO_TENANT) as conn:
-                qrun = await _run_for(conn, qualified["id"])
-                out["qualified_started"] = qrun is not None
+                qrun = await _run_for(conn, visit_scheduled["id"])
+                out["visit_scheduled_started"] = qrun is not None
 
             # === gated variant: waiting_approval run is rejected, not orphaned ===
             async with db.tenant_tx(DEMO_TENANT) as conn:
@@ -158,8 +158,8 @@ async def _scenario():
                     )
                     action_id = str((await cur.fetchone())["id"])
 
-            # advance to qualified: supersede rejects the pending action + cancels run
-            await ac.patch(f"/api/leads/{lead2_id}", json={"status": "qualified"})
+            # advance to visit_scheduled: supersede rejects the pending action + cancels run
+            await ac.patch(f"/api/leads/{lead2_id}", json={"status": "visit_scheduled"})
             async with db.tenant_tx(DEMO_TENANT) as conn:
                 out["gated_after"] = (await _run_for(conn, gated["id"]))["status"]
                 async with conn.cursor(row_factory=dict_row) as cur:
@@ -185,7 +185,7 @@ def test_sequence_supersede():
     # delay case: contacted parked, then cancelled when the lead advanced
     assert out["contacted_parked"] == "waiting"
     assert out["contacted_after"] == "cancelled"
-    assert out["qualified_started"]  # the new stage's sequence started fresh
+    assert out["visit_scheduled_started"]  # the new stage's sequence started fresh
 
     # gated case: parked for approval, then the action rejected + run cancelled
     assert out["gated_parked"] == "waiting_approval"

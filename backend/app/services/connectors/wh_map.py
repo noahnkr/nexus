@@ -12,14 +12,16 @@ office renames them. So the map keys on `system_type` (WelcomeHome's own stable
 marker for the milestone stages) and falls back to POSITION BANDS for the ones
 that carry `system_type: "none"`. A renamed stage keeps working; a genuinely new
 stage maps to nothing and the lead's status is left ALONE with a warning event —
-never guessed, never crashed. The Nexus funnel does not change to accommodate
-WelcomeHome; this is a translation layer, both ways.
+never guessed, never crashed. This stays a translation layer both ways: as of
+v1.1.2 the Nexus funnel happens to reflect WelcomeHome's stages one-to-one, but
+that is the funnel's shape, not a coupling — a renamed or added WH stage still
+translates here rather than reshaping `views/leads.LEAD_STAGES`.
 
     Inquiry              (new_lead, pos 0)  -> new
-    Contact Attempted    (pos 1)            -> contacted
+    Contact Attempted    (pos 1)            -> contact_attempted
     Contact Made         (pos 2)            -> contacted
-    Home Visit Scheduled (pos 3)            -> qualified
-    Home Visit Completed (visit,   pos 4)   -> qualified
+    Home Visit Scheduled (pos 3)            -> visit_scheduled
+    Home Visit Completed (visit,   pos 4)   -> visit_completed
     Start of Care        (move_in, pos 5)   -> converted   [+ client promotion]
     discarded / closed                      -> lost
 
@@ -74,12 +76,20 @@ ACTIVITY_CHANNELS = {
 # system_type -> Nexus lead status. WelcomeHome's stable milestone markers.
 _SYSTEM_TYPE_STATUS = {
     "new_lead": "new",
-    "visit": "qualified",
+    "visit": "visit_completed",
     "move_in": "converted",
 }
 
-# Fallback for stages carrying system_type "none": position bands.
-_POSITION_BANDS = ((0, "new"), (2, "contacted"), (4, "qualified"))
+# Fallback for stages carrying system_type "none": position bands. One band per
+# stage now that the funnel is one-to-one; anything past the last band is at or
+# beyond start of care.
+_POSITION_BANDS = (
+    (0, "new"),
+    (1, "contact_attempted"),
+    (2, "contacted"),
+    (3, "visit_scheduled"),
+    (4, "visit_completed"),
+)
 
 
 def _s(row: dict, key: str) -> str | None:

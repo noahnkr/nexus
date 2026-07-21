@@ -20,6 +20,8 @@ from datetime import date, datetime, timezone
 
 from psycopg.rows import dict_row
 
+from .leads import LEAD_STAGES
+
 # ---------------------------------------------------------------------------
 # category config (mirrored on the frontend in lib/referrals.ts). Keys match the
 # migration's CHECK; a null category = an untyped partner.
@@ -49,9 +51,12 @@ def category_label(category: str | None) -> str:
     return _CATEGORY_LABELS.get(category, category)
 
 
-# Non-terminal lead statuses (mirrors views/leads.LEAD_STAGES terminal flags): a
-# lead still being worked. converted/lost are terminal.
-_IN_PIPELINE_STATUSES = ("new", "contacted", "qualified")
+# Non-terminal lead statuses: a lead still being worked. Derived from the seam
+# config's terminal flags rather than re-listed, so a stage-set change (v1.1.2
+# went from five stages to seven) can't silently miss this surface.
+_IN_PIPELINE_STATUSES = tuple(
+    s["key"] for s in LEAD_STAGES if not s["terminal"]
+)
 
 # A source needs at least this many leads before its conversion rate is a signal
 # worth headlining ("best converter"). Below it, the rate is noise.
