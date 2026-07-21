@@ -41,6 +41,21 @@ class _FinalMessage:
         self.usage = _Usage()
 
 
+class _Delta:
+    def __init__(self, type, **kw):
+        self.type = type
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+
+class _Event:
+    """A `content_block_delta` frame, shaped like the Anthropic SDK's."""
+
+    def __init__(self, delta):
+        self.type = "content_block_delta"
+        self.delta = delta
+
+
 class _FakeStream:
     def __init__(self, deltas):
         self._deltas = deltas
@@ -51,13 +66,16 @@ class _FakeStream:
     async def __aexit__(self, *a):
         return False
 
+    async def __aiter__(self):
+        for d in self._deltas:
+            yield _Event(_Delta("text_delta", text=d))
+
     @property
     def text_stream(self):
-        async def _gen():
-            for d in self._deltas:
-                yield d
-
-        return _gen()
+        # Tripwire (v1.1.1) — see test_chat_tools.FakeStream. Consuming
+        # `.text_stream` hits the unguarded `run_tree.outputs` deref in
+        # LangSmith's Anthropic wrapper and kills live chat turns.
+        raise AssertionError("chat must not consume .text_stream (v1.1.1)")
 
     async def get_final_message(self):
         return _FinalMessage("".join(self._deltas))
@@ -186,3 +204,50 @@ def _run_and_cleanup(scenario):
                         "delete from public.chat_threads where id=%s", (tid_holder["tid"],)
                     )
                 conn.commit()
+
+
+def test_turn_failure_hides_internals_and_logs_the_traceback(monkeypatch, caplog):
+    """A crash mid-turn must reach the user as plain language, never as the raw
+    exception — the v1.1.1 regression, where LangSmith's
+    `'NoneType' object has no attribute 'outputs'` was rendered into the chat
+    window. The traceback belongs in the server log instead."""
+    _patch(monkeypatch)
+
+    from app.routers import chat as chat_router
+
+    def _boom(*_a, **_kw):
+        async def _gen():
+            raise RuntimeError("'NoneType' object has no attribute 'outputs'")
+            yield  # pragma: no cover — makes _boom an async generator
+
+        return _gen()
+
+    monkeypatch.setattr(chat_router, "stream_chat_turn", _boom)
+
+    async def scenario(ac):
+        thread = (await ac.post("/api/chat/threads", json={"title": "t"})).json()
+        tid = thread["id"]
+        with caplog.at_level("ERROR", logger="nexus.chat"):
+            r = await ac.post(
+                f"/api/chat/threads/{tid}/messages", json={"content": "boom?"}
+            )
+        frames = _parse_sse(r.text)
+
+        assert [e for e, _ in frames] == ["error"]
+        message = frames[0][1]["message"]
+        assert message == chat_router.GENERIC_ERROR
+        # no internals leak to the chat window
+        assert "NoneType" not in message
+        assert "outputs" not in message
+        assert "RuntimeError" not in message
+
+        # ...but the traceback IS logged, which is where it is diagnosable
+        records = [r for r in caplog.records if r.name == "nexus.chat"]
+        assert records, "the failed turn must be logged"
+        assert records[0].exc_info is not None
+        assert isinstance(records[0].exc_info[1], RuntimeError)
+        assert "outputs" in str(records[0].exc_info[1])
+
+        return tid
+
+    assert _run_and_cleanup(scenario)

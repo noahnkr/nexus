@@ -333,7 +333,22 @@ async def stream_chat_turn(tenant_id: str, thread_id: str, user_text: str):
                 # drops streamed thinking content, breaking verbatim replay.
                 extra_body={"thinking": {"type": "disabled"}},
             ) as stream:
-                async for delta in stream.text_stream:
+                # Raw events, NOT `stream.text_stream` (v1.1.1). LangSmith's Anthropic
+                # wrapper traces `.text_stream` through a path that ends in an
+                # unguarded `run_tree.outputs = ...` — when the run tree resolves to
+                # None it raises `'NoneType' object has no attribute 'outputs'` and
+                # kills the turn. It is unfixed upstream, so we avoid the path: the
+                # event iterator is traced separately (reduced via the SDK's own
+                # event accumulator) and yields an equivalent LLM span.
+                async for event in stream:
+                    if event.type != "content_block_delta":
+                        continue
+                    # content_block_delta also carries tool-argument deltas
+                    # (input_json_delta); only text_delta is user-visible answer text.
+                    block_delta = event.delta
+                    if block_delta.type != "text_delta":
+                        continue
+                    delta = block_delta.text
                     if not citations_sent:
                         yield "citations", {"sources": agg_sources}
                         citations_sent = True

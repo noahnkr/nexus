@@ -111,6 +111,15 @@ class FakeMessage:
         self.usage = FakeUsage()
 
 
+class FakeEvent:
+    """A `content_block_delta` frame, shaped like the Anthropic SDK's — chat only
+    reads `.type`, `.delta.type` and `.delta.text`."""
+
+    def __init__(self, delta):
+        self.type = "content_block_delta"
+        self.delta = delta
+
+
 class FakeStream:
     def __init__(self, deltas, final):
         self._deltas = deltas
@@ -122,13 +131,23 @@ class FakeStream:
     async def __aexit__(self, *a):
         return False
 
+    async def __aiter__(self):
+        for d in self._deltas:
+            yield FakeEvent(FakeBlock("text_delta", text=d))
+        # An input_json_delta rides along on tool-use turns; chat must skip it
+        # rather than stream tool arguments into the answer.
+        yield FakeEvent(FakeBlock("input_json_delta", partial_json='{"q":'))
+
     @property
     def text_stream(self):
-        async def gen():
-            for d in self._deltas:
-                yield d
-
-        return gen()
+        # Tripwire (v1.1.1). Consuming `.text_stream` hits the unguarded
+        # `run_tree.outputs = ...` in LangSmith's Anthropic wrapper, which kills
+        # live chat turns with "'NoneType' object has no attribute 'outputs'".
+        # Chat must iterate raw stream events instead.
+        raise AssertionError(
+            "chat must not consume .text_stream — it hits the unguarded "
+            "run_tree.outputs deref in langsmith's Anthropic wrapper (v1.1.1)"
+        )
 
     async def get_final_message(self):
         return self._final

@@ -9,6 +9,7 @@ POST   /api/chat/threads/{id}/messages   stream an assistant turn (text/event-st
 from __future__ import annotations
 
 import json
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -20,6 +21,14 @@ from ..schemas import MessageCreate, MessageOut, ThreadCreate, ThreadOut
 from ..services.chat_service import ThreadNotFound, stream_chat_turn
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+log = logging.getLogger("nexus.chat")
+
+# What a failed turn tells the user. Internals (exception text, SDK attribute
+# errors, SQL) never reach the chat window — CLAUDE.md keeps user-facing surfaces
+# plain-language; the traceback goes to the server log instead, which is where it
+# is diagnosable.
+GENERIC_ERROR = "Something went wrong answering that. Please try again."
 
 
 def _thread_out(row: dict) -> ThreadOut:
@@ -108,8 +117,9 @@ async def post_message(
                 yield _sse(event, data)
         except ThreadNotFound:
             yield _sse("error", {"message": "Thread not found"})
-        except Exception as exc:  # noqa: BLE001 — surface any failure to the client
-            yield _sse("error", {"message": str(exc)})
+        except Exception:  # noqa: BLE001 — no failure may kill the SSE stream silently
+            log.exception("chat turn failed (thread=%s)", thread_id)
+            yield _sse("error", {"message": GENERIC_ERROR})
 
     return StreamingResponse(
         event_stream(),
