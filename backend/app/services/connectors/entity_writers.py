@@ -36,7 +36,10 @@ from psycopg.rows import dict_row
 from ..events import log_event
 from ..views.leads import StageChangeError, change_stage
 
-LEAD_STATUSES = ("new", "contacted", "qualified", "converted", "lost")
+LEAD_STATUSES = (
+    "new", "contact_attempted", "contacted", "visit_scheduled",
+    "visit_completed", "converted", "lost",
+)
 
 # Lead columns a connector may patch. Deliberately excludes `status` (that goes
 # through views/leads.change_stage, the single stage-writer) and `region_id`
@@ -75,6 +78,28 @@ def _patch(attributes: dict, fields) -> dict:
         if value is not None:
             out[field] = value
     return out
+
+
+async def _current(conn, table: str, entity_id: str, fields) -> dict:
+    """The stored values of `fields` for one row, `{}` if it's gone. `table` and
+    `fields` are module constants, never caller input."""
+    columns = ", ".join(fields)
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            f"select {columns} from public.{table} where id = %s", (entity_id,)
+        )
+        row = await cur.fetchone()
+    return dict(row) if row else {}
+
+
+def _changed(current: dict, patch: dict) -> dict:
+    """The subset of `patch` that actually differs from what's stored. Compared on
+    the cleaned string form, matching what the patch would write."""
+    return {
+        field: value
+        for field, value in patch.items()
+        if value != _clean(current.get(field))
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -134,8 +159,17 @@ async def update_lead(
     quotes the lead's name quotes the current one. The stage move itself goes
     through `views/leads.change_stage` — the single writer — so a CRM-driven move
     fires the same sequences and lands the same timeline event as a coordinator
-    dragging the card."""
-    patch = _patch(attributes, LEAD_PATCH_FIELDS)
+    dragging the card.
+
+    The patch is narrowed to fields that actually DIFFER from what's stored, and a
+    patch that changes nothing writes neither the UPDATE nor a `lead.updated`
+    event. Polled sources re-send whole records, so without this a full re-sweep
+    (the v1.1.2 corrective one, or any later backfill) would spam every lead's
+    timeline with an "updated" entry that recorded no change."""
+    patch = _changed(
+        await _current(conn, "leads", lead_id, LEAD_PATCH_FIELDS),
+        _patch(attributes, LEAD_PATCH_FIELDS),
+    )
     if patch:
         set_parts = ", ".join(f"{field} = %s" for field in patch)
         await conn.execute(
