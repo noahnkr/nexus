@@ -3,10 +3,16 @@ import { Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { StageTone } from "@/lib/pipeline";
 
-// A generic, prop-driven funnel strip: ordered stage segments whose width reflects
-// their share of the pipeline, a click that toggles the directory's stage filter,
-// and an optional per-stage sequence chip. No vertical knowledge — Leads and (M10)
-// Caregivers both render it from their own config.
+// A generic, prop-driven funnel strip: ordered stage segments of EQUAL width, a
+// click that toggles the directory's stage filter, and an optional per-stage
+// sequence chip. No vertical knowledge — Leads and (M10) Caregivers both render it
+// from their own config.
+//
+// Segments used to be width-weighted by share of pipeline. That read as a chart
+// the numbers already tell better, and it degraded as stage sets grew: at seven
+// leads stages (v1.1.2) a quiet stage collapsed to a slab too narrow for its own
+// label while a busy one sprawled. Even blocks keep every stage equally legible
+// and equally clickable; share is carried by the count and the percentage.
 
 export type SequenceState = "active" | "paused" | "none";
 
@@ -75,13 +81,12 @@ export function FunnelStrip({
       {segments.map((seg) => {
         const pct = Math.round((100 * seg.count) / total);
         const isActive = seg.key === active;
-        // Weight width by share, floored so an empty stage still reads.
-        const grow = Math.max(seg.count, total * 0.08);
         return (
           <div
             key={seg.key}
-            className="flex min-w-[9rem] flex-col sm:min-w-0"
-            style={{ flexGrow: grow, flexBasis: 0 }}
+            // Two even columns while wrapped (basis pinned, not grown, so a short
+            // last row keeps its width instead of stretching), one even row at sm+.
+            className="flex min-w-0 basis-[calc(50%-0.25rem)] flex-col sm:flex-1 sm:basis-0"
           >
             <button
               onClick={() => onSelect(isActive ? "" : seg.key)}
