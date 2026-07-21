@@ -72,12 +72,15 @@ def test_null_external_id_rows_are_allowed(db, demo_tenant_id):
 
 
 def test_entity_summaries_holds_two_kinds_per_entity(db, demo_tenant_id):
-    """The PK now includes `kind`, so a comm profile coexists with the smart
-    summary for one entity."""
+    """The PK includes `kind`, so two derived kinds can coexist for one entity.
+
+    v1.1.4 merged the comm profile INTO the smart summary, so only `smart_summary`
+    is written today — but the column and its place in the PK stay, and this proves
+    the seam still admits a second kind without schema surgery."""
     set_tenant(db, demo_tenant_id)
     entity = str(uuid.uuid4())
     with db.cursor() as cur:
-        for kind in ("smart_summary", "comm_profile"):
+        for kind in ("smart_summary", "probe_kind"):
             cur.execute(
                 """insert into public.entity_summaries
                      (tenant_id, entity_type, entity_id, summary, kind)
