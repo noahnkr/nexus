@@ -49,7 +49,6 @@ In build order. The next thing to build is the top of this list.
 
 | Version | Capability | Plan | Notes |
 |---|---|---|---|
-| v1.0.1 | Fuzzy referral-source matching | `v1.0.1-fuzzy-matching-dedupe.md` | Patch on the referral join — WelcomeHome sync surfaces messy real-world source strings. |
 | v1.1.0 | Communications tier & RAG hygiene | *(to plan)* | Separate messages from documents; store-all/embed-selectively; per-entity comms profile. **Foundational — lands before the messaging connectors so they build into the right substrate.** |
 | v1.2.0 | WellSky Personal Care sync | `v1.2.0-wellsky-sync.md` | Line-of-business system: active clients, hired caregivers, full schedule + EVV, client files → RAG. **Blocked on API credentials (WellSky rep).** |
 | v1.3.0 | GoTo Connect | `v1.3.0-goto-connect.md` | Calls + SMS via WebSocket bridge; real `send_sms`. One-time OAuth consent ops step. |

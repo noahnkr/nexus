@@ -14,10 +14,6 @@ Task status: `[ ]` not started · `[-]` in progress · `[x]` done.
 
 ## Next up
 
-### v1.0.1 — Fuzzy referral-source matching · patch
-Plan: `.claude/plans/v1.0.1-fuzzy-matching-dedupe.md`
-- `[ ]` Tasks to be enumerated by `/plan` (alias/fuzzy match of `leads.source` → tracked referral partners, replacing today's exact-name join).
-
 ### v1.1.0 — Communications tier & RAG hygiene · new capability
 Plan: *(to write — `/plan v1.1.0`)*. Foundational: lands before the messaging connectors so they build into the right substrate.
 - `[ ]` Communications store (channel/direction/timestamp/body/entity link, optional embedding) separate from `documents`
