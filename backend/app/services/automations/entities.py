@@ -97,6 +97,10 @@ EVENT_ENTITY_TYPES: dict[str, str] = {
     "email.received": "lead",
     "message.received": "lead",
     "calendar.event.updated": "schedule",
+    # v1.3.0 — Gmail is the authoritative email source, so sent mail is a
+    # first-class event too, and calendar creation is triggerable.
+    "email.sent": "lead",
+    "calendar.event.created": "lead",
 }
 
 # Event-type PREFIX -> entity type, for families whose prefix is not itself an
@@ -154,6 +158,11 @@ EVENT_PAYLOAD_FIELDS: dict[str, list[tuple[str, str]]] = {
         ("detail.message.subject", "Subject line"),
     ],
     "calendar.event.updated": [("detail.summary", "Calendar event title")],
+    "email.sent": [
+        ("detail.message.to", "Recipient address"),
+        ("detail.message.subject", "Subject line"),
+    ],
+    "calendar.event.created": [("payload.event_id", "Calendar event id")],
 }
 
 

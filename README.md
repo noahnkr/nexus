@@ -12,7 +12,7 @@ It's a **system of intelligence, not a system of record**: the external tools st
 - **See every surface in one product**: Home dashboard, Chat, Knowledge (documents), Tasks, Event Log, Automations, Leads, Caregivers (+ Roster), Schedule board, Clients (census + visit verification), Referrals, Settings.
 - **Automate cross-system follow-ups** with a WHEN → IF → THEN builder (or by describing it and letting the agent draft it) — a new lead triggers a welcome text, a call-out triggers a replacement search, a daily digest names expiring credentials.
 - **Trust what it does**: anything that changes state visible outside Nexus (send a text/email, change a record) is *gated* — it becomes a plain-language task you approve, and every action is in an immutable Event Log.
-- **Sync real systems in**: the WelcomeHome CRM flows in live today; WellSky, GoTo, and Google are on the roadmap.
+- **Sync real systems in**: the WelcomeHome CRM, GoTo Connect (calls + SMS), and Google Workspace (email + calendar) flow in live today; WellSky is on the roadmap.
 
 ## Architecture at a Glance
 
@@ -200,6 +200,67 @@ python -m app.scripts.backfill_welcomehome --since 2026-01-01             # for 
 ```
 
 It's idempotent, resumable, and prints per-table counts only (never record contents). **After it finishes:** WelcomeHome has no discharge signal, so every historical Start-of-Care prospect imports as an **active** client — bound the reach with `--since`, then open `/clients` and discharge the ones that have ended before trusting the census.
+
+### GoTo Connect: calls & SMS (live)
+
+GoTo Connect is the authoritative source for the phone channel. Unlike WelcomeHome it **pushes** — a long-lived WebSocket notification channel — so there's no polling of call data.
+
+**One-time consent.** GoTo's OAuth client rejects `client_credentials`, so an authorization-code flow with a browser consent is mandatory; the refresh token it produces drives everything unattended afterwards.
+
+1. In the GoTo developer portal, register `http://localhost:8765` (or whatever `GOTO_CONNECT_REDIRECT_PORT` is set to) as a redirect URI **on the same OAuth client whose id is in `.env`** — registering it on a different client is the most common way this fails.
+2. Put `GOTO_CONNECT_CLIENT_ID` and `GOTO_CONNECT_CLIENT_SECRET` in `.env`. Check there's only **one** of each: a duplicated block silently wins with the last value.
+3. Run the bootstrap, complete the consent in the browser, and paste the printed refresh token into `.env`:
+
+```bash
+# from backend/, venv active
+python -m app.scripts.goto_oauth
+# --redirect-uri / --client-id override .env when diagnosing a mismatch
+```
+
+4. Set `GOTO_BUSINESS_NUMBER` (the office's own line) and `GOTO_IGNORED_NUMBERS`. Both matter — see below.
+
+**What flows in.** Completed calls and inbound texts land on the timeline of whoever they involve, resolved by phone number across leads, clients, caregivers and their contacts. A number nobody owns, or one that two different records share, becomes a plain-language review task rather than a guess. Texts carry their full body into the communications tier and therefore into chat's search; **calls carry metadata only** — who, when, how long, which direction.
+
+> **Why calls have no transcript.** This account produces no call recordings. Verified against 90 days of real history: 100 calls, zero recording fields, and the recording API has nothing to return. That's a GoTo Admin / plan-tier setting, not something the integration can work around. If recording is switched on later, transcripts become an additive change.
+
+**Two numbers you must configure.**
+
+- `GOTO_BUSINESS_NUMBER` — the office's own line. It's the "us" side of every call, so it's never treated as the person to resolve against, and it's the line outbound SMS sends from. `send_sms` refuses to send when it's blank rather than guessing.
+- `GOTO_IGNORED_NUMBERS` — comma-separated numbers whose legs are plumbing rather than correspondence. WelcomeHome's provisional bridge number belongs here: a WH-initiated call dials the office through it first, and without the guard that leg would attach a meaningless call to whichever record the bridge number happened to match.
+
+**Channel renewal is automatic, and frequent.** A notification channel lives about 20 minutes, so the connector cycle replaces it well before expiry (there's no renew endpoint — replacement is creation). The bridge notices and reconnects on its own. A GoTo outage backs off and retries; it never affects the rest of the app.
+
+**Outbound.** `send_sms` is a real send now, and still gated: the agent queues it, a human approves it in Tasks (optionally rewording the body — the recipient isn't editable), and only then does the message leave.
+
+### Gmail & Google Calendar (live)
+
+Gmail is the authoritative source for email; Calendar rides the same credentials. Both **poll** — no public URL and no Pub/Sub topic to maintain.
+
+**One-time setup**, in this order:
+
+1. In the Google Cloud console, **enable both the Gmail API and the Google Calendar API** on the project. Consenting without the API enabled succeeds and then every call 403s, which is a confusing way to find out.
+2. Credentials → Create credentials → OAuth client ID → **Web application**.
+3. Add `http://localhost:8766` (or whatever `GOOGLE_REDIRECT_PORT` is) as an **Authorized redirect URI** — exact match, no trailing slash.
+4. Put `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` in `.env`, then:
+
+```bash
+# from backend/, venv active
+python -m app.scripts.google_oauth
+```
+
+5. Complete the consent with the business Google account and paste the printed `GOOGLE_REFRESH_TOKEN` into `.env`.
+
+> **If the consent screen is in Testing mode**, add the business account as a **test user** or consent fails with "access blocked". Testing-mode refresh tokens also **expire after 7 days** — publish the app before relying on this, or the integration stops about a week after it starts working.
+
+**What flows in.** New mail lands on the timeline of whoever it involves, matched by email address across leads, clients, caregivers and their contacts — the same matching the phone channel uses, for the same reason: an address doesn't say whose it is. Email bodies go to the communications tier (so chat can search them); HTML mail is converted to readable text on the way in. Both directions are ingested — sent mail is correspondence too.
+
+**No history is imported.** A first run adopts the mailbox's current position and imports nothing; only mail arriving from then on is mirrored. The office's archive stays in Gmail, which is already good at searching it.
+
+**Attachments** on mail from someone we can identify are ingested into the document corpus, tagged to that person, and become searchable in chat. PDFs, Word documents and text files up to `GMAIL_ATTACHMENT_MAX_MB` (default 10) — images, calendar invites and archives are skipped. Attachments from unrecognised senders aren't ingested; the review task that resolution raised is where those get dealt with.
+
+**Calendar** changes appear in the Event Log within a poll cycle. Two tools are available in chat: reading the calendar is unrestricted, and **creating an event is gated** — it's visible outside the system the moment it exists and emails an invitation, so it becomes a task you approve. The approver can reword the title or details, but not move the time or change who's invited.
+
+**Outbound email** works the same way as texting: the assistant drafts, you approve in Tasks, and only then does it send. The sent message appears on the timeline after the next poll, with its real Gmail id.
 
 ### Automations
 

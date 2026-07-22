@@ -3,8 +3,8 @@
 Proves: create_task runs immediately (safe); the entity write tools queue (unsafe)
 with plain-language, name-bearing task titles from gate_describe, and actually
 mutate the record after approval; input validation fails cleanly post-approval;
-send_sms's placeholder execution makes no external call; and the registry exposes
-all new tools with the cache breakpoint on the last entry only.
+send_sms performs a real (stubbed) send only after approval; and the registry
+exposes all new tools with the cache breakpoint on the last entry only.
 
 Mutations are reverted / cleaned up; events are immutable and left in place.
 """
@@ -127,14 +127,32 @@ async def _scenario():
             await approve_action(conn, DEMO_TENANT, cs.data["pending_action_id"])
             out["cancel_completed_action"] = await _action(conn, cs.data["pending_action_id"])
 
-            # --- send_sms: queues, approval yields a [placeholder] summary ---
-            sms = await execute_tool(
-                conn, DEMO_TENANT, "send_sms",
-                {"to": "+16195550101", "body": "Hello from the test"},
-            )
-            task_ids.append(sms.data["task_id"])
-            await approve_action(conn, DEMO_TENANT, sms.data["pending_action_id"])
-            out["sms_action"] = await _action(conn, sms.data["pending_action_id"])
+            # --- send_sms: queues, and approval performs a REAL send (v1.2.0) ---
+            # The provider call is stubbed. This is not squeamishness about
+            # mocking: `.env` carries live GoTo credentials, so an unstubbed run
+            # of this suite would put an actual text message on an actual phone.
+            # A test must never do that.
+            from app.services.connectors import goto_sms as _goto_sms
+
+            sent: list[tuple[str, str]] = []
+
+            async def _fake_send(to, body, **_kw):
+                sent.append((to, body))
+                return {"id": "test-msg"}
+
+            _real_send = _goto_sms.send_sms
+            _goto_sms.send_sms = _fake_send
+            try:
+                sms = await execute_tool(
+                    conn, DEMO_TENANT, "send_sms",
+                    {"to": "+16195550101", "body": "Hello from the test"},
+                )
+                task_ids.append(sms.data["task_id"])
+                await approve_action(conn, DEMO_TENANT, sms.data["pending_action_id"])
+                out["sms_action"] = await _action(conn, sms.data["pending_action_id"])
+            finally:
+                _goto_sms.send_sms = _real_send
+            out["sms_sent"] = list(sent)
 
             out["tool_defs"] = anthropic_tool_defs()
 
@@ -173,10 +191,15 @@ def test_write_tools():
     assert cs["status"] == "failed"
     assert "completed" in cs["result"]["error"].lower()
 
-    # send_sms placeholder: executed, no external delivery.
+    # send_sms (v1.2.0): approval performs a real send through GoTo, and the
+    # summary says so rather than announcing a placeholder.
     sms = out["sms_action"]
     assert sms["status"] == "executed"
-    assert sms["result"]["summary"].startswith("[placeholder]")
+    assert sms["result"]["summary"].startswith("Sent an SMS")
+    assert "placeholder" not in sms["result"]["summary"].lower()
+    # `delivered: True` in the tool's data payload is asserted in test_goto_sms;
+    # here the point is the gated round-trip, so assert the send itself happened.
+    assert out["sms_sent"] == [("+16195550101", "Hello from the test")]
 
     # registry: all new tools present; cache breakpoint on the last entry only.
     names = [d["name"] for d in out["tool_defs"]]

@@ -1,49 +1,44 @@
-"""GoTo Connect VoIP/SMS adapter (category: phone).
+"""GoTo Connect VoIP/SMS adapter (category: phone) — v1.2.0, real payloads.
 
-REAL INTEGRATION FLOW (documented from the parent-plan research):
-  * Auth: OAuth2.
-  * Subscription: create a Notification Channel (webhook URL or WebSocket), then
-    subscribe it to the Call Events API (`POST /call-events/v1/subscriptions`).
-  * Delivery: full-payload webhook (or WebSocket) — call/SMS events arrive with
-    the caller number and metadata.
-  * Verify (real): GoTo's signature keys on the channel.
-  * Cursors/renewal: notification channels EXPIRE — store the channel id and
-    expiry in `connector_state` and renew before it lapses. The WebSocket variant
-    is an alternate delivery that a poller (M7) would bridge into this ingress.
-  * Outbound SMS (`messaging.v1.send`) is an M5 gated tool, not this module.
-  Docs: https://developer.goto.com/guides/GoToConnect/14_HOW_useNotificationChannelApi/
+Contract unchanged from the seam's point of view: `verify` + `normalize`, pure.
+All translation lives in `gt_map.py`; this module decides only *what canonical
+event* a translated payload becomes.
 
-PLACEHOLDER PAYLOAD SHAPE:
-  {"type": "call.completed" | "sms.received",
-   "call": {"id": "...", "from": "+1 (619) 555-0101", "durationSeconds": 42},
-   "message": {"id": "...", "from": "...", "text": "..."}}   # sms.received
-The caller number, normalized to E.164, is the external_id — matching a known
-lead requires a seeded phone mapping in external_ids; an unknown number becomes a
-review task.
+DELIVERY. Events arrive over a Notification Channel (WebSocket) rather than an
+inbound HTTP webhook — `goto_bridge.py` reads frames and calls the same
+`ingest_payload` seam the webhook route uses, so there is exactly one inbound
+path (CLAUDE.md). The HTTP route stays wired for shape-compatibility and tests.
+
+RESOLUTION. A phone number does not tell you what kind of person it belongs to,
+so these events carry `resolve_by="phone"`: resolution looks the number up across
+leads, clients, caregivers and their contact rows and lets the match decide the
+entity type. The old hardcoded `entity_type="lead"` was wrong the moment a
+caregiver called in — it is now only the fallback used to phrase the review task
+when nothing matches.
+
+THE COUNTERPART, NOT THE OFFICE LINE, is the resolution key (gt_map's rule): an
+inbound call resolves on the caller, an outbound call on the callee. A call whose
+counterpart is on `GOTO_IGNORED_NUMBERS` — WelcomeHome's provisional bridge
+number — is acked without resolution: the raw receipt is still written, so the
+audit trail is intact, but no timeline entry and no communication is created,
+because that leg is plumbing rather than correspondence.
+
+CALLS CARRY NO BODY TEXT. This account produces no recordings or transcripts
+(established empirically 2026-07-21 — see `gt_map`'s module docstring), so a call
+event is metadata: who, when, how long, which direction. SMS does carry text and
+reaches the communications tier in full.
 """
 from __future__ import annotations
 
-import re
-
+from .. import gt_map
 from ..base import ConnectorAdapter, NormalizedEvent, NormalizedResult
 from ..registry import register_adapter
 
-
-def _e164(raw: str | None) -> str:
-    """Best-effort E.164 normalization of a caller number: keep a leading '+'
-    and digits only. Placeholder-grade — a real adapter uses GoTo's normalized
-    field or libphonenumber."""
-    if not raw:
-        return ""
-    s = str(raw).strip()
-    digits = re.sub(r"[^0-9]", "", s)
-    if s.startswith("+"):
-        return "+" + digits
-    if len(digits) == 10:  # bare US number
-        return "+1" + digits
-    if len(digits) == 11 and digits.startswith("1"):
-        return "+" + digits
-    return "+" + digits if digits else ""
+# The placeholder payload shapes the pre-v1.2.0 ingress tests use. Still accepted:
+# those tests assert the general webhook contract (verify → receipt → resolution),
+# not GoTo specifics, and breaking them would be testing the test.
+_LEGACY_CALL = "call.completed"
+_LEGACY_SMS = "sms.received"
 
 
 class GoToAdapter(ConnectorAdapter):
@@ -53,37 +48,72 @@ class GoToAdapter(ConnectorAdapter):
     async def normalize(self, payload: dict, headers) -> NormalizedResult:
         kind = str(payload.get("type", "")).strip()
 
-        if kind == "call.completed":
-            call = payload.get("call") or {}
-            number = _e164(call.get("from"))
-            if not number:
-                return NormalizedResult(ack_only=True)
-            return NormalizedResult(events=[
-                NormalizedEvent(
-                    event_type="call.completed",
-                    entity_type="lead",
-                    external_id=number,
-                    summary=f"Completed call from {number}",
-                    detail=payload,
-                )
-            ])
+        # --- legacy placeholder shapes -----------------------------------
+        if kind == _LEGACY_CALL:
+            return self._call(payload.get("call") or {}, payload)
+        if kind == _LEGACY_SMS:
+            return self._sms(payload.get("message") or {}, payload)
 
-        if kind == "sms.received":
-            message = payload.get("message") or {}
-            number = _e164(message.get("from"))
-            if not number:
-                return NormalizedResult(ack_only=True)
-            return NormalizedResult(events=[
-                NormalizedEvent(
-                    event_type="sms.received",
-                    entity_type="lead",
-                    external_id=number,
-                    summary=f"SMS received from {number}",
-                    detail=payload,
-                )
-            ])
+        # --- real notification frames ------------------------------------
+        frame_kind = gt_map.frame_kind(payload)
+        if frame_kind == "call":
+            return self._call(gt_map.frame_content(payload), payload)
+        if frame_kind == "sms":
+            return self._sms(gt_map.frame_content(payload), payload)
 
         return NormalizedResult(ack_only=True)
+
+    # -- canonical events ---------------------------------------------------
+    def _call(self, record: dict, payload: dict) -> NormalizedResult:
+        mapped = gt_map.map_call(record)
+        if mapped is None:
+            # Un-resolvable, internal, or guarded. The receipt is already written
+            # by the ingest seam; stopping here is the whole point of the guard.
+            return NormalizedResult(ack_only=True)
+        return NormalizedResult(events=[
+            NormalizedEvent(
+                event_type="call.completed",
+                entity_type="lead",  # fallback only — see module docstring
+                external_id=mapped["counterpart"],
+                resolve_by="phone",
+                summary=mapped["summary"],
+                occurred_at=mapped["occurred_at"],
+                attributes={
+                    "channel": "call",
+                    "direction": mapped["direction"],
+                    "phone": mapped["counterpart"],
+                    "duration_seconds": mapped["duration_seconds"],
+                    "external_call_id": mapped["external_call_id"],
+                },
+                detail=payload,
+            )
+        ])
+
+    def _sms(self, record: dict, payload: dict) -> NormalizedResult:
+        mapped = gt_map.map_sms(record)
+        if mapped is None:
+            return NormalizedResult(ack_only=True)
+        event_type = (
+            "sms.received" if mapped["direction"] == "inbound" else "sms.sent"
+        )
+        return NormalizedResult(events=[
+            NormalizedEvent(
+                event_type=event_type,
+                entity_type="lead",  # fallback only — see module docstring
+                external_id=mapped["counterpart"],
+                resolve_by="phone",
+                summary=mapped["summary"],
+                occurred_at=mapped["occurred_at"],
+                attributes={
+                    "channel": "sms",
+                    "direction": mapped["direction"],
+                    "phone": mapped["counterpart"],
+                    "body": mapped["body"],
+                    "external_message_id": mapped["external_message_id"],
+                },
+                detail=payload,
+            )
+        ])
 
 
 register_adapter(GoToAdapter())

@@ -44,6 +44,7 @@ from .routers import (
     workforce,
 )
 from .services.automations.scheduler import engine_loop
+from .services.connectors.goto_bridge import bridge_loop
 from .services.connectors.sync import connectors_loop
 from .services.mcp_server import build_mcp_asgi_app, session_manager
 
@@ -62,6 +63,11 @@ async def lifespan(app: FastAPI):
     # registers, so this is a no-op cycle on an unconfigured deployment.
     if settings.nexus_connectors_enabled:
         background.append(asyncio.create_task(connectors_loop()))
+        # GoTo pushes rather than polls, so its inbound path is a long-lived
+        # WebSocket rather than a cycle. Same isolation contract as the loops
+        # above: it never raises out, and it returns immediately when GoTo's
+        # credentials aren't configured.
+        background.append(asyncio.create_task(bridge_loop()))
     # The MCP session manager owns a task group for all /mcp sessions; its run()
     # context must wrap the app's serving lifetime.
     async with session_manager.run():

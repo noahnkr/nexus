@@ -427,7 +427,8 @@ async def _resume_scenario():
     from app.services.approvals import approve_action
     from app.services.automations import advance_run, start_run
 
-    # recipe: gated send_sms (real placeholder), then a safe function step
+    # recipe: a gated send_sms, then a safe function step. What is under test is
+    # the GATE LIFECYCLE — park, approve, resume — not SMS delivery.
     recipe = {"trigger": {"type": "manual"},
               "steps": [
                   {"type": "tool", "tool": "send_sms",
@@ -436,6 +437,20 @@ async def _resume_scenario():
               ]}
     out = {}
     await db.open_pool()
+
+    # As of v1.2.0 `send_sms` really sends, so the provider call is stubbed:
+    # `.env` carries live GoTo credentials and an unstubbed run of this suite
+    # would put an actual text on an actual phone. Stubbing also keeps this test
+    # about the thing it is named for — a real send failing for an unrelated
+    # reason (no business number configured) would fail the run and look like a
+    # broken approval path.
+    from app.services.connectors import goto_sms as _goto_sms
+
+    async def _fake_send(to, body, **_kw):
+        return {"id": "test-msg"}
+
+    _real_send = _goto_sms.send_sms
+    _goto_sms.send_sms = _fake_send
     try:
         async with db.tenant_tx(DEMO_TENANT) as conn:
             automation = await _insert_automation(conn, recipe)
@@ -462,6 +477,7 @@ async def _resume_scenario():
             await _cleanup(conn, automation["id"])
         return out
     finally:
+        _goto_sms.send_sms = _real_send
         await db.close_pool()
 
 
@@ -469,7 +485,9 @@ def test_approval_resumes_run():
     out = asyncio.run(_resume_scenario())
     assert out["parked"] == "waiting_approval"
     assert out["status"] == "completed"
-    assert out["context"]["sent"]["placeholder"] is True  # send result saved under save_as
+    # The send result is saved under `save_as` and reports a real delivery
+    # (v1.2.0 — this was `placeholder: True` while send_sms was a stub).
+    assert out["context"]["sent"]["delivered"] is True
     assert "after" in out["context"]  # the safe step after the gate ran
 
 

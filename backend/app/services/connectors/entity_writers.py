@@ -421,6 +421,108 @@ async def update_client(
     )
 
 
+# ---------------------------------------------------------------------------
+# phone-domain resolution (v1.2.0)
+# ---------------------------------------------------------------------------
+# The people tables a phone number could belong to, and how a hit maps back to a
+# canonical entity. Contact rows resolve to their PARENT — a daughter calling
+# about her mother is activity on the mother's record, not a new entity.
+#
+# VERTICAL SEAM: this tuple is the only place that names these tables. Core
+# resolution calls `resolve_by_phone` and never learns what a "lead" is.
+_PHONE_SOURCES = (
+    # (table, entity_type, id column, label for the review task)
+    ("leads", "lead", "id", "lead"),
+    ("clients", "client", "id", "client"),
+    ("resources", "resource", "id", "caregiver"),
+    ("lead_contacts", "lead", "lead_id", "lead contact"),
+    ("client_contacts", "client", "client_id", "client contact"),
+)
+
+# Match on the last ten digits. Phone numbers are stored however whoever typed
+# them felt that day — '(630) 461-5622', '630-461-5622', '+16304615622' are all
+# the same person — so an exact string compare would miss almost everything.
+# Ten digits is the NANP subscriber number: enough to identify, and it makes the
+# comparison immune to a missing country code on one side.
+_PHONE_DIGITS_SQL = "right(regexp_replace(coalesce({col}, ''), '[^0-9]', '', 'g'), 10)"
+
+
+def phone_digits(e164_number: str) -> str:
+    """The last ten digits of a number — the comparison key. `''` when there
+    aren't ten, which callers treat as "don't try to match"."""
+    digits = "".join(ch for ch in str(e164_number or "") if ch.isdigit())
+    return digits[-10:] if len(digits) >= 10 else ""
+
+
+async def _resolve_by_contact(conn, where_sql: str, key: str) -> list[dict]:
+    """Shared body of the contact-domain lookups.
+
+    Returns `{"entity_type", "entity_id", "name", "via"}` per match — empty when
+    nothing matches, one item for a clean match, several when the identifier is
+    genuinely shared. The CALLER decides what to do with ambiguity; this never
+    guesses, because guessing attaches a real client's call or email to the wrong
+    person's record and nothing downstream would ever flag it.
+
+    Distinct ENTITIES are what counts, not distinct rows: a lead whose own record
+    and whose contact row carry the same number is one person reachable two ways,
+    not an ambiguity. Matches de-duplicate on (entity_type, entity_id), with the
+    direct match preferred because `_PHONE_SOURCES` lists direct tables first.
+    """
+    if not key:
+        return []
+
+    seen: set[tuple[str, str]] = set()
+    matches: list[dict] = []
+    for table, entity_type, id_column, label in _PHONE_SOURCES:
+        # `table`, `id_column` and `where_sql` are module constants, never input.
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                f"""select {id_column} as entity_id, name
+                      from public.{table}
+                     where {where_sql} = %s
+                       and {id_column} is not null""",
+                (key,),
+            )
+            rows = await cur.fetchall()
+        for row in rows:
+            identity = (entity_type, str(row["entity_id"]))
+            if identity in seen:
+                continue
+            seen.add(identity)
+            matches.append({
+                "entity_type": entity_type,
+                "entity_id": str(row["entity_id"]),
+                "name": _clean(row.get("name")) or "(unnamed)",
+                "via": label,
+            })
+    return matches
+
+
+async def resolve_by_phone(conn, tenant_id: str, e164_number: str) -> list[dict]:
+    """Every canonical entity this phone number could belong to."""
+    return await _resolve_by_contact(
+        conn, _PHONE_DIGITS_SQL.format(col="phone"), phone_digits(e164_number)
+    )
+
+
+async def resolve_by_email(conn, tenant_id: str, address: str) -> list[dict]:
+    """Every canonical entity this email address could belong to.
+
+    The email twin of `resolve_by_phone`, and it exists for the same reason: an
+    address does not announce whose it is — mail from one arrives from leads,
+    clients and caregivers alike. Without it every inbound email would land as a
+    review task unless someone had hand-seeded an `external_ids` mapping first,
+    which is not an integration anyone would keep using.
+
+    Matched case-insensitively on the trimmed address. No fuzzy matching and no
+    domain matching: two people at the same company are two people, and
+    `+`-suffixed addresses are deliberately distinct.
+    """
+    return await _resolve_by_contact(
+        conn, "lower(trim(coalesce(email, '')))", (address or "").strip().lower()
+    )
+
+
 # entity_type -> auto-create writer. A type absent here that arrives with
 # creates_entity=True falls back to the task outcome in resolution.py.
 WRITERS: dict[str, Callable[..., Awaitable[str]]] = {

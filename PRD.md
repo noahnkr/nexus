@@ -45,7 +45,7 @@ Re-templating for a new vertical touches only the seam: the entity migration, th
 
 The single source of truth every other component reads and writes. Core operational tables (identical across deployments): `events`, `tasks`, `pending_actions`, `external_ids`, `documents`/`document_chunks`, `communications`/`communication_chunks`, `chat_threads`/`chat_messages`, `connector_state`, `automations`/`automation_runs`, `entity_summaries`, `tenant_settings`.
 
-- **Cross-system identity** — `external_ids` maps every external record to its canonical entity. Every inbound connector event resolves through it before anything else is written, so one real-world thing is one entity no matter how many systems report it.
+- **Cross-system identity** — `external_ids` maps every external record to its canonical entity. Every inbound connector event resolves through it before anything else is written, so one real-world thing is one entity no matter how many systems report it. Phone-keyed sources (the phone system) resolve by number through the seam's phone lookup across people entities; an ambiguous or unknown number becomes a review task, never a guess.
 - **Tenancy** — every table carries `tenant_id` and is protected by Postgres row-level security (four policies each), so isolation is enforced at the database, not just in application code. The backend connects as a dedicated RLS-subject role (`nexus_app`, no bypass) and sets the tenant per request; the service-role key is reserved for migrations/ops and storage. Single active tenant this phase, tenant-aware throughout to keep the multi-tenant path open.
 
 ### Chat & the Agent
@@ -82,7 +82,11 @@ The cross-system brain. A business-agnostic **WHEN → IF → THEN** engine: eve
 
 ### Connectors & Sync
 
-How external systems flow in. A single **ingest seam** (`ingest_payload`) sits behind both the webhook route (verify → ingest) and an in-app **connector sync loop** (a lifespan task, like the automations engine) that polls sources with no webhooks. Every inbound event follows the same path: raw receipt → normalize (per-source adapter) → resolve to a canonical entity via `external_ids` (match / auto-create / review-task). Sync is **one-way inbound** — external platforms stay source of truth; outbound effects go only through gated tools. Cursors/channel state live in `connector_state`; credentials live in env vars only, never the database. A source being down degrades to one `connector.sync_failed` event and a skipped cycle — never a stalled loop.
+How external systems flow in. A single **ingest seam** (`ingest_payload`) sits behind every delivery shape: the webhook route (verify → ingest), an in-app **connector sync loop** (a lifespan task, like the automations engine) that polls sources with no webhooks, and a **push bridge** — a long-lived WebSocket to a provider's notification channel, also a lifespan task — for sources that neither poll nor post. The bridge is transport only: it decodes a frame and calls the same seam, so there is exactly one inbound path per source no matter how the data arrives. Provider channels expire, so channel upkeep (create-when-absent, replace-before-expiry, no-op-when-healthy) runs on the sync loop's cycle, and the bridge reconnects when it sees the channel replaced.
+
+Every inbound event follows the same path: raw receipt → normalize (per-source adapter) → resolve to a canonical entity → match / auto-create / review-task. Resolution has **two domains**. The default is by *record id*, scoped to an entity type in `external_ids`. The second is by *phone number*, where the entity type is unknown by nature — a call can be from a lead, a client, or a caregiver — so the lookup spans `external_ids` untyped and then falls through to a vertical-seam hook that searches the people tables; the match decides the type, a single hit registers the mapping so later events short-circuit, and a number belonging to two records raises a review task naming both rather than guessing. Numbers the deployment declares as plumbing (a partner system's bridge line) are receipted and dropped before resolution.
+
+Sync is **one-way inbound** — external platforms stay source of truth; outbound effects go only through gated tools. Cursors/channel state live in `connector_state`; credentials live in env vars only, never the database. A source being down degrades to one `connector.sync_failed` event and a skipped cycle — never a stalled loop, and never a failed shutdown.
 
 ### Auth & Observability
 
@@ -115,7 +119,7 @@ Two more surfaces ride the above rather than adding new ones:
 
 ### Connector Adapters & Entity Writers
 
-The per-source translation layer — `services/connectors/adapters/*` (verify + normalize only) and `services/connectors/entity_writers.py` (auto-create/update canonical rows, promotion) — is a seam member alongside the entity migration. External platforms are source of truth; adapters never write a business table without entity resolution, and never link across the referral-partner or other enrichment tables.
+The per-source translation layer — `services/connectors/adapters/*` (verify + normalize only), the pure per-source payload mappers beside them, and `services/connectors/entity_writers.py` (auto-create/update canonical rows, promotion, and the phone→entity lookup the phone resolution domain calls) — is a seam member alongside the entity migration. External platforms are source of truth; adapters never write a business table without entity resolution, and never link across the referral-partner or other enrichment tables. Core resolution calls the seam's phone hook and never names a vertical table.
 
 ---
 

@@ -2,6 +2,18 @@
 
 Notable changes to the Nexus Control Center, newest first. Each entry is a high-level summary of what the version delivers; implementation detail lives in the plans (`.claude/plans/`) and the code. Versioning follows `ROADMAP.md` (semantic, by impact).
 
+## v1.2.0 — The phone system is connected · 2026-07-22
+
+GoTo Connect is now the authoritative source for the office's phone channel. Calls and texts stop living only in GoTo and start landing on the record of whoever they involve:
+
+- **Calls and texts appear on the right person's timeline**, matched by phone number across leads, clients, caregivers, and their family contacts. Matching ignores how a number was written down, so `(630) 461-5622` and `+16304615622` are the same person. A number nobody recognises — or one that two different records share — becomes a plain-language task to review, never a guess.
+- **Texts are searchable in chat.** An inbound message is stored in full and joins the rest of someone's correspondence, so asking what was discussed includes their texts.
+- **Sending a text is real now**, and still gated: the assistant drafts it, you approve it in Tasks (rewording it if you like), and only then does it send from the business line.
+- **WelcomeHome's bridge number is filtered out.** Calls placed from WelcomeHome's messaging centre dial the office through a provisional number first; that leg is plumbing, not a conversation, and it no longer attaches a meaningless call to whoever the bridge number happened to match.
+- **The connection maintains itself.** GoTo's event channel expires every twenty minutes; it is replaced before it lapses, and a GoTo outage retries quietly without affecting anything else.
+
+**Calls carry no transcript**, and this is worth knowing rather than discovering later. Call recording is not switched on for this GoTo account — verified against ninety days of real call history — so a call shows who, when, how long, and which direction, with no text to read or search. If recording is enabled on the GoTo plan later, transcripts become an additive change rather than a rebuild.
+
 ## v1.1.5 — The backend starts on Windows · 2026-07-21
 
 - **Fixed: the documented start command didn't work on Windows.** `python -m uvicorn app.main:app` would start, then fail 30 seconds later with a database pool timeout that read like a credentials problem. The real cause was an event-loop mismatch — the database driver can't use the loop Windows picks by default. The app now selects the right one at startup, so the command in the README works as written. Found during the first in-browser walk, and very likely the reason that walk kept getting deferred.

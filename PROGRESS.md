@@ -10,35 +10,27 @@ Task status: `[ ]` not started · `[-]` in progress · `[x]` done.
 
 ## Now
 
-**v1.1.5 shipped (2026-07-21) — nothing mid-build.** A one-line fix with an outsized effect: the backend now starts on Windows via the command the README documents. It was failing 30 seconds in with a database pool timeout caused by an event-loop mismatch — almost certainly why the browser walk kept getting deferred across four versions.
+**v1.2.0 shipped (2026-07-22) — nothing mid-build.** GoTo Connect is the authoritative phone channel: calls and texts resolve to leads, clients and caregivers by phone number, texts are searchable in chat, and `send_sms` is a real gated send. Full backend suite **495 passed / 7 failed**, all 7 being the documented carried failures (dev-DB residue ×4, pruned comms tier ×3) — nothing new red. Frontend 118 tests + build green.
 
-**The browser walk is done** (see _Carried-over pending validations_). v1.1.1-v1.1.4 all verified in Chrome; two defects found — the Windows startup bug, now fixed as v1.1.5, and a measured finding that WelcomeHome truncates 85% of email bodies at source, which is recorded against v1.3.1.
+**The transcript gate failed and the version shipped anyway, by decision.** Ninety days of real call history proved this account produces no recordings, so calls carry metadata only. That is a GoTo Admin / plan-tier question — routed to backlog as an additive change if recording is ever enabled.
 
-Next is **v1.2.0 — GoTo Connect**, the authoritative source for calls and SMS. **It opens with an ops step you have to do:** a one-time browser OAuth consent producing a refresh token in `.env`. The offline scaffolding can be built without it, but the version cannot go green until that consent is done.
+**Two ops steps are outstanding before GoTo actually works in production** — see _Carried-over pending validations_. Next is **v1.3.0 — Gmail & Google Calendar**, the authoritative source for email.
 
 ## Next up
 
-### v1.2.0 — GoTo Connect · new capability
-Plan: `.claude/plans/v1.2.0-goto-connect.md`. **The authoritative source for calls + SMS** — transcripts land in the communications tier and therefore in RAG. **Ops step: one-time browser OAuth consent → refresh token in `.env`** (self-service, but blocking for the live checks).
-- `[ ]` OAuth bootstrap script + shared refresh helper; gated live token test
-- `[ ]` WebSocket channel + call/SMS subscription manager (state/renewal in `connector_state`)
-- `[ ]` WebSocket bridge runner (reconnect/backoff → `ingest_payload`); fake-WS test + live call → timeline
-- `[ ]` Known-numbers guard so WelcomeHome's bridge number doesn't ingest as real client calls
-- `[ ]` Real `send_sms` behind the existing gated tool; mocked tests + live approved delivery
-- `[ ]` Wrap-up: README bootstrap runbook; full pytest; live walks recorded
+### v1.3.0 — Gmail & Google Calendar · new capability
+Plan: `.claude/plans/v1.3.0-google-workspace.md`. **The authoritative source for email.** Lead intake stays WelcomeHome's job — Gmail never creates leads. **Ops step (NOT DONE — blocks going live): GCP OAuth client + consent → `GOOGLE_*` in `.env`** (self-service).
+- `[x]` Task 1 — Google OAuth bootstrap + `google_client.py`. `tests/test_google_client.py` **16 passed, 1 skipped** (the live profile check, correctly gated on credentials). Reuses v1.2.0's `TokenSource` verbatim — one implementation, two configs. No `google-api-python-client`: six REST endpoints do not justify that dependency tree. Scopes are least-privilege (`gmail.readonly`, not `.modify` — this mirrors the mailbox, it never changes it), asserted by a test so widening one is a deliberate act. **Two Google-specific traps encoded:** the consent URL needs `access_type=offline` (no refresh token at all without it) *and* `prompt=consent` (Google issues a refresh token only on the first consent per client+account, so a re-run would otherwise silently produce none); and Google wants client credentials in the form body where GoTo wants HTTP Basic.
+- `[x]` Task 2 — Gmail poll runner + mapper. `tests/test_gm_map.py` **31 passed**, `tests/test_gmail_runner.py` **11 passed**. `gm_map` parses what real mail actually looks like — the body is a recursive MIME tree, so `multipart/alternative` prefers plain text and falls back to stripped HTML (v1.1.3's lesson applied at the source), and **base64URL not base64**, which would otherwise silently fail on most messages. No backfill: a first run adopts the mailbox's position and imports nothing. **The cursor advances past a message that cannot be fetched** — the opposite of the WelcomeHome runner's overlapping watermarks, and deliberate: Gmail's history ids are exact, so there is no window to re-cover, and a poison message would otherwise wedge every email behind it forever.
+- `[x]` Task 3 — Real `send_email`. `tests/test_gmail_send.py` **11 passed**. Gate contract asserted untouched. Built through `EmailMessage` rather than string concatenation so a subject with an accent in it is not what breaks outbound mail.
+- `[x]` Task 4 — Calendar poll runner. `tests/test_gcal_runner.py` **11 passed**. `syncToken` and `timeMin` are mutually exclusive (sending both is a 400); `nextSyncToken` appears only on the LAST page, so the runner pages to exhaustion — stopping early would drop the token and force a full re-window every cycle. A 410 re-windows rather than stalling; re-delivered events are idempotent by external id. Cancelled events are ingested, not dropped — a cancelled visit is exactly what someone needs to see.
+- `[x]` Task 5 — Calendar tools. `tests/test_calendar_tools.py` **13 passed**. Safe `list_calendar_events`, gated `create_calendar_event` (an event is visible outside the system the moment it exists and emails an invitation). `editable_fields=["title","description"]` — an approver may reword, but moving the time or changing who is invited would change *what* was approved. New event types declared in the automations vocabulary.
+- `[x]` Task 6 — Wrap-up. README Google runbook (API-enablement trap, redirect URI, the testing-mode 7-day token expiry), `.env.example`, `SOURCE_ACCENT` for gmail/gcal. Frontend **118 tests + build green**.
+- `[ ]` **Live walks — NOT DONE.** Blocked on the GCP ops step; nothing has touched a real mailbox or calendar. Needs: an email (with a small PDF) from a known lead → timeline + Ingestion; an approved outbound email; a calendar change → Event Log; a chat-scheduled tour through the gate.
 
 ## Queued (planned, blocked or later)
 
 _Reordered 2026-07-21 around one framing: **one authoritative source per channel, feeding one summary per entity.** GoTo and Gmail move ahead of WellSky (their OAuth is self-service; WellSky waits on a third party), the WelcomeHome comms retirement follows them, and the old v1.5.0 cross-source reconciler is retired — see `ROADMAP.md`._
-
-### v1.3.0 — Gmail & Google Calendar · new capability
-Plan: `.claude/plans/v1.3.0-google-workspace.md`. **The authoritative source for email.** Lead intake stays WelcomeHome's job — Gmail never creates leads. **Ops step: GCP OAuth client + consent → `GOOGLE_*` in `.env`** (self-service).
-- `[ ]` Google OAuth bootstrap + `google_client.py` (shared TokenSource); gated live profile test
-- `[ ]` Gmail poll runner (historyId cursor, no backfill, SENT filtered); aggregator-notification senders skipped, human correspondence → comms; live email → timeline/RAG
-- `[ ]` Real `send_email` (gate unchanged, `email.sent` event); mocked + live approved delivery
-- `[ ]` Calendar poll runner (syncToken, 410 resync); offline + live event-change walk
-- `[ ]` Calendar tools: safe `list_calendar_events`, gated `create_calendar_event`; gated tests + live chat-scheduled tour
-- `[ ]` Wrap-up: README Google runbook; full pytest; `connector_sync` spans verified
 
 ### v1.3.1 — Retire WelcomeHome as a communications source · fix
 No plan yet. **After v1.2.0 + v1.3.0** — with real sources live, WelcomeHome goes back to leads + referrers and stops feeding the communications tier; its activity data is unstructured and lossy. Absorbs the retired v1.5.0. Open scope: the fate of CRM-native activities (Notes, Assessments, Home Visits) on the timeline, and whether existing WH-sourced `communications` rows are pruned.
@@ -54,6 +46,12 @@ Plan: `.claude/plans/v1.4.0-wellsky-sync.md`. **Deferred to last — blocked on 
 - `[ ]` Wrap-up: README scope table, `.env.example`, event accent; full pytest + build green
 
 ## Carried-over pending validations
+
+- **v1.2.0 GoTo — two ops steps block it working in production.** The code is shipped and green; the integration is not live until these are done.
+  1. **Add to `.env`:** `GOTO_IGNORED_NUMBERS=+13312811588` (WelcomeHome's bridge number — without it, WH-initiated calls attach a meaningless leg to whichever record the bridge number matches) and `GOTO_BUSINESS_NUMBER=+16303602784` (the office line — it is the "us" side that must never become a resolution key, *and* the line `send_sms` sends from; `send_sms` refuses to send while it is blank rather than guessing).
+  2. **Live walk not done, deliberately** (the build was directed to proceed without a live call test). Nothing has exercised a real call, text, or approved send. When one is available: call the business line from a known number → the Event Log should show the receipt and `call.completed` on the matched entity within seconds; an unknown number should produce a review task; then ask the agent to text a known number → gated task → approve in Tasks → a real SMS arrives.
+- **v1.2.0 — the WebSocket frame shape is the one unverified surface.** `gt_map`'s call-history fixtures are real (captured from this account, 100 records), but the notification envelope follows GoTo's published Call Events Report schema rather than an observed frame. `gt_map` scans structurally for numbers instead of trusting field names, so a shape drift degrades to "no counterpart found → ack-only receipt" rather than wrong data landing on someone's record. Replace the fixture with a captured frame after the first live call (also in the roadmap backlog).
+- **v1.2.0 — call transcripts are not available and that is settled, not pending.** Recorded here only so it is not re-investigated: 100 real calls over 90 days carry zero recording fields, the recording search endpoint rejects every query grammar, and the account's own subscription list has no recording event types. The 403-vs-400 distinction proves `recording.v1.read` is granted and has nothing to read. It needs a GoTo Admin / plan change, not code. Routed to the roadmap backlog as an additive change.
 
 - **v1.1.2 full-suite failures (8), none caused by this version.** Verified by re-running each at HEAD with v1.1.2 stashed:
   - *Dev-DB volume residue (4, fail identically at HEAD)* — `test_tool_report::test_run_report`, `test_referrals::test_seam_hand_computed_rows`, `test_mcp_server::test_tools_call_list_leads_and_audit`, `test_tools_entities::test_entity_tools`. All assert against the 6-lead seed while the dev DB holds 100 leads (90 WelcomeHome-synced); e.g. Margaret Ellison exists and is `new`, but 37 `new` leads push her off the first page.

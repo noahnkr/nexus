@@ -13,8 +13,10 @@ from .registry import all_adapters, get_adapter, register_adapter
 
 # Bootstrap: side-effecting imports register the five placeholder adapters...
 from .adapters import gcal, gmail, goto, wellsky, welcomehome  # noqa: E402,F401
-# ...and the poll-based sync runners.
-from . import wh_runner  # noqa: E402,F401
+# ...and the poll-based sync runners. `goto_runner` polls nothing itself — it
+# keeps the push channel alive — but it is a runner by shape, so it rides the
+# same registry and the same per-cycle isolation.
+from . import gcal_runner, gmail_runner, goto_runner, wh_runner  # noqa: E402,F401
 
 __all__ = [
     "NormalizedEvent",
