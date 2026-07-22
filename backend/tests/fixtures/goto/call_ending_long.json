@@ -1,0 +1,47 @@
+{
+  "event": "Notification",
+  "eventId": 3,
+  "timestamp": "2026-07-22T14:30:40.090630768Z",
+  "data": {
+    "id": "b5820e49-6b54-4c1e-9fff-b77b907ee1ec",
+    "source": "call-events",
+    "type": "call-state",
+    "usage": null,
+    "timestamp": "2026-07-22T14:30:40.075Z",
+    "ttl": 600,
+    "topic": null,
+    "displayNotification": null,
+    "contentVersion": null,
+    "content": {
+      "metadata": {
+        "conversationSpaceId": "62d4afb9-1f2d-3fd1-a73e-da4247c64a60",
+        "direction": "INBOUND",
+        "accountKey": "6327799820468129299",
+        "callCreated": "2026-07-22T14:10:29.578Z",
+        "callInitiator": "DIRECT",
+        "hangupOriginatorId": "9f743ffc-dd05-5196-8b06-b7bfcc36edcd"
+      },
+      "state": {
+        "id": "e7ee160a-9527-54d1-a238-1b6a9febfa63",
+        "sequenceNumber": 9,
+        "type": "ENDING",
+        "timestamp": "2026-07-22T14:30:39.948Z",
+        "recordings": [
+          {
+            "id": "18cd25e4-1a19-4b6f-927b-ff804fe54921",
+            "startTimestamp": "2026-07-22T14:10:41.446Z",
+            "transcriptEnabled": true
+          }
+        ],
+        "transcripts": [
+          {
+            "id": "18cd25e4-1a19-4b6f-927b-ff804fe54921",
+            "startTimestamp": "2026-07-22T14:10:41.446Z"
+          }
+        ],
+        "participants": []
+      }
+    },
+    "bypassDoNotDisturb": false
+  }
+}

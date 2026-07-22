@@ -27,3 +27,8 @@ sse-starlette==2.1.3
 
 # Module 7: automations engine — cron expression validation (7a) + scheduling (7b).
 croniter==6.0.0
+
+# v1.2.0: the GoTo Connect notification channel is a WebSocket, so the bridge
+# needs a client. (uvicorn[standard] already pulls this in transitively; pinning
+# it here makes it a declared dependency rather than a lucky one.)
+websockets==15.0.1

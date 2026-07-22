@@ -1069,6 +1069,200 @@ register(ToolDef(
 ))
 
 
+# ---------------------------------------------------------------------------
+# calendar (v1.3.0) — reading is safe, creating is gated
+# ---------------------------------------------------------------------------
+# Registered here rather than in a module of their own so chat, MCP and the
+# automations vocabulary pick them up for free, exactly like every other tool.
+def _calendar_unavailable() -> ToolInputError:
+    return ToolInputError(
+        "The calendar isn't connected yet — Google Workspace credentials are not "
+        "configured, so I can't read or change it."
+    )
+
+
+async def _list_calendar_events(conn, args: dict) -> ToolResult:
+    """Events in a time range. Read-only, so `safe=True`."""
+    from ..connectors.google_client import GoogleClient, GoogleError, credentials_configured
+
+    if not credentials_configured():
+        raise _calendar_unavailable()
+
+    start = str(args.get("start") or "").strip()
+    end = str(args.get("end") or "").strip()
+    if not start or not end:
+        raise ToolInputError("'start' and 'end' are required (ISO 8601 timestamps).")
+
+    try:
+        async with GoogleClient() as google:
+            page = await google.calendar_events(time_min=start, time_max=end)
+    except GoogleError as exc:
+        raise ToolInputError(
+            "I couldn't read the calendar just now — Google rejected the request."
+        ) from exc
+
+    events = []
+    for item in page.get("items") or []:
+        start_at = (item.get("start") or {})
+        end_at = (item.get("end") or {})
+        events.append({
+            "id": item.get("id"),
+            "title": item.get("summary") or "(no title)",
+            "start": start_at.get("dateTime") or start_at.get("date"),
+            "end": end_at.get("dateTime") or end_at.get("date"),
+            "attendees": [
+                a.get("email") for a in (item.get("attendees") or []) if a.get("email")
+            ],
+            "location": item.get("location"),
+        })
+
+    return ToolResult(
+        f"Found {len(events)} calendar event(s) between {start} and {end}.",
+        {"events": events, "count": len(events)},
+    )
+
+
+async def _describe_create_calendar_event(conn, args: dict) -> str:
+    """Plain language for the approval task — a title and a time, never a payload."""
+    title = str(args.get("title") or "an event").strip()
+    start = str(args.get("start") or "").strip()
+    when = f" on {start}" if start else ""
+    attendees = args.get("attendees") or []
+    with_whom = f" with {', '.join(str(a) for a in attendees)}" if attendees else ""
+    return f"Create the calendar event “{title}”{when}{with_whom}"
+
+
+async def _create_calendar_event(conn, args: dict) -> ToolResult:
+    """Create an event on the business calendar. Gated — it is visible outside
+    the system the moment it exists, and attendees get an invitation."""
+    from ..connectors.google_client import GoogleClient, GoogleError, credentials_configured
+
+    if not credentials_configured():
+        raise _calendar_unavailable()
+
+    title = str(args.get("title") or "").strip()
+    start = str(args.get("start") or "").strip()
+    end = str(args.get("end") or "").strip()
+    if not title:
+        raise ToolInputError("'title' is required.")
+    if not start or not end:
+        raise ToolInputError("'start' and 'end' are required (ISO 8601 timestamps).")
+
+    body: dict = {
+        "summary": title,
+        "start": {"dateTime": start},
+        "end": {"dateTime": end},
+    }
+    if args.get("description"):
+        body["description"] = str(args["description"])
+    attendees = [str(a).strip() for a in (args.get("attendees") or []) if str(a).strip()]
+    if attendees:
+        body["attendees"] = [{"email": a} for a in attendees]
+
+    try:
+        async with GoogleClient() as google:
+            created = await google.calendar_insert(body)
+    except GoogleError as exc:
+        raise ToolInputError(
+            "The calendar event could not be created — Google rejected it. "
+            "Nothing was scheduled."
+        ) from exc
+
+    event_id = str(created.get("id") or "")
+    lead_id = _maybe_uuid_arg(args.get("lead_id"))
+    inv = current_invocation()
+    tenant_id = inv["tenant_id"] if inv else None
+
+    if tenant_id:
+        await log_event(
+            conn,
+            tenant_id=tenant_id,
+            source_system="gcal",
+            event_type="calendar.event.created",
+            entity_type="lead" if lead_id else None,
+            entity_id=lead_id,
+            payload={
+                "summary": f"Calendar event “{title}” created for {start}",
+                "event_id": event_id,
+                "attendees": attendees,
+            },
+        )
+
+        # Register the calendar id against the lead so the poll runner's later
+        # updates to this event resolve to the same record instead of raising a
+        # review task for an event we ourselves created.
+        if lead_id and event_id:
+            await conn.execute(
+                """insert into public.external_ids
+                     (tenant_id, entity_type, entity_id, source_system, external_id)
+                   values (%s, 'lead', %s, 'calendar', %s)
+                   on conflict (tenant_id, source_system, external_id) do nothing""",
+                (tenant_id, lead_id, event_id),
+            )
+
+    return ToolResult(
+        f"Created the calendar event “{title}” for {start}.",
+        {"event_id": event_id, "title": title, "start": start, "end": end},
+    )
+
+
+def _maybe_uuid_arg(value) -> str | None:
+    if value is None:
+        return None
+    try:
+        return str(uuid.UUID(str(value).strip()))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+register(ToolDef(
+    name="list_calendar_events",
+    description=(
+        "List events on the business calendar between two times. Use this to "
+        "check availability or see what is scheduled. Read-only."
+    ),
+    input_schema=_obj({
+        "start": {"type": "string",
+                  "description": "Range start, ISO 8601 (e.g. 2026-07-24T00:00:00Z)."},
+        "end": {"type": "string",
+                "description": "Range end, ISO 8601."},
+    }, ["start", "end"]),
+    handler=_list_calendar_events,
+))
+
+register(ToolDef(
+    name="create_calendar_event",
+    description=(
+        "Create an event on the business calendar, optionally inviting attendees. "
+        "This is visible outside the system and emails an invitation, so it "
+        "requires human approval before it is created."
+    ),
+    input_schema=_obj({
+        "title": {"type": "string", "description": "Event title."},
+        "start": {"type": "string", "description": "Start time, ISO 8601."},
+        "end": {"type": "string", "description": "End time, ISO 8601."},
+        "attendees": {
+            "type": "array", "items": {"type": "string"},
+            "description": "Email addresses to invite.",
+        },
+        "description": {"type": "string", "description": "Optional event details."},
+        "lead_id": {
+            "type": "string",
+            "description": (
+                "Optional lead this event is for. Links the event to that lead's "
+                "timeline and record."
+            ),
+        },
+    }, ["title", "start", "end"]),
+    handler=_create_calendar_event,
+    safe=False,
+    gate_describe=_describe_create_calendar_event,
+    # The approver may reword the title or details; moving the time or changing
+    # who is invited would change WHAT was approved, not how it reads.
+    editable_fields=["title", "description"],
+))
+
+
 # --- gated write tools (safe=False -> queued for human approval) --------------
 register(ToolDef(
     name="update_lead_status",

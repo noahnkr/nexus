@@ -162,3 +162,40 @@ def auth_headers_probe():
     """Probe-tenant bearer header — used to prove RLS isolation through the API."""
     _require("SUPABASE_JWT_SECRET")
     return bearer_headers(PROBE_TENANT)
+
+
+# ---------------------------------------------------------------------------
+# Outbound send guard — nothing in the suite may message a real person
+# ---------------------------------------------------------------------------
+# `.env` carries live GoTo and (once consented) Google credentials, and as of
+# v1.2.0/v1.3.0 `send_sms` and `send_email` really send. A test that reaches the
+# provider would put a text on someone's phone or an email in their inbox — the
+# kind of mistake you only make once, publicly.
+#
+# Two suites already stub their sends deliberately (`test_tools_write`,
+# `test_automation_scheduler`). This is the backstop for the ones nobody thought
+# about: it replaces the LAST-MILE provider methods, so any path that gets that
+# far fails loudly instead of delivering. Tests that want to assert on send
+# behaviour inject their own fake client and never touch these.
+@pytest.fixture(autouse=True)
+def _no_real_outbound_sends(monkeypatch):
+    async def _blocked(*_args, **_kwargs):
+        raise AssertionError(
+            "a test tried to send a real message through a live provider. "
+            "Inject a fake client instead of reaching the network."
+        )
+
+    for module_path, attribute in (
+        ("app.services.connectors.goto_client", "GoToClient"),
+        ("app.services.connectors.google_client", "GoogleClient"),
+    ):
+        try:
+            module = __import__(module_path, fromlist=["*"])
+        except Exception:  # noqa: BLE001 — a missing module is not this fixture's problem
+            continue
+        client = getattr(module, attribute, None)
+        if client is None:
+            continue
+        for method in ("send_sms", "gmail_send"):
+            if hasattr(client, method):
+                monkeypatch.setattr(client, method, _blocked, raising=False)

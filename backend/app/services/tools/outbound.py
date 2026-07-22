@@ -7,13 +7,13 @@ validates inputs and returns a `[placeholder]` summary with
 genuinely external actions (mirrors Module 3's placeholder-adapter approach)
 while real delivery waits on Module 7 credentials.
 
-Wiring real delivery later replaces ONLY the marked handler internals:
-  * send_sms  -> GoTo Connect messaging API: `POST /messaging/v1/messages`
-                 (`messaging.v1.send`), body `{ownerPhoneNumber, contactPhoneNumbers,
-                 body}`, bearer OAuth token. Map `to`->contact, `body`->body.
-  * send_email -> Gmail API: `users.messages.send` with a base64url-encoded RFC-2822
-                 message (`To`, `Subject`, body), OAuth2 on the sending mailbox.
-Everything else (gating, audit, task/approval lifecycle) already works and stays.
+**Both are REAL now** — `send_sms` sends through GoTo Connect
+(`services/connectors/goto_sms.py`, v1.2.0) and `send_email` through Gmail
+(`services/connectors/gmail_send.py`, v1.3.0).
+
+Wiring real delivery replaces ONLY the marked handler internals. Everything else
+— gating, audit, the task/approval lifecycle — already worked and is unchanged;
+that was the point of shipping the placeholders through the same seam.
 """
 from __future__ import annotations
 
@@ -35,12 +35,27 @@ async def _describe_send_sms(conn, args: dict) -> str:
 
 
 async def _send_sms(conn, args: dict) -> ToolResult:
+    """REAL delivery as of v1.2.0 — GoTo Connect is the authoritative SMS channel.
+
+    Reached only after human approval (`safe=False`). The gate contract above is
+    untouched; only this body changed from the placeholder.
+    """
     to = _require_text(args, "to")
     body = _require_text(args, "body")
-    # --- placeholder execution (no external call until Module 7) ---
+
+    from ..connectors.goto_sms import SmsError, send_sms
+
+    try:
+        await send_sms(to, body)
+    except SmsError as exc:
+        # A failed send must read as a failure. The approver believes a message
+        # went out; letting that be wrong leaves someone waiting on a reply that
+        # is never coming.
+        raise ToolInputError(str(exc)) from exc
+
     return ToolResult(
-        f"[placeholder] Would send SMS to {to}: “{body[:60]}”",
-        {"delivered": False, "placeholder": True, "to": to},
+        f"Sent an SMS to {to}: “{body[:60]}”",
+        {"delivered": True, "to": to},
     )
 
 
@@ -53,13 +68,27 @@ async def _describe_send_email(conn, args: dict) -> str:
 
 
 async def _send_email(conn, args: dict) -> ToolResult:
+    """REAL delivery as of v1.3.0 — Gmail is the authoritative email channel.
+
+    Reached only after human approval (`safe=False`). The gate contract is
+    untouched; only this body changed from the placeholder. The sent message
+    reaches the timeline via the Gmail poll rather than from here — see
+    `connectors/gmail_send.py` on why writing the event here would duplicate it.
+    """
     to = _require_text(args, "to")
     subject = _require_text(args, "subject")
     body = _require_text(args, "body")
-    # --- placeholder execution (no external call until Module 7) ---
+
+    from ..connectors.gmail_send import EmailError, send_email
+
+    try:
+        await send_email(to, subject, body)
+    except EmailError as exc:
+        raise ToolInputError(str(exc)) from exc
+
     return ToolResult(
-        f"[placeholder] Would send email to {to}: “{subject}”",
-        {"delivered": False, "placeholder": True, "to": to, "subject": subject},
+        f"Sent an email to {to}: “{subject}”",
+        {"delivered": True, "to": to, "subject": subject},
     )
 
 

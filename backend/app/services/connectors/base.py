@@ -77,6 +77,17 @@ class NormalizedEvent:
     # one; without this a CRM edit would be recorded and then ignored. A type with
     # no registered updater falls back to today's log-only behavior.
     updates_entity: bool = False
+    # How `external_id` should be resolved to an entity (v1.2.0).
+    #   "id"    — the source's own record id. Looked up in `external_ids` scoped to
+    #             `entity_type`; every pre-v1.2.0 adapter means this, hence default.
+    #   "phone" — `external_id` is an E.164 number and the ENTITY TYPE IS UNKNOWN:
+    #             a call can come from a lead, a client, or a caregiver. Resolution
+    #             looks the number up across all people entities via the vertical
+    #             seam and lets the match decide the type, so `entity_type` is only
+    #             the fallback used when nothing matches.
+    #   "email" — the same, keyed on an email address (v1.3.0). Mail has exactly
+    #             the phone channel's problem: an address does not say whose it is.
+    resolve_by: str = "id"
     occurred_at: str | None = None
     detail: dict = field(default_factory=dict)  # technical payload for the event row
 

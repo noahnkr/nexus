@@ -77,6 +77,39 @@ class Settings(BaseSettings):
     welcomehome_community_id: str = "all"
     welcomehome_backfill_since: str = ""
 
+    # GoTo Connect (v1.2.0) — the authoritative source for calls + SMS. The runner
+    # and the WebSocket bridge activate only when client id + secret + refresh token
+    # are ALL set; the authorization-code flow is mandatory (the OAuth client rejects
+    # client_credentials, probed 2026-07-20), so the refresh token comes from the
+    # one-time consent in `app/scripts/goto_oauth.py` and lives here, never in the DB.
+    #   line_id: the business line outbound SMS sends from. Blank ⇒ the runner
+    #     discovers the account's line once and caches it in `connector_state`.
+    #   business_number: the office's own E.164 number. It is the "us" side of every
+    #     call, so it is never a resolution key — see gt_map's counterpart rule — and
+    #     it is the `ownerPhoneNumber` the Messaging API sends from.
+    #   ignored_numbers: comma-separated E.164 numbers whose legs are plumbing, not
+    #     correspondence (WelcomeHome's bridge number) — receipted, never resolved.
+    goto_connect_client_id: str = ""
+    goto_connect_client_secret: str = ""
+    goto_connect_refresh_token: str = ""
+    goto_connect_redirect_port: int = 8765
+    goto_connect_line_id: str = ""
+    goto_business_number: str = ""
+    goto_ignored_numbers: str = ""
+
+    # Google Workspace (v1.3.0) — the authoritative source for email, plus calendar.
+    # Same shape as GoTo: a one-time browser consent (`app/scripts/google_oauth.py`)
+    # produces the refresh token, and the Gmail/Calendar runners activate only when
+    # id + secret + refresh are all set.
+    #   attachment_max_mb: attachments larger than this are skipped rather than
+    #     downloaded — an inbox is an uncontrolled input, and a 200 MB video has no
+    #     business being parsed into the knowledge corpus.
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_refresh_token: str = ""
+    google_redirect_port: int = 8766
+    gmail_attachment_max_mb: int = 10
+
     # LangSmith — no-ops gracefully when the key is unset.
     langsmith_tracing: str = ""
     langsmith_api_key: str = ""

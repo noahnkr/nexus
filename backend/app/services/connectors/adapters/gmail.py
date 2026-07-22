@@ -34,8 +34,21 @@ from ..registry import register_adapter
 
 
 def _decode_data(payload: dict) -> dict:
-    """Decode the base64 `message.data` of the Pub/Sub envelope into a dict.
-    Returns {} when absent or unparseable (handshake pings)."""
+    """The decoded event data, whichever way it arrived.
+
+    Two shapes reach here and both are legitimate:
+      * the **poll runner's** payload, which already carries `messages` at the top
+        level because it did the `history.list` + `messages.get` fetch itself;
+      * the **Pub/Sub push envelope**, whose `message.data` is base64 JSON.
+
+    Falling through to the top level first means the runner does not have to
+    base64-wrap its own data purely to satisfy a shape that only exists because
+    Pub/Sub requires it — and push delivery, if it is ever added, reuses this
+    adapter unchanged.
+    """
+    if isinstance(payload.get("messages"), list):
+        return payload
+
     message = payload.get("message") or {}
     data = message.get("data")
     if not data:
@@ -61,16 +74,41 @@ class GmailAdapter(ConnectorAdapter):
 
         events = []
         for msg in messages:
-            sender = str(msg.get("from") or "").strip()
-            if not sender:
+            # `counterpart` is the runner's decoded shape (the other party,
+            # whichever direction the mail went); `from` is the placeholder
+            # fixture's. Accepting both keeps the pre-v1.3.0 ingress tests — which
+            # assert the general webhook contract, not Gmail specifics — passing.
+            counterpart = str(
+                msg.get("counterpart") or msg.get("from") or ""
+            ).strip().lower()
+            if not counterpart:
                 continue
             subject = str(msg.get("subject") or "(no subject)").strip()
+            direction = str(msg.get("direction") or "inbound").strip().lower()
+            who = str(msg.get("counterpart_name") or counterpart).strip()
+            verb = "Email from" if direction == "inbound" else "Email to"
+
             events.append(
                 NormalizedEvent(
-                    event_type="email.received",
+                    event_type=(
+                        "email.received" if direction == "inbound" else "email.sent"
+                    ),
+                    # A fallback only: an address carries no entity type, so
+                    # `resolve_by="email"` lets the match decide it (v1.3.0).
                     entity_type="lead",
-                    external_id=sender,
-                    summary=f"Email from {sender}: {subject}",
+                    external_id=counterpart,
+                    resolve_by="email",
+                    summary=f"{verb} {who}: {subject}",
+                    occurred_at=msg.get("occurred_at"),
+                    attributes={
+                        "channel": "email",
+                        "direction": direction,
+                        "email": counterpart,
+                        "subject": subject,
+                        "body": msg.get("body") or "",
+                        "external_message_id": msg.get("message_id"),
+                        "attachments": msg.get("attachments") or [],
+                    },
                     detail={"message": msg, "historyId": data.get("historyId")},
                 )
             )

@@ -55,6 +55,9 @@ const SOURCE_ACCENT: Record<string, string> = {
   // reader scanning the log they mean the same thing — "this came from outside" —
   // regardless of whether it was pushed to us or polled by us.
   welcomehome: "bg-destructive",
+  goto: "bg-destructive",
+  gmail: "bg-destructive",
+  gcal: "bg-destructive",
 };
 
 export function sourceAccent(source: string | null | undefined): string {

@@ -15,13 +15,20 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # psycopg's async pool cannot run on Windows' default ProactorEventLoop — it needs
-# a selector loop. Uvicorn builds its loop AFTER importing this module, so setting
-# the policy here (before anything creates one) is what makes the documented
-# `python -m uvicorn app.main:app` command work on Windows at all. Without it the
-# app starts, then dies 30 seconds later with `PoolTimeout: pool initialization
-# incomplete` — a message that reads like bad credentials rather than a loop
-# mismatch. The test harness (conftest) and the backfill script each set the same
-# policy for the same reason; this is the third and last place that needed it.
+# a selector loop, set before the loop is created.
+#
+# THIS LINE DOES NOT COVER THE SERVER — `run.py` does. Uvicorn builds its loop in
+# `Server.run()` and imports this module afterwards (`config.load()` runs inside
+# `serve()`), so under `python -m uvicorn app.main:app` the statement below
+# executes too late to matter and the app dies 30 seconds in with
+# `PoolTimeout: pool initialization incomplete` — which reads like bad
+# credentials and is not. Start the server with `python run.py`, which sets the
+# policy before uvicorn is imported.
+#
+# It stays here for the OTHER entry paths: anything that imports the app and
+# then calls `asyncio.run` itself (a REPL, an ad-hoc script) gets the right loop
+# for free. The test harness (conftest) and the backfill script set it too, for
+# the same reason.
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
@@ -44,6 +51,7 @@ from .routers import (
     workforce,
 )
 from .services.automations.scheduler import engine_loop
+from .services.connectors.goto_bridge import bridge_loop
 from .services.connectors.sync import connectors_loop
 from .services.mcp_server import build_mcp_asgi_app, session_manager
 
@@ -62,6 +70,11 @@ async def lifespan(app: FastAPI):
     # registers, so this is a no-op cycle on an unconfigured deployment.
     if settings.nexus_connectors_enabled:
         background.append(asyncio.create_task(connectors_loop()))
+        # GoTo pushes rather than polls, so its inbound path is a long-lived
+        # WebSocket rather than a cycle. Same isolation contract as the loops
+        # above: it never raises out, and it returns immediately when GoTo's
+        # credentials aren't configured.
+        background.append(asyncio.create_task(bridge_loop()))
     # The MCP session manager owns a task group for all /mcp sessions; its run()
     # context must wrap the app's serving lifetime.
     async with session_manager.run():
