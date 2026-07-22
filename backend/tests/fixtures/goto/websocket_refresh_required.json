@@ -1,0 +1,20 @@
+{
+  "event": "Notification",
+  "eventId": 2,
+  "timestamp": "2026-07-22T14:29:08.818927544Z",
+  "data": {
+    "id": "db4e5a91-1d45-421a-898d-9903c4bf22e5",
+    "source": "notification-websocket",
+    "type": "WEBSOCKET_REFRESH_REQUIRED",
+    "usage": "BACKGROUND",
+    "timestamp": null,
+    "ttl": 600,
+    "topic": null,
+    "displayNotification": null,
+    "contentVersion": null,
+    "content": {
+      "remainingLifetime": 600
+    },
+    "bypassDoNotDisturb": null
+  }
+}
