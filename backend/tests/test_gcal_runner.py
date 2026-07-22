@@ -45,7 +45,7 @@ class FakeGoogle:
     async def calendar_events(self, *, sync_token=None, time_min=None,
                               page_token=None, time_max=None, max_results=250):
         self.calls.append({"sync_token": sync_token, "time_min": time_min,
-                           "page_token": page_token})
+                           "time_max": time_max, "page_token": page_token})
         if sync_token and self.raises_on_token:
             raise SyncTokenExpired("410")
         index = 0 if page_token is None else int(page_token)
@@ -165,6 +165,68 @@ def test_the_token_is_taken_from_the_last_page_not_the_first(captured_ingest):
 
     assert state is not None and state["sync_token"] == "tok-final"
     assert len(captured_ingest[0]["payload"]["events"]) == 2
+
+
+def test_a_first_run_bounds_the_window_forward_as_well_as_back(captured_ingest):
+    """The forward bound is the load-bearing one. `singleEvents=True` expands
+    recurring series, so an unbounded future asks Google to expand every repeat
+    to the end of time — which is what pushed the real calendar past the page
+    cap, cost it the token, and left it re-sweeping ~2,500 events every cycle."""
+    fake = FakeGoogle(pages=[{"items": [event()], "nextSyncToken": "tok-1"}])
+    _run({}, fake)
+
+    assert fake.calls[0]["time_min"] is not None
+    assert fake.calls[0]["time_max"] is not None, (
+        "an unbounded future window is the 2026-07-22 defect"
+    )
+    assert fake.calls[0]["time_min"] < fake.calls[0]["time_max"]
+
+
+def test_an_incremental_run_sends_neither_bound(captured_ingest):
+    """`syncToken` is mutually exclusive with BOTH bounds — adding `timeMax`
+    would be a 400 in exactly the same way `timeMin` is."""
+    fake = FakeGoogle(pages=[{"items": [], "nextSyncToken": "tok-2"}])
+    _run({"sync_token": "tok-1"}, fake)
+
+    assert fake.calls[0]["time_min"] is None
+    assert fake.calls[0]["time_max"] is None
+
+
+def test_truncating_at_the_page_cap_raises_instead_of_storing_no_token():
+    """The regression test this file was missing.
+
+    Every earlier fixture fits in one page, so the cap was never reached and the
+    token always arrived — which is why a suite of 11 green tests said nothing
+    about a runner that could not sync a real calendar at all. A sweep that hits
+    the cap has no `nextSyncToken`, so storing it would repeat verbatim forever;
+    raising surfaces it as `connector.sync_failed` every cycle instead.
+    """
+    endless = [
+        {"items": [event(f"evt-{i}")], "nextPageToken": str(i + 1)}
+        for i in range(runner_module._MAX_PAGES + 5)
+    ]
+    fake = FakeGoogle(pages=endless)
+
+    with pytest.raises(runner_module.CalendarWindowTooLarge):
+        _run({}, fake)
+
+    assert len(fake.calls) == runner_module._MAX_PAGES, "it should stop at the cap"
+
+
+def test_a_sweep_that_fills_the_cap_exactly_still_captures_its_token(captured_ingest):
+    """The boundary either side of the raise: a sweep needing every allowed page
+    is fine, as long as the last one carries the token."""
+    pages = [
+        {"items": [event(f"evt-{i}")], "nextPageToken": str(i + 1)}
+        for i in range(runner_module._MAX_PAGES - 1)
+    ]
+    pages.append({"items": [event("evt-last")], "nextSyncToken": "tok-final"})
+    fake = FakeGoogle(pages=pages)
+
+    state = _run({}, fake)
+
+    assert state is not None and state["sync_token"] == "tok-final"
+    assert len(captured_ingest[0]["payload"]["events"]) == runner_module._MAX_PAGES
 
 
 # --------------------------------------------------------------------------- #
