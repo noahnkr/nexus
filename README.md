@@ -92,7 +92,7 @@ cd backend
 python -m venv venv
 source venv/Scripts/activate         # Windows bash; venv\Scripts\activate on cmd/PowerShell
 pip install -r requirements.txt
-python -m uvicorn app.main:app --reload --port 8000     # -> http://localhost:8000/healthz
+python run.py --reload --port 8000     # -> http://localhost:8000/healthz
 
 # Frontend (separate terminal)
 cd frontend
@@ -100,6 +100,8 @@ cp .env.example .env                  # fill VITE_SUPABASE_URL / VITE_SUPABASE_A
 npm install
 npm run dev                           # -> http://localhost:5173 (proxies /api -> :8000)
 ```
+
+> **Start the backend with `run.py`, not `uvicorn` directly.** psycopg's async pool needs a selector event loop, and on Windows that policy has to be set before uvicorn builds its loop — which happens before uvicorn imports the app, so the app itself cannot set it in time. `python -m uvicorn app.main:app` therefore starts and then dies 30 seconds later with `PoolTimeout: pool initialization incomplete`, which looks like a database credentials problem and isn't. `run.py` takes the same `--host` / `--port` / `--reload` / `--log-level` flags.
 
 Tests and build:
 
