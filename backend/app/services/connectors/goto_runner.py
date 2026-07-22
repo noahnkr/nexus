@@ -96,7 +96,10 @@ class GoToRunner:
             )
             # Inbound SMS rides the same channel (established empirically — see
             # `subscribe_messages`), so one channel serves both and there is no
-            # second poll path to maintain.
+            # second poll path to maintain. Both calls raise if their
+            # subscription does not take: a channel that is up but subscribed to
+            # nothing is the failure mode that looked healthy for all of v1.2.0,
+            # and a loud `connector.sync_failed` each cycle is the cure.
             subscription_ids += await goto.subscribe_messages(
                 created["channel_id"], str(account_key)
             )

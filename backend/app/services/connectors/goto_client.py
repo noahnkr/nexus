@@ -22,8 +22,20 @@ authority; re-check before changing any of these):
                      which is why channel upkeep runs every connector cycle rather
                      than daily.
   * Subscriptions  `POST /call-events/v1/subscriptions`
-                   — `{"channelId": …, "accountKeys": [{"id": …, "events": [...]}]}`;
-                     answers HTTP 207 Multi-Status.
+                   — `{"channelId": …, "accountKeys": [{"id": …, "events": ["ENDING"]}]}`;
+                     answers HTTP 207 Multi-Status with per-account results and
+                     **no subscription ids**. `REPORT_SUMMARY` is rejected here —
+                     see `subscribe_calls`.
+                   `POST /messaging/v1/subscriptions` additionally REQUIRES
+                     `ownerPhoneNumber` (the subscription is per line, not per
+                     account) — see `subscribe_messages`.
+
+    **Read the `constraints` array, never the `message`.** Every 400 on the
+    call-events endpoint says `"The Notification Channel must be a WebSocket
+    channel"` regardless of what is actually wrong — a plain GET with no
+    parameters returns that same sentence with `{"field": "ID", "constraint":
+    "REQUIRED"}`. It is boilerplate. Two hours went into the channel before the
+    constraint array turned out to be naming the event vocabulary.
   * Messaging      `POST /messaging/v1/messages`
                    — `{"ownerPhoneNumber", "contactPhoneNumbers": [...], "body"}`.
 
@@ -242,37 +254,67 @@ class GoToClient:
         }
 
     async def subscribe_calls(self, channel_id: str, account_key: str) -> list[str]:
-        """Subscribe a channel to call events. Returns the subscription ids.
+        """Subscribe a channel to call-ending events. Returns the account keys
+        that actually subscribed.
 
-        `REPORT_SUMMARY` is requested because it is the schema that carries a
-        COMPLETE call — direction, both parties, start and end — in one frame.
-        The older STARTING/ENDING pair would need the bridge to correlate two
-        frames and hold state between them, which is a stateful problem we do not
-        need to have.
+        **`ENDING`, not `REPORT_SUMMARY` — established live 2026-07-22.** The
+        original code asked for `REPORT_SUMMARY` because it carries a COMPLETE
+        call in one frame, which spares the bridge from correlating a
+        STARTING/ENDING pair. This account's API rejects it:
 
-        The endpoint answers HTTP 207 Multi-Status: partial success is normal, so
-        the response is parsed for what actually subscribed rather than trusted.
+            400 constraints: [{"field": "Events[0]", "constraint": "INVALID"}]
+
+        Two grammars exist in GoTo's own docs and only one is accepted here. The
+        Call Events *Report* guide documents a top-level
+        `{"eventTypes": ["REPORT_SUMMARY"], "accountKeys": ["<key>"]}` — that
+        answers `MALFORMED_REQUEST` on this endpoint. The Call Events guide's
+        per-account `{"accountKeys": [{"id", "events"}]}` is the one that works,
+        and its `events` vocabulary takes `STARTING`/`ENDING`. (`REPORT_SUMMARY`
+        may need the `cr.v1.read` scope this account has never consented to —
+        untested, since testing it costs a re-consent. See the roadmap.)
+
+        **Only `ENDING` is subscribed, not the documented pair.** A completed
+        call is the thing worth putting on a timeline, and `gt_map.frame_kind`
+        classifies *any* `call-events` frame as a call — so subscribing to
+        `STARTING` too would put two entries on the record for one conversation.
+        One event per call keeps the original design's property without the
+        correlation state.
+
+        **DO NOT trust the status code alone.** The endpoint answers 207
+        Multi-Status carrying per-account results and **no subscription ids at
+        all**:
+
+            {"accountKeys": [{"id": "…", "status": 200, "message": "Success"}]}
+
+        The previous implementation looked for `items[].id`, found none, logged a
+        warning and returned `[]` — which the caller read as a successful
+        subscription with nothing to record. A subscription that did not take is
+        an outage of the entire inbound call path, so it raises here.
         """
         resp = await self.request(
             "POST",
             "/call-events/v1/subscriptions",
             json={
                 "channelId": channel_id,
-                "accountKeys": [{"id": account_key, "events": ["REPORT_SUMMARY"]}],
+                "accountKeys": [{"id": account_key, "events": ["ENDING"]}],
             },
         )
         body = _json(resp, "/call-events/v1/subscriptions")
-        items = body.get("items") or body.get("subscriptions") or []
-        ids = [str(i.get("id")) for i in items if isinstance(i, dict) and i.get("id")]
-        if not ids:
-            log.warning(
-                "call-events subscription returned no ids (status=%s) — the channel "
-                "may receive nothing", resp.status_code
+        results = body.get("accountKeys") or []
+        subscribed = [
+            str(r.get("id"))
+            for r in results
+            if isinstance(r, dict) and int(r.get("status") or 0) < 300 and r.get("id")
+        ]
+        if not subscribed:
+            raise GoToError(
+                "call-events subscription did not take for any account key "
+                f"(HTTP {resp.status_code}): {resp.text[:300]}"
             )
-        return ids
+        return subscribed
 
     async def subscribe_messages(self, channel_id: str, account_key: str) -> list[str]:
-        """Subscribe a channel to inbound SMS.
+        """Subscribe a channel to inbound SMS. Returns the subscription ids.
 
         **The plan left "does SMS ride the notification channel, or does it need a
         Messaging-API poll?" to be answered empirically. It rides the channel:**
@@ -280,11 +322,35 @@ class GoToClient:
         own subscriptions (2026-07-21), so a poll fallback is unnecessary and the
         Messaging API is needed only for sending.
 
-        Failures here are returned as an empty list rather than raised: inbound
-        SMS is a smaller capability than inbound calls, and losing texts is not a
-        reason to abandon a channel that is carrying calls correctly. The caller
-        logs the shortfall.
+        **`ownerPhoneNumber` is REQUIRED and was missing — fixed 2026-07-22.** The
+        subscription is per business line, not per account, so leaving it out
+        failed every time with:
+
+            400 constraintViolations: [{"field": "ownerPhoneNumber",
+                                        "constraint": "Invalid"}]
+
+        E.164 with the leading `+` is what the API takes (verified live: `201`
+        with a subscription id). Sending it without the `+` reaches the same
+        subscription, so the number is normalised on their side.
+
+        **A 409 is success, not failure.** `"Subscription already exists"` means a
+        previous cycle's subscription for this line is still live — which is the
+        healthy steady state on a channel that renews faster than subscriptions
+        expire, so it must not be treated as an outage.
+
+        Failures other than that raise. The previous implementation swallowed
+        every error into an empty list on the reasoning that losing texts should
+        not cost a channel that is carrying calls — but combined with a caller
+        that read `[]` as success, it meant inbound SMS was dead for the entire
+        life of the integration while every surface reported healthy. Silence is
+        the one outcome an integration must never have.
         """
+        if not settings.goto_business_number:
+            raise GoToError(
+                "GOTO_BUSINESS_NUMBER is not set — the messaging subscription is "
+                "per line and cannot be created without it, so inbound SMS would "
+                "silently never arrive"
+            )
         try:
             resp = await self.request(
                 "POST",
@@ -292,15 +358,22 @@ class GoToClient:
                 json={
                     "channelId": channel_id,
                     "accountKey": account_key,
+                    "ownerPhoneNumber": settings.goto_business_number,
                     "eventTypes": ["INCOMING_MESSAGE_SNIPPET"],
                 },
             )
         except GoToError as exc:
-            log.warning("messaging subscription failed — inbound SMS will not arrive: %s", exc)
-            return []
+            if "409" in str(exc) or "already exists" in str(exc).lower():
+                log.info("messaging subscription already live for this line")
+                return []
+            raise
         body = _json(resp, "/messaging/v1/subscriptions")
         items = body.get("items") or body.get("subscriptions") or []
-        return [str(i.get("id")) for i in items if isinstance(i, dict) and i.get("id")]
+        ids = [str(i.get("id")) for i in items if isinstance(i, dict) and i.get("id")]
+        # A single-subscription create answers with the object itself, not a list.
+        if not ids and body.get("id"):
+            ids = [str(body["id"])]
+        return ids
 
     async def send_sms(self, owner_number: str, to_number: str, body: str) -> dict:
         """`POST /messaging/v1/messages` — the real outbound SMS send.
